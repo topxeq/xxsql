@@ -6,11 +6,11 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
-	"path/filepath"
 	"syscall"
 
 	"github.com/topxeq/xxsql/internal/config"
 	"github.com/topxeq/xxsql/internal/log"
+	"github.com/topxeq/xxsql/internal/server"
 )
 
 // Build information (set via ldflags)
@@ -22,16 +22,19 @@ var (
 
 // Command-line flags
 var (
-	flagConfig     = flag.String("config", "", "Path to configuration file")
-	flagVersion    = flag.Bool("version", false, "Print version information")
-	flagInitConfig = flag.Bool("init-config", false, "Print example configuration to stdout")
-	flagLogLevel   = flag.String("log-level", "", "Override log level (DEBUG, INFO, WARN, ERROR)")
-	flagDataDir    = flag.String("data-dir", "", "Override data directory")
-	flagBind       = flag.String("bind", "", "Override bind address")
+	flagConfig      = flag.String("config", "", "Path to configuration file")
+	flagVersion     = flag.Bool("version", false, "Print version information")
+	flagInitConfig  = flag.Bool("init-config", false, "Print example configuration to stdout")
+	flagLogLevel    = flag.String("log-level", "", "Override log level (DEBUG, INFO, WARN, ERROR)")
+	flagDataDir     = flag.String("data-dir", "", "Override data directory")
+	flagBind        = flag.String("bind", "", "Override bind address")
 	flagPrivatePort = flag.Int("private-port", 0, "Override private protocol port")
-	flagMySQLPort  = flag.Int("mysql-port", 0, "Override MySQL compatible port")
-	flagHTTPPort   = flag.Int("http-port", 0, "Override HTTP API port")
+	flagMySQLPort   = flag.Int("mysql-port", 0, "Override MySQL compatible port")
+	flagHTTPPort    = flag.Int("http-port", 0, "Override HTTP API port")
 )
+
+// Global server instance
+var srv *server.Server
 
 func main() {
 	flag.Parse()
@@ -74,11 +77,11 @@ func main() {
 	logger.Info("Configuration loaded from: %s", getConfigPath())
 
 	// Create PID file
-	if err := createPIDFile(cfg.Server.PIDFile); err != nil {
+	if err := server.CreatePIDFile(cfg.Server.PIDFile); err != nil {
 		logger.Error("Failed to create PID file: %v", err)
 		os.Exit(1)
 	}
-	defer removePIDFile(cfg.Server.PIDFile)
+	defer server.RemovePIDFile(cfg.Server.PIDFile)
 
 	// Ensure data directory exists
 	if err := os.MkdirAll(cfg.Server.DataDir, 0755); err != nil {
@@ -86,19 +89,16 @@ func main() {
 		os.Exit(1)
 	}
 
+	// Create and start server
+	srv = server.New(cfg, logger)
+	if err := srv.Start(); err != nil {
+		logger.Error("Failed to start server: %v", err)
+		os.Exit(1)
+	}
+
 	// Setup signal handling
 	sigChan := make(chan os.Signal, 1)
 	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM, syscall.SIGHUP)
-
-	// Start server components (will be implemented in later phases)
-	logger.Info("Server initialized successfully")
-	logger.Info("Private port: %d", cfg.Network.PrivatePort)
-	if cfg.Network.MySQLPort > 0 {
-		logger.Info("MySQL port: %d", cfg.Network.MySQLPort)
-	}
-	if cfg.Network.HTTPPort > 0 {
-		logger.Info("HTTP port: %d", cfg.Network.HTTPPort)
-	}
 
 	// Wait for shutdown signal
 	for {
@@ -120,7 +120,7 @@ func main() {
 
 		case syscall.SIGINT, syscall.SIGTERM:
 			logger.Info("Received %v, shutting down...", sig)
-			shutdown(logger)
+			srv.Stop()
 			logger.Info("Server stopped")
 			return
 		}
@@ -172,40 +172,4 @@ func getConfigPath() string {
 		return *flagConfig
 	}
 	return "defaults"
-}
-
-// createPIDFile creates a PID file.
-func createPIDFile(path string) error {
-	if path == "" {
-		return nil
-	}
-
-	// Ensure directory exists
-	dir := filepath.Dir(path)
-	if err := os.MkdirAll(dir, 0755); err != nil {
-		return err
-	}
-
-	// Write PID
-	pid := os.Getpid()
-	return os.WriteFile(path, []byte(fmt.Sprintf("%d\n", pid)), 0644)
-}
-
-// removePIDFile removes the PID file.
-func removePIDFile(path string) {
-	if path != "" {
-		os.Remove(path)
-	}
-}
-
-// shutdown performs graceful shutdown.
-func shutdown(logger *log.Logger) {
-	logger.Info("Performing graceful shutdown...")
-
-	// Close database connections (Phase 2+)
-	// Flush buffers (Phase 4+)
-	// Close listeners (Phase 2+)
-	// Wait for active connections to finish (Phase 2+)
-
-	logger.Info("Shutdown complete")
 }
