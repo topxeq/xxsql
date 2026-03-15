@@ -1,0 +1,67 @@
+{
+  "server": {
+    "name": "xxsql",
+    "data_dir": "./data",
+    "pid_file": "./xxsql.pid"
+  },
+  "network": {
+    "private_port": 9527,
+    "mysql_port": 3306,
+    "http_port": 8080,
+    "bind": "0.0.0.0"
+  },
+  "storage": {
+    "page_size": 4096,
+    "buffer_pool_size": 1000,
+    "wal_max_size_mb": 100,
+    "wal_sync_interval": 100,
+    "checkpoint_pages": 1000,
+    "checkpoint_int_sec": 300
+  },
+  "worker": {
+    "pool_size": 32,
+    "max_connection": 200
+  },
+  "log": {
+    "level": "INFO",
+    "file": "",
+    "max_size_mb": 100,
+    "max_backups": 5,
+    "max_age_days": 30,
+    "compress": false
+  },
+  "auth": {
+    "enabled": false,
+    "admin_user": "admin",
+    "admin_password": "",
+    "session_timeout_sec": 3600
+  },
+  "backup": {
+    "auto_interval_hours": 24,
+    "keep_count": 7,
+    "backup_dir": "./backup"
+  },
+  "recovery": {
+    "wal_sync_interval_ms": 100,
+    "checkpoint_interval_sec": 300,
+    "checkpoint_pages": 1000,
+    "wal_retention_sec": 86400
+  },
+  "safety": {
+    "enable_checksum": true,
+    "max_recovery_attempts": 3
+  },
+  "connection": {
+    "max_connections": 200,
+    "wait_timeout": 30,
+    "strategy": "fifo",
+    "degrade_threshold": 150,
+    "idle_timeout": 28800
+  },
+  "worker_pool": {
+    "worker_count": 32,
+    "task_queue_size": 1000,
+    "task_timeout": 30000000000,
+    "strategy": "round_robin"
+  }
+}
