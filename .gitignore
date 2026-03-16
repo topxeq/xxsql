@@ -66,3 +66,6 @@ recovery.log
 docs/superpowers/plans/
 result/*.plan.md
 *.plan.md
+
+# Project specs (keep local only)
+docs/superpowers/specs/
