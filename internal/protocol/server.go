@@ -138,12 +138,17 @@ func (s *Server) Stop() error {
 // closeAllConnections closes all active connections.
 func (s *Server) closeAllConnections() {
 	s.connsMu.Lock()
-	defer s.connsMu.Unlock()
-
+	conns := make([]*ConnectionHandler, 0, len(s.conns))
 	for conn := range s.conns {
-		conn.Close()
+		conns = append(conns, conn)
 	}
 	s.conns = make(map[*ConnectionHandler]struct{})
+	s.connsMu.Unlock()
+
+	// Close connections outside the lock to prevent deadlock
+	for _, conn := range conns {
+		conn.Close()
+	}
 }
 
 // acceptLoop accepts incoming connections.

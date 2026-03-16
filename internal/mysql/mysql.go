@@ -783,6 +783,16 @@ func (h *MySQLHandler) SetSessionID(id string) {
 	h.sessionID = id
 }
 
+// IsClosed returns whether the connection is closed.
+func (h *MySQLHandler) IsClosed() bool {
+	return atomic.LoadInt32(&h.closed) == 1
+}
+
+// AuthPluginData returns the auth plugin data (salt) used for authentication.
+func (h *MySQLHandler) AuthPluginData() []byte {
+	return h.authPluginData
+}
+
 // MySQLAuthPassword verifies MySQL native password authentication.
 func MySQLAuthPassword(password, salt, authResponse []byte) bool {
 	// SHA1(password) XOR SHA1(salt + SHA1(SHA1(password)))

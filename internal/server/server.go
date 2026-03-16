@@ -6,15 +6,18 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
 
 	"github.com/topxeq/xxsql/internal/auth"
 	"github.com/topxeq/xxsql/internal/config"
+	"github.com/topxeq/xxsql/internal/executor"
 	"github.com/topxeq/xxsql/internal/log"
 	"github.com/topxeq/xxsql/internal/mysql"
 	"github.com/topxeq/xxsql/internal/protocol"
+	"github.com/topxeq/xxsql/internal/storage"
 )
 
 // Server represents the XxSql server.
@@ -22,6 +25,8 @@ type Server struct {
 	config     *config.Config
 	logger     *log.Logger
 	auth       *auth.Manager
+	engine     *storage.Engine
+	executor   *executor.Executor
 	private    *protocol.Server
 	mysql      *MySQLServer
 	http       *HTTPServer
@@ -44,16 +49,31 @@ type ServerStats struct {
 }
 
 // New creates a new XxSql server.
-func New(cfg *config.Config, logger *log.Logger) *Server {
+func New(cfg *config.Config, logger *log.Logger, engine *storage.Engine) *Server {
 	ctx, cancel := context.WithCancel(context.Background())
 
-	return &Server{
+	// Create auth manager with data directory for persistence
+	authOpts := []auth.ManagerOption{
+		auth.WithSessionTTL(time.Duration(cfg.Auth.SessionTimeouSec) * time.Second),
+	}
+	if cfg.Server.DataDir != "" {
+		authOpts = append(authOpts, auth.WithDataDir(cfg.Server.DataDir))
+	}
+
+	s := &Server{
 		config: cfg,
 		logger: logger,
-		auth:   auth.NewManager(auth.WithSessionTTL(time.Duration(cfg.Auth.SessionTimeouSec) * time.Second)),
+		auth:   auth.NewManager(authOpts...),
+		engine: engine,
 		ctx:    ctx,
 		cancel: cancel,
 	}
+
+	if engine != nil {
+		s.executor = executor.NewExecutor(engine)
+	}
+
+	return s
 }
 
 // Start starts the server.
@@ -64,14 +84,22 @@ func (s *Server) Start() error {
 
 	s.startTime = time.Now()
 
-	// Create default admin user if auth is enabled
+	// Load persisted users
+	if err := s.auth.Load(); err != nil {
+		s.logger.Warn("Failed to load users: %v", err)
+	}
+
+	// Create default admin user if auth is enabled and admin doesn't exist
 	if s.config.Auth.Enabled {
 		if s.config.Auth.AdminPassword != "" {
-			_, err := s.auth.CreateUser(s.config.Auth.AdminUser, s.config.Auth.AdminPassword, auth.RoleAdmin)
-			if err != nil {
-				s.logger.Warn("Failed to create admin user: %v", err)
-			} else {
-				s.logger.Info("Created admin user: %s", s.config.Auth.AdminUser)
+			if _, err := s.auth.GetUser(s.config.Auth.AdminUser); err != nil {
+				// Admin doesn't exist, create it
+				_, err := s.auth.CreateUser(s.config.Auth.AdminUser, s.config.Auth.AdminPassword, auth.RoleAdmin)
+				if err != nil {
+					s.logger.Warn("Failed to create admin user: %v", err)
+				} else {
+					s.logger.Info("Created admin user: %s", s.config.Auth.AdminUser)
+				}
 			}
 		}
 	}
@@ -84,14 +112,14 @@ func (s *Server) Start() error {
 	// Start MySQL protocol server
 	if s.config.Network.MySQLPort > 0 {
 		if err := s.startMySQLServer(); err != nil {
-			s.logger.Error("Failed to start MySQL server: %w", err)
+			s.logger.Error("Failed to start MySQL server: %v", err)
 		}
 	}
 
 	// Start HTTP API server
 	if s.config.Network.HTTPPort > 0 {
 		if err := s.startHTTPServer(); err != nil {
-			s.logger.Error("Failed to start HTTP server: %w", err)
+			s.logger.Error("Failed to start HTTP server: %v", err)
 		}
 	}
 
@@ -231,12 +259,52 @@ func (s *Server) onQuery(conn *protocol.ConnectionHandler, req *protocol.QueryRe
 	atomic.AddUint64(&s.stats.TotalQueries, 1)
 	s.stats.LastQueryTime = time.Now()
 
-	// TODO: Actual query execution (Phase 3+)
-	// For now, return a placeholder response
-	return &protocol.QueryResponse{
-		Status:  protocol.StatusOK,
-		Message: "Query received (not implemented)",
-	}, nil
+	// Execute query if executor is available
+	if s.executor == nil {
+		return &protocol.QueryResponse{
+			Status:  protocol.StatusError,
+			Message: "Storage engine not initialized",
+		}, nil
+	}
+
+	// Get permission checker from session
+	var permChecker executor.PermissionChecker
+	if s.config.Auth.Enabled && conn.SessionID() != "" && conn.SessionID() != "no-auth" {
+		session, err := s.auth.ValidateSession(conn.SessionID())
+		if err == nil {
+			permChecker = executor.NewSessionPermissionAdapter(func(perm uint32) bool {
+				return session.HasPermission(auth.Permission(perm))
+			})
+		}
+	}
+
+	result, err := s.executor.ExecuteWithPerms(req.SQL, permChecker)
+	if err != nil {
+		return &protocol.QueryResponse{
+			Status:  protocol.StatusError,
+			Message: err.Error(),
+		}, nil
+	}
+
+	// Convert result to protocol response
+	resp := &protocol.QueryResponse{
+		Status:      protocol.StatusOK,
+		Message:     result.Message,
+		RowCount:    uint32(result.RowCount),
+		Affected:    uint32(result.Affected),
+		LastInsertID: result.LastInsert,
+	}
+
+	// Convert columns
+	for _, col := range result.Columns {
+		resp.Columns = append(resp.Columns, protocol.ColumnInfo{
+			Name:     col.Name,
+			Type:     col.Type,
+			Nullable: true,
+		})
+	}
+
+	return resp, nil
 }
 
 // nextConnectionID generates the next connection ID.
@@ -387,27 +455,92 @@ func (s *MySQLServer) handleMySQLAuth(h *mysql.MySQLHandler, username, database 
 		return true, nil
 	}
 
-	// Get user
-	user, err := s.server.auth.GetUser(username)
+	// Get the salt that was sent during handshake
+	salt := h.AuthPluginData()
+
+	// Verify MySQL native password authentication
+	valid, err := s.server.auth.VerifyMySQLAuth(username, salt, authResponse)
 	if err != nil {
+		s.server.logger.Debug("MySQL auth verification error: %v", err)
 		return false, nil
 	}
 
-	// For MySQL native password, verify using stored hash
-	// In production, you'd verify the auth response properly
-	// For now, accept if user exists
-	_ = user
-	return true, nil
+	return valid, nil
 }
 
 // handleMySQLQuery handles a MySQL query.
-func (s *MySQLServer) handleMySQLQuery(h *mysql.MySQLHandler, sql string) ([]*mysql.ColumnDefinition, [][]interface{}, error) {
-	s.server.logger.Debug("MySQL Query: %s", sql)
+func (s *MySQLServer) handleMySQLQuery(h *mysql.MySQLHandler, sqlStr string) ([]*mysql.ColumnDefinition, [][]interface{}, error) {
+	s.server.logger.Debug("MySQL Query: %s", sqlStr)
 	atomic.AddUint64(&s.server.stats.TotalQueries, 1)
 
-	// TODO: Actual query execution (Phase 3+)
-	// For now, return empty result set
-	return nil, nil, nil
+	// Execute query if executor is available
+	if s.server.executor == nil {
+		return nil, nil, fmt.Errorf("storage engine not initialized")
+	}
+
+	// Get permission checker from user
+	var permChecker executor.PermissionChecker
+	if s.server.config.Auth.Enabled && h.Username() != "" {
+		user, err := s.server.auth.GetUser(h.Username())
+		if err == nil {
+			permChecker = executor.NewSessionPermissionAdapter(func(perm uint32) bool {
+				perms := auth.RolePermissions[user.Role]
+				return perms&auth.Permission(perm) != 0
+			})
+		}
+	}
+
+	result, err := s.server.executor.ExecuteWithPerms(sqlStr, permChecker)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	// No result set (INSERT, UPDATE, DELETE, etc.)
+	if len(result.Columns) == 0 {
+		return nil, nil, nil
+	}
+
+	// Convert columns
+	columns := make([]*mysql.ColumnDefinition, len(result.Columns))
+	for i, col := range result.Columns {
+		columns[i] = &mysql.ColumnDefinition{
+			Catalog:  "def",
+			Schema:   h.Database(),
+			Table:    "",
+			OrgTable: "",
+			Name:     col.Name,
+			OrgName:  col.Name,
+			Charset:  mysql.CharacterSetUTF8MB4,
+			Length:   255,
+			Type:     mysqlTypeFromString(col.Type),
+			Flags:    0,
+			Decimals: 0,
+		}
+	}
+
+	return columns, result.Rows, nil
+}
+
+// mysqlTypeFromString converts a type string to MySQL type constant.
+func mysqlTypeFromString(typeStr string) uint8 {
+	switch strings.ToUpper(typeStr) {
+	case "INT", "SEQ":
+		return 3 // MYSQL_TYPE_LONG
+	case "FLOAT", "DOUBLE":
+		return 5 // MYSQL_TYPE_DOUBLE
+	case "VARCHAR", "CHAR", "TEXT":
+		return 253 // MYSQL_TYPE_VAR_STRING
+	case "BOOL":
+		return 1 // MYSQL_TYPE_TINY
+	case "DATE":
+		return 10 // MYSQL_TYPE_DATE
+	case "TIME":
+		return 11 // MYSQL_TYPE_TIME
+	case "DATETIME":
+		return 12 // MYSQL_TYPE_DATETIME
+	default:
+		return 253 // MYSQL_TYPE_VAR_STRING
+	}
 }
 
 // HTTPServer wraps the HTTP API server.

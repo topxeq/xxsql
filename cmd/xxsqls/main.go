@@ -11,6 +11,7 @@ import (
 	"github.com/topxeq/xxsql/internal/config"
 	"github.com/topxeq/xxsql/internal/log"
 	"github.com/topxeq/xxsql/internal/server"
+	"github.com/topxeq/xxsql/internal/storage"
 )
 
 // Build information (set via ldflags)
@@ -89,8 +90,16 @@ func main() {
 		os.Exit(1)
 	}
 
+	// Initialize storage engine
+	engine := storage.NewEngine(cfg.Server.DataDir)
+	if err := engine.Open(); err != nil {
+		logger.Error("Failed to open storage engine: %v", err)
+		os.Exit(1)
+	}
+	defer engine.Close()
+
 	// Create and start server
-	srv = server.New(cfg, logger)
+	srv = server.New(cfg, logger, engine)
 	if err := srv.Start(); err != nil {
 		logger.Error("Failed to start server: %v", err)
 		os.Exit(1)

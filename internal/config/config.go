@@ -13,6 +13,7 @@ type Config struct {
 	Worker     WorkerConfig     `json:"worker"`
 	Log        LogConfig        `json:"log"`
 	Auth       AuthConfig       `json:"auth"`
+	Security   SecurityConfig   `json:"security"`
 	Backup     BackupConfig     `json:"backup"`
 	Recovery   RecoveryConfig   `json:"recovery"`
 	Safety     SafetyConfig     `json:"safety"`
@@ -67,6 +68,42 @@ type AuthConfig struct {
 	AdminPassword string `json:"admin_password"`  // Admin password hash
 	AdminUser     string `json:"admin_user"`      // Admin username
 	SessionTimeouSec int `json:"session_timeout_sec"` // Session timeout in seconds
+}
+
+// SecurityConfig contains security configuration.
+type SecurityConfig struct {
+	// Audit logging
+	AuditEnabled    bool   `json:"audit_enabled"`
+	AuditFile       string `json:"audit_file"`
+	AuditMaxSizeMB  int    `json:"audit_max_size_mb"`
+	AuditMaxBackups int    `json:"audit_max_backups"`
+
+	// Rate limiting
+	RateLimitEnabled     bool `json:"rate_limit_enabled"`
+	RateLimitMaxAttempts int  `json:"rate_limit_max_attempts"`
+	RateLimitWindowMin   int  `json:"rate_limit_window_min"`
+	RateLimitBlockMin    int  `json:"rate_limit_block_min"`
+
+	// Password policy
+	PasswordMinLength    int  `json:"password_min_length"`
+	PasswordRequireUpper bool `json:"password_require_upper"`
+	PasswordRequireLower bool `json:"password_require_lower"`
+	PasswordRequireDigit bool `json:"password_require_digit"`
+	PasswordRequireSpecial bool `json:"password_require_special"`
+	PasswordExpireDays   int  `json:"password_expire_days"`
+	PasswordHistoryCount int  `json:"password_history_count"`
+
+	// TLS
+	TLSEnabled  bool   `json:"tls_enabled"`
+	TLSMode     string `json:"tls_mode"`     // disabled, optional, required, verify_ca
+	TLSCertFile string `json:"tls_cert_file"`
+	TLSKeyFile  string `json:"tls_key_file"`
+	TLSCAFile   string `json:"tls_ca_file"`
+
+	// IP Access
+	IPAccessMode string   `json:"ip_access_mode"` // allow_all, whitelist, blacklist
+	IPWhitelist  []string `json:"ip_whitelist"`
+	IPBlacklist  []string `json:"ip_blacklist"`
 }
 
 // BackupConfig contains backup configuration.
@@ -145,6 +182,26 @@ func DefaultConfig() *Config {
 			Enabled:       false,
 			AdminUser:     "admin",
 			SessionTimeouSec: 3600,
+		},
+		Security: SecurityConfig{
+			AuditEnabled:         true,
+			AuditFile:            "audit.log",
+			AuditMaxSizeMB:       100,
+			AuditMaxBackups:      10,
+			RateLimitEnabled:     true,
+			RateLimitMaxAttempts: 5,
+			RateLimitWindowMin:   15,
+			RateLimitBlockMin:    30,
+			PasswordMinLength:     8,
+			PasswordRequireUpper:  true,
+			PasswordRequireLower:  true,
+			PasswordRequireDigit:  true,
+			PasswordRequireSpecial: false,
+			PasswordExpireDays:    0,
+			PasswordHistoryCount:  5,
+			TLSEnabled:           false,
+			TLSMode:             "optional",
+			IPAccessMode:         "allow_all",
 		},
 		Backup: BackupConfig{
 			AutoIntervalHours: 24,
