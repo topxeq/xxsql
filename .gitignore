@@ -61,3 +61,8 @@ checkpoint.meta
 recovery.state
 recovery.log
 .unclean
+
+# Project plans (keep local only)
+docs/superpowers/plans/
+result/*.plan.md
+*.plan.md
