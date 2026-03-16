@@ -2,6 +2,34 @@
 
 A lightweight SQL database implemented in pure Go, featuring a B+ tree storage engine and MySQL-compatible protocol.
 
+## Goal
+
+XxSql aims to provide a lightweight SQL database with **better concurrency than SQLite** while maintaining similar ease of deployment.
+
+| Aspect | SQLite | XxSql |
+|--------|--------|-------|
+| Deployment | Single file | Single binary |
+| Concurrency | Database-level locking | Multi-granularity locking (table/page/row) |
+| Connections | Single writer or multiple readers | 100+ simultaneous read/write connections |
+| Protocol | Embedded library | MySQL-compatible network protocol |
+| Language | C | Pure Go (no CGO) |
+
+**Why XxSql?**
+
+SQLite is excellent for embedded scenarios but has concurrency limitations - writes block all reads, and only one writer at a time. XxSql addresses this with:
+
+- **Fine-grained locking** - Multi-level locks (global, catalog, table, page, row) allow concurrent operations
+- **Multiple writers** - Concurrent write transactions with deadlock detection
+- **Connection pooling** - Handle 100+ simultaneous client connections
+- **Network protocol** - MySQL compatibility means no driver changes needed for existing applications
+
+If you need:
+- A lightweight database that handles concurrent access better than SQLite
+- MySQL protocol compatibility without MySQL's resource overhead
+- Pure Go implementation for easy cross-platform deployment
+
+Then XxSql might be the right choice.
+
 ## Features
 
 - **Pure Go** - No CGO dependencies, easy cross-compilation
