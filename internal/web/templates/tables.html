@@ -1,0 +1,102 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Tables - XxSql</title>
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+    <div class="layout">
+        <aside class="sidebar">
+            <div class="logo"><h1>XxSql</h1><span>Web Management</span></div>
+            <nav>
+                <a href="/"><span class="icon">📊</span><span>Dashboard</span></a>
+                <a href="/query"><span class="icon">🔍</span><span>Query</span></a>
+                <a href="/tables" class="active"><span class="icon">📋</span><span>Tables</span></a>
+                <a href="/users"><span class="icon">👥</span><span>Users</span></a>
+                <a href="/backup"><span class="icon">💾</span><span>Backup</span></a>
+                <a href="/logs"><span class="icon">📜</span><span>Logs</span></a>
+                <a href="/config"><span class="icon">⚙️</span><span>Config</span></a>
+            </nav>
+        </aside>
+
+        <main class="main">
+            <header class="header">
+                <h2>Tables</h2>
+                <div class="user-info"><span>{{.User}}</span><a href="/api/logout" onclick="logout(event)">Logout</a></div>
+            </header>
+
+            <div class="card">
+                <h3>All Tables</h3>
+                <div class="table-container">
+                    <table>
+                        <thead><tr><th>Name</th><th>Rows</th><th>Pages</th><th>Actions</th></tr></thead>
+                        <tbody id="tables-list"><tr><td colspan="4">Loading...</td></tr></tbody>
+                    </table>
+                </div>
+            </div>
+
+            <div class="card" id="table-detail" style="display: none;">
+                <h3>Table: <span id="table-name"></span></h3>
+                <h4>Columns</h4>
+                <div class="table-container">
+                    <table>
+                        <thead><tr><th>Name</th><th>Type</th><th>Nullable</th><th>Primary</th></tr></thead>
+                        <tbody id="columns-list"></tbody>
+                    </table>
+                </div>
+            </div>
+        </main>
+    </div>
+
+    <script>
+        async function loadTables() {
+            const resp = await fetch('/api/tables');
+            const data = await resp.json();
+            const tbody = document.getElementById('tables-list');
+
+            if (data.tables && data.tables.length > 0) {
+                tbody.innerHTML = data.tables.map(t => `
+                    <tr>
+                        <td><a href="#" onclick="showTable('${t.name}')">${t.name}</a></td>
+                        <td>${t.row_count}</td>
+                        <td>${t.page_count}</td>
+                        <td><button class="btn btn-sm btn-secondary" onclick="showTable('${t.name}')">View</button></td>
+                    </tr>
+                `).join('');
+            } else {
+                tbody.innerHTML = '<tr><td colspan="4">No tables found</td></tr>';
+            }
+        }
+
+        async function showTable(name) {
+            const resp = await fetch(`/api/tables/${name}`);
+            const data = await resp.json();
+
+            document.getElementById('table-name').textContent = name;
+            const tbody = document.getElementById('columns-list');
+
+            if (data.columns && data.columns.length > 0) {
+                tbody.innerHTML = data.columns.map(c => `
+                    <tr>
+                        <td>${c.name}</td>
+                        <td>${c.type}</td>
+                        <td>${c.nullable ? 'Yes' : 'No'}</td>
+                        <td>${c.primary ? 'Yes' : ''}</td>
+                    </tr>
+                `).join('');
+            }
+
+            document.getElementById('table-detail').style.display = 'block';
+        }
+
+        function logout(e) {
+            e.preventDefault();
+            fetch('/api/logout', { method: 'POST' }).then(() => window.location.href = '/login');
+        }
+
+        loadTables();
+    </script>
+</body>
+</html>

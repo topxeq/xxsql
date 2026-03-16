@@ -1,0 +1,151 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Query - XxSql</title>
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+    <div class="layout">
+        <aside class="sidebar">
+            <div class="logo">
+                <h1>XxSql</h1>
+                <span>Web Management</span>
+            </div>
+            <nav>
+                <a href="/"><span class="icon">📊</span><span>Dashboard</span></a>
+                <a href="/query" class="active"><span class="icon">🔍</span><span>Query</span></a>
+                <a href="/tables"><span class="icon">📋</span><span>Tables</span></a>
+                <a href="/users"><span class="icon">👥</span><span>Users</span></a>
+                <a href="/backup"><span class="icon">💾</span><span>Backup</span></a>
+                <a href="/logs"><span class="icon">📜</span><span>Logs</span></a>
+                <a href="/config"><span class="icon">⚙️</span><span>Config</span></a>
+            </nav>
+        </aside>
+
+        <main class="main">
+            <header class="header">
+                <h2>Query Editor</h2>
+                <div class="user-info">
+                    <span>{{.User}}</span>
+                    <a href="/api/logout" onclick="logout(event)">Logout</a>
+                </div>
+            </header>
+
+            <div class="card query-editor">
+                <h3>SQL Query</h3>
+                <textarea id="sql-input" placeholder="Enter SQL query...">SELECT * FROM users LIMIT 10;</textarea>
+                <div class="query-actions">
+                    <button class="btn btn-primary" onclick="executeQuery()">Execute (Ctrl+Enter)</button>
+                    <button class="btn btn-secondary" onclick="clearResults()">Clear</button>
+                </div>
+            </div>
+
+            <div class="card results" id="results-card" style="display: none;">
+                <div class="results-header">
+                    <h3>Results</h3>
+                    <span class="time" id="query-time"></span>
+                </div>
+                <div id="error-message" class="error-message" style="display: none;"></div>
+                <div class="table-container">
+                    <table>
+                        <thead id="results-header"></thead>
+                        <tbody id="results-body"></tbody>
+                    </table>
+                </div>
+                <div id="result-info" style="margin-top: 10px; color: #666;"></div>
+            </div>
+        </main>
+    </div>
+
+    <script>
+        document.getElementById('sql-input').addEventListener('keydown', function(e) {
+            if (e.ctrlKey && e.key === 'Enter') {
+                executeQuery();
+            }
+        });
+
+        async function executeQuery() {
+            const sql = document.getElementById('sql-input').value.trim();
+            if (!sql) return;
+
+            const resultsCard = document.getElementById('results-card');
+            const errorDiv = document.getElementById('error-message');
+            const resultsHeader = document.getElementById('results-header');
+            const resultsBody = document.getElementById('results-body');
+            const queryTime = document.getElementById('query-time');
+            const resultInfo = document.getElementById('result-info');
+
+            resultsCard.style.display = 'block';
+            errorDiv.style.display = 'none';
+            resultsHeader.innerHTML = '';
+            resultsBody.innerHTML = '<tr><td colspan="100">Executing...</td></tr>';
+            queryTime.textContent = '';
+
+            try {
+                const resp = await fetch('/api/query', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ sql })
+                });
+                const data = await resp.json();
+
+                queryTime.textContent = data.duration || '';
+
+                if (data.error) {
+                    errorDiv.textContent = data.error;
+                    errorDiv.style.display = 'block';
+                    resultsBody.innerHTML = '';
+                    return;
+                }
+
+                // Display columns
+                if (data.columns && data.columns.length > 0) {
+                    resultsHeader.innerHTML = '<tr>' + data.columns.map(c =>
+                        `<th>${c.name}</th>`
+                    ).join('') + '</tr>';
+                }
+
+                // Display rows
+                if (data.rows && data.rows.length > 0) {
+                    resultsBody.innerHTML = data.rows.map(row =>
+                        '<tr>' + row.map(cell =>
+                            `<td>${cell === null ? '<i>NULL</i>' : escapeHtml(String(cell))}</td>`
+                        ).join('') + '</tr>'
+                    ).join('');
+                } else if (data.affected !== undefined) {
+                    resultsBody.innerHTML = `<tr><td colspan="100">Query OK, ${data.affected} row(s) affected</td></tr>`;
+                } else {
+                    resultsBody.innerHTML = '<tr><td colspan="100">No results</td></tr>';
+                }
+
+                if (data.row_count !== undefined) {
+                    resultInfo.textContent = `${data.row_count} row(s)`;
+                }
+            } catch (e) {
+                errorDiv.textContent = 'Request failed: ' + e.message;
+                errorDiv.style.display = 'block';
+                resultsBody.innerHTML = '';
+            }
+        }
+
+        function clearResults() {
+            document.getElementById('results-card').style.display = 'none';
+            document.getElementById('sql-input').value = '';
+        }
+
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+
+        function logout(e) {
+            e.preventDefault();
+            fetch('/api/logout', { method: 'POST' })
+                .then(() => window.location.href = '/login');
+        }
+    </script>
+</body>
+</html>

@@ -1,0 +1,141 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>XxSql Web Management</title>
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+    <div class="layout">
+        <aside class="sidebar">
+            <div class="logo">
+                <h1>XxSql</h1>
+                <span>Web Management</span>
+            </div>
+            <nav>
+                <a href="/" class="{{if eq .Page "index"}}active{{end}}">
+                    <span class="icon">📊</span>
+                    <span>Dashboard</span>
+                </a>
+                <a href="/query" class="{{if eq .Page "query"}}active{{end}}">
+                    <span class="icon">🔍</span>
+                    <span>Query</span>
+                </a>
+                <a href="/tables" class="{{if eq .Page "tables"}}active{{end}}">
+                    <span class="icon">📋</span>
+                    <span>Tables</span>
+                </a>
+                <a href="/users" class="{{if eq .Page "users"}}active{{end}}">
+                    <span class="icon">👥</span>
+                    <span>Users</span>
+                </a>
+                <a href="/backup" class="{{if eq .Page "backup"}}active{{end}}">
+                    <span class="icon">💾</span>
+                    <span>Backup</span>
+                </a>
+                <a href="/logs" class="{{if eq .Page "logs"}}active{{end}}">
+                    <span class="icon">📜</span>
+                    <span>Logs</span>
+                </a>
+                <a href="/config" class="{{if eq .Page "config"}}active{{end}}">
+                    <span class="icon">⚙️</span>
+                    <span>Config</span>
+                </a>
+            </nav>
+        </aside>
+
+        <main class="main">
+            <header class="header">
+                <h2>Dashboard</h2>
+                <div class="user-info">
+                    <span>{{.User}}</span>
+                    <a href="/api/logout" onclick="logout(event)">Logout</a>
+                </div>
+            </header>
+
+            <div class="status-grid" id="status-grid">
+                <div class="status-card">
+                    <div class="label">Version</div>
+                    <div class="value" id="version">-</div>
+                </div>
+                <div class="status-card">
+                    <div class="label">Uptime</div>
+                    <div class="value" id="uptime">-</div>
+                </div>
+                <div class="status-card">
+                    <div class="label">Tables</div>
+                    <div class="value" id="tables">-</div>
+                </div>
+                <div class="status-card">
+                    <div class="label">Data Directory</div>
+                    <div class="value" id="data-dir" style="font-size: 1rem;">-</div>
+                </div>
+            </div>
+
+            <div class="card">
+                <h3>Recent Tables</h3>
+                <div class="table-container">
+                    <table>
+                        <thead>
+                            <tr>
+                                <th>Name</th>
+                                <th>Rows</th>
+                                <th>Pages</th>
+                            </tr>
+                        </thead>
+                        <tbody id="tables-list">
+                            <tr><td colspan="3">Loading...</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </main>
+    </div>
+
+    <script>
+        async function loadStatus() {
+            try {
+                const resp = await fetch('/api/status');
+                const data = await resp.json();
+                document.getElementById('version').textContent = data.version;
+                document.getElementById('uptime').textContent = data.uptime;
+                document.getElementById('tables').textContent = data.table_count;
+                document.getElementById('data-dir').textContent = data.data_dir;
+            } catch (e) {
+                console.error('Failed to load status:', e);
+            }
+        }
+
+        async function loadTables() {
+            try {
+                const resp = await fetch('/api/tables');
+                const data = await resp.json();
+                const tbody = document.getElementById('tables-list');
+                if (data.tables && data.tables.length > 0) {
+                    tbody.innerHTML = data.tables.map(t => `
+                        <tr>
+                            <td><a href="/tables">${t.name}</a></td>
+                            <td>${t.row_count}</td>
+                            <td>${t.page_count}</td>
+                        </tr>
+                    `).join('');
+                } else {
+                    tbody.innerHTML = '<tr><td colspan="3">No tables</td></tr>';
+                }
+            } catch (e) {
+                console.error('Failed to load tables:', e);
+            }
+        }
+
+        function logout(e) {
+            e.preventDefault();
+            fetch('/api/logout', { method: 'POST' })
+                .then(() => window.location.href = '/login');
+        }
+
+        loadStatus();
+        loadTables();
+    </script>
+</body>
+</html>

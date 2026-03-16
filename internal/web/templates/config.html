@@ -1,0 +1,256 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Config - XxSql</title>
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+    <div class="layout">
+        <aside class="sidebar">
+            <div class="logo"><h1>XxSql</h1><span>Web Management</span></div>
+            <nav>
+                <a href="/"><span class="icon">📊</span><span>Dashboard</span></a>
+                <a href="/query"><span class="icon">🔍</span><span>Query</span></a>
+                <a href="/tables"><span class="icon">📋</span><span>Tables</span></a>
+                <a href="/users"><span class="icon">👥</span><span>Users</span></a>
+                <a href="/backup"><span class="icon">💾</span><span>Backup</span></a>
+                <a href="/logs"><span class="icon">📜</span><span>Logs</span></a>
+                <a href="/config" class="active"><span class="icon">⚙️</span><span>Config</span></a>
+            </nav>
+        </aside>
+
+        <main class="main">
+            <header class="header">
+                <h2>Configuration</h2>
+                <div class="user-info"><span>{{.User}}</span><a href="/api/logout" onclick="logout(event)">Logout</a></div>
+            </header>
+
+            <div class="config-tabs">
+                <button class="config-tab active" onclick="switchView('table')">Table View</button>
+                <button class="config-tab" onclick="switchView('json')">JSON View</button>
+            </div>
+
+            <div id="table-view">
+                <div class="card">
+                    <h3>Server</h3>
+                    <div class="config-grid" id="server-config"></div>
+                </div>
+
+                <div class="card">
+                    <h3>Network</h3>
+                    <div class="config-grid" id="network-config"></div>
+                </div>
+
+                <div class="card">
+                    <h3>Storage</h3>
+                    <div class="config-grid" id="storage-config"></div>
+                </div>
+
+                <div class="card">
+                    <h3>Logging</h3>
+                    <div class="config-grid" id="logging-config"></div>
+                </div>
+
+                <div class="card">
+                    <h3>Security</h3>
+                    <div class="config-grid" id="security-config"></div>
+                </div>
+
+                <div class="card">
+                    <h3>Backup</h3>
+                    <div class="config-grid" id="backup-config"></div>
+                </div>
+            </div>
+
+            <div id="json-view" style="display: none;">
+                <div class="card">
+                    <h3>Raw Configuration (JSON)</h3>
+                    <pre class="json-viewer" id="json-content"></pre>
+                </div>
+            </div>
+        </main>
+    </div>
+
+    <style>
+        .config-tabs {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 20px;
+        }
+        .config-tab {
+            padding: 10px 20px;
+            border: 1px solid #ddd;
+            background: white;
+            border-radius: 4px;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+        .config-tab:hover {
+            background: #f8f9fa;
+        }
+        .config-tab.active {
+            background: #3498db;
+            color: white;
+            border-color: #3498db;
+        }
+        .config-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+            gap: 15px;
+        }
+        .config-item {
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+        }
+        .config-item .label {
+            font-size: 0.85rem;
+            color: #7f8c8d;
+            font-weight: 500;
+        }
+        .config-item .value {
+            font-size: 1rem;
+            color: #2c3e50;
+            word-break: break-all;
+        }
+        .config-item .value.bool-true {
+            color: #27ae60;
+        }
+        .config-item .value.bool-false {
+            color: #e74c3c;
+        }
+        .json-viewer {
+            background: #1a1a2e;
+            color: #16c79a;
+            padding: 20px;
+            border-radius: 4px;
+            font-family: 'JetBrains Mono', 'Fira Code', 'Courier New', monospace;
+            font-size: 0.85rem;
+            overflow-x: auto;
+            white-space: pre-wrap;
+            word-break: break-all;
+            max-height: 600px;
+            overflow-y: auto;
+        }
+    </style>
+
+    <script>
+        let config = null;
+
+        async function loadConfig() {
+            try {
+                const resp = await fetch('/api/config');
+                config = await resp.json();
+                renderTableView(config);
+                renderJsonView(config);
+            } catch (err) {
+                console.error('Failed to load config:', err);
+            }
+        }
+
+        function renderTableView(cfg) {
+            // Server config
+            renderSection('server-config', [
+                { label: 'Name', value: cfg.server?.name },
+                { label: 'Data Directory', value: cfg.server?.data_dir },
+                { label: 'PID File', value: cfg.server?.pid_file || 'None' }
+            ]);
+
+            // Network config
+            renderSection('network-config', [
+                { label: 'Bind Address', value: cfg.network?.bind },
+                { label: 'Private Port', value: cfg.network?.private_port },
+                { label: 'MySQL Port', value: cfg.network?.mysql_port },
+                { label: 'HTTP Port', value: cfg.network?.http_port }
+            ]);
+
+            // Storage config
+            renderSection('storage-config', [
+                { label: 'Page Size', value: formatBytes(cfg.storage?.page_size) },
+                { label: 'Buffer Pool Size', value: cfg.storage?.buffer_pool_size + ' pages' },
+                { label: 'WAL Max Size', value: cfg.storage?.wal_max_size_mb + ' MB' },
+                { label: 'WAL Sync Interval', value: cfg.storage?.wal_sync_interval + ' ms' },
+                { label: 'Checkpoint Pages', value: cfg.storage?.checkpoint_pages },
+                { label: 'Checkpoint Interval', value: cfg.storage?.checkpoint_int_sec + ' sec' }
+            ]);
+
+            // Logging config
+            renderSection('logging-config', [
+                { label: 'Log Level', value: cfg.log?.level },
+                { label: 'Log File', value: cfg.log?.file || 'stdout' },
+                { label: 'Max Size', value: cfg.log?.max_size_mb + ' MB' },
+                { label: 'Max Backups', value: cfg.log?.max_backups },
+                { label: 'Max Age', value: cfg.log?.max_age_days + ' days' },
+                { label: 'Compress', value: cfg.log?.compress, bool: true }
+            ]);
+
+            // Security config
+            renderSection('security-config', [
+                { label: 'Audit Enabled', value: cfg.security?.audit_enabled, bool: true },
+                { label: 'Audit File', value: cfg.security?.audit_file || 'None' },
+                { label: 'Rate Limiting', value: cfg.security?.rate_limit_enabled, bool: true },
+                { label: 'Max Auth Attempts', value: cfg.security?.rate_limit_max_attempts },
+                { label: 'TLS Enabled', value: cfg.security?.tls_enabled, bool: true },
+                { label: 'IP Access Mode', value: cfg.security?.ip_access_mode },
+                { label: 'Password Min Length', value: cfg.security?.password_min_length },
+                { label: 'Password Expiry', value: (cfg.security?.password_expire_days || 0) + ' days' }
+            ]);
+
+            // Backup config
+            renderSection('backup-config', [
+                { label: 'Auto Backup Interval', value: cfg.backup?.auto_interval_hours + ' hours' },
+                { label: 'Keep Count', value: cfg.backup?.keep_count },
+                { label: 'Backup Directory', value: cfg.backup?.backup_dir }
+            ]);
+        }
+
+        function renderSection(containerId, items) {
+            const container = document.getElementById(containerId);
+            container.innerHTML = items.map(item => `
+                <div class="config-item">
+                    <span class="label">${item.label}</span>
+                    <span class="value ${item.bool ? (item.value ? 'bool-true' : 'bool-false') : ''}">
+                        ${formatValue(item.value, item.bool)}
+                    </span>
+                </div>
+            `).join('');
+        }
+
+        function formatValue(value, isBool) {
+            if (value === null || value === undefined) return '-';
+            if (isBool) return value ? 'Enabled' : 'Disabled';
+            if (typeof value === 'boolean') return value ? 'Yes' : 'No';
+            return value;
+        }
+
+        function formatBytes(bytes) {
+            if (!bytes) return '-';
+            if (bytes >= 1024 * 1024) return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
+            if (bytes >= 1024) return (bytes / 1024).toFixed(1) + ' KB';
+            return bytes + ' B';
+        }
+
+        function renderJsonView(cfg) {
+            const json = JSON.stringify(cfg, null, 2);
+            document.getElementById('json-content').textContent = json;
+        }
+
+        function switchView(view) {
+            document.querySelectorAll('.config-tab').forEach(tab => {
+                tab.classList.toggle('active', tab.textContent.toLowerCase().includes(view));
+            });
+            document.getElementById('table-view').style.display = view === 'table' ? 'block' : 'none';
+            document.getElementById('json-view').style.display = view === 'json' ? 'block' : 'none';
+        }
+
+        function logout(e) {
+            e.preventDefault();
+            fetch('/api/logout', { method: 'POST' }).then(() => window.location.href = '/login');
+        }
+
+        loadConfig();
+    </script>
+</body>
+</html>

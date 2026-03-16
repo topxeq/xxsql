@@ -1,0 +1,277 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Users - XxSql</title>
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+    <div class="layout">
+        <aside class="sidebar">
+            <div class="logo"><h1>XxSql</h1><span>Web Management</span></div>
+            <nav>
+                <a href="/"><span class="icon">📊</span><span>Dashboard</span></a>
+                <a href="/query"><span class="icon">🔍</span><span>Query</span></a>
+                <a href="/tables"><span class="icon">📋</span><span>Tables</span></a>
+                <a href="/users" class="active"><span class="icon">👥</span><span>Users</span></a>
+                <a href="/backup"><span class="icon">💾</span><span>Backup</span></a>
+                <a href="/logs"><span class="icon">📜</span><span>Logs</span></a>
+                <a href="/config"><span class="icon">⚙️</span><span>Config</span></a>
+            </nav>
+        </aside>
+
+        <main class="main">
+            <header class="header">
+                <h2>Users</h2>
+                <div class="user-info"><span>{{.User}}</span><a href="/api/logout" onclick="logout(event)">Logout</a></div>
+            </header>
+
+            <div class="card">
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px;">
+                    <h3 style="margin: 0;">All Users</h3>
+                    <button class="btn btn-primary" onclick="showCreateModal()">+ Create User</button>
+                </div>
+                <div class="table-container">
+                    <table>
+                        <thead><tr><th>Username</th><th>Role</th><th>Actions</th></tr></thead>
+                        <tbody id="users-list"><tr><td colspan="3">Loading...</td></tr></tbody>
+                    </table>
+                </div>
+            </div>
+        </main>
+    </div>
+
+    <!-- Create/Edit User Modal -->
+    <div id="user-modal" class="modal" style="display: none;">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3 id="modal-title">Create User</h3>
+                <button class="modal-close" onclick="closeModal()">&times;</button>
+            </div>
+            <form id="user-form" onsubmit="saveUser(event)">
+                <input type="hidden" id="edit-username">
+                <div class="form-group">
+                    <label for="username">Username</label>
+                    <input type="text" id="username" required>
+                </div>
+                <div class="form-group">
+                    <label for="password">Password</label>
+                    <input type="password" id="password" placeholder="Leave empty to keep current">
+                </div>
+                <div class="form-group">
+                    <label for="role">Role</label>
+                    <select id="role">
+                        <option value="user">User</option>
+                        <option value="admin">Admin</option>
+                    </select>
+                </div>
+                <div id="modal-error" class="error-message" style="display: none;"></div>
+                <div class="modal-footer">
+                    <button type="button" class="btn btn-secondary" onclick="closeModal()">Cancel</button>
+                    <button type="submit" class="btn btn-primary">Save</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Delete Confirmation Modal -->
+    <div id="delete-modal" class="modal" style="display: none;">
+        <div class="modal-content" style="max-width: 400px;">
+            <div class="modal-header">
+                <h3>Confirm Delete</h3>
+                <button class="modal-close" onclick="closeDeleteModal()">&times;</button>
+            </div>
+            <p>Are you sure you want to delete user <strong id="delete-username"></strong>?</p>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" onclick="closeDeleteModal()">Cancel</button>
+                <button type="button" class="btn btn-danger" onclick="confirmDelete()">Delete</button>
+            </div>
+        </div>
+    </div>
+
+    <style>
+        .modal {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0,0,0,0.5);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            z-index: 1000;
+        }
+        .modal-content {
+            background: white;
+            border-radius: 8px;
+            width: 100%;
+            max-width: 500px;
+            box-shadow: 0 4px 20px rgba(0,0,0,0.2);
+        }
+        .modal-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 20px;
+            border-bottom: 1px solid #eee;
+        }
+        .modal-header h3 {
+            margin: 0;
+        }
+        .modal-close {
+            background: none;
+            border: none;
+            font-size: 1.5rem;
+            cursor: pointer;
+            color: #666;
+        }
+        .modal-content form {
+            padding: 20px;
+        }
+        .modal-footer {
+            display: flex;
+            justify-content: flex-end;
+            gap: 10px;
+            padding: 20px;
+            border-top: 1px solid #eee;
+        }
+    </style>
+
+    <script>
+        let deleteUser = '';
+
+        async function loadUsers() {
+            const resp = await fetch('/api/users');
+            const data = await resp.json();
+            const tbody = document.getElementById('users-list');
+
+            if (data.users && data.users.length > 0) {
+                tbody.innerHTML = data.users.map(u => `
+                    <tr>
+                        <td>${u.username}</td>
+                        <td><span class="badge ${u.role === 'admin' ? 'badge-primary' : 'badge-secondary'}">${u.role}</span></td>
+                        <td>
+                            <button class="btn btn-sm btn-secondary" onclick="editUser('${u.username}', '${u.role}')">Edit</button>
+                            <button class="btn btn-sm btn-danger" onclick="showDeleteModal('${u.username}')">Delete</button>
+                        </td>
+                    </tr>
+                `).join('');
+            } else {
+                tbody.innerHTML = '<tr><td colspan="3">No users found</td></tr>';
+            }
+        }
+
+        function showCreateModal() {
+            document.getElementById('modal-title').textContent = 'Create User';
+            document.getElementById('edit-username').value = '';
+            document.getElementById('username').value = '';
+            document.getElementById('username').disabled = false;
+            document.getElementById('password').value = '';
+            document.getElementById('password').placeholder = '';
+            document.getElementById('password').required = true;
+            document.getElementById('role').value = 'user';
+            document.getElementById('modal-error').style.display = 'none';
+            document.getElementById('user-modal').style.display = 'flex';
+        }
+
+        function editUser(username, role) {
+            document.getElementById('modal-title').textContent = 'Edit User';
+            document.getElementById('edit-username').value = username;
+            document.getElementById('username').value = username;
+            document.getElementById('username').disabled = true;
+            document.getElementById('password').value = '';
+            document.getElementById('password').placeholder = 'Leave empty to keep current';
+            document.getElementById('password').required = false;
+            document.getElementById('role').value = role.toLowerCase();
+            document.getElementById('modal-error').style.display = 'none';
+            document.getElementById('user-modal').style.display = 'flex';
+        }
+
+        function closeModal() {
+            document.getElementById('user-modal').style.display = 'none';
+        }
+
+        async function saveUser(e) {
+            e.preventDefault();
+            const errorDiv = document.getElementById('modal-error');
+            errorDiv.style.display = 'none';
+
+            const editUsername = document.getElementById('edit-username').value;
+            const username = document.getElementById('username').value;
+            const password = document.getElementById('password').value;
+            const role = document.getElementById('role').value;
+
+            try {
+                let resp;
+                if (editUsername) {
+                    // Update existing user
+                    resp = await fetch(`/api/users/${editUsername}`, {
+                        method: 'PUT',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ password, role })
+                    });
+                } else {
+                    // Create new user
+                    resp = await fetch('/api/users', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ username, password, role })
+                    });
+                }
+
+                const data = await resp.json();
+                if (resp.ok) {
+                    closeModal();
+                    loadUsers();
+                } else {
+                    errorDiv.textContent = data.error || 'Failed to save user';
+                    errorDiv.style.display = 'block';
+                }
+            } catch (err) {
+                errorDiv.textContent = 'Request failed: ' + err.message;
+                errorDiv.style.display = 'block';
+            }
+        }
+
+        function showDeleteModal(username) {
+            deleteUser = username;
+            document.getElementById('delete-username').textContent = username;
+            document.getElementById('delete-modal').style.display = 'flex';
+        }
+
+        function closeDeleteModal() {
+            document.getElementById('delete-modal').style.display = 'none';
+            deleteUser = '';
+        }
+
+        async function confirmDelete() {
+            if (!deleteUser) return;
+
+            try {
+                const resp = await fetch(`/api/users/${deleteUser}`, {
+                    method: 'DELETE'
+                });
+
+                if (resp.ok) {
+                    closeDeleteModal();
+                    loadUsers();
+                } else {
+                    const data = await resp.json();
+                    alert(data.error || 'Failed to delete user');
+                }
+            } catch (err) {
+                alert('Request failed: ' + err.message);
+            }
+        }
+
+        function logout(e) {
+            e.preventDefault();
+            fetch('/api/logout', { method: 'POST' }).then(() => window.location.href = '/login');
+        }
+
+        loadUsers();
+    </script>
+</body>
+</html>

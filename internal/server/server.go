@@ -12,12 +12,14 @@ import (
 	"time"
 
 	"github.com/topxeq/xxsql/internal/auth"
+	"github.com/topxeq/xxsql/internal/backup"
 	"github.com/topxeq/xxsql/internal/config"
 	"github.com/topxeq/xxsql/internal/executor"
 	"github.com/topxeq/xxsql/internal/log"
 	"github.com/topxeq/xxsql/internal/mysql"
 	"github.com/topxeq/xxsql/internal/protocol"
 	"github.com/topxeq/xxsql/internal/storage"
+	"github.com/topxeq/xxsql/internal/web"
 )
 
 // Server represents the XxSql server.
@@ -25,6 +27,7 @@ type Server struct {
 	config     *config.Config
 	logger     *log.Logger
 	auth       *auth.Manager
+	backup     *backup.Manager
 	engine     *storage.Engine
 	executor   *executor.Executor
 	private    *protocol.Server
@@ -71,6 +74,7 @@ func New(cfg *config.Config, logger *log.Logger, engine *storage.Engine) *Server
 
 	if engine != nil {
 		s.executor = executor.NewExecutor(engine)
+		s.backup = backup.NewManager(engine.GetDataDir())
 	}
 
 	return s
@@ -546,23 +550,18 @@ func mysqlTypeFromString(typeStr string) uint8 {
 // HTTPServer wraps the HTTP API server.
 type HTTPServer struct {
 	server   *Server
+	web      *web.Server
 	bind     string
 	port     int
 	running  int32
-	ctx      context.Context
-	cancel   context.CancelFunc
-	wg       sync.WaitGroup
 }
 
 // NewHTTPServer creates a new HTTP server.
 func NewHTTPServer(server *Server, bind string, port int) *HTTPServer {
-	ctx, cancel := context.WithCancel(context.Background())
 	return &HTTPServer{
 		server: server,
 		bind:   bind,
 		port:   port,
-		ctx:    ctx,
-		cancel: cancel,
 	}
 }
 
@@ -572,8 +571,14 @@ func (s *HTTPServer) Start() error {
 		return fmt.Errorf("server already running")
 	}
 
-	// HTTP server implementation will be added in Phase 11 (Web Management)
-	s.server.logger.Info("HTTP API server listening on %s:%d (skeleton)", s.bind, s.port)
+	// Create web server
+	s.web = web.NewServer(s.server.config, s.server.engine, s.server.auth, s.server.backup)
+	if err := s.web.Start(); err != nil {
+		atomic.StoreInt32(&s.running, 0)
+		return fmt.Errorf("failed to start web server: %w", err)
+	}
+
+	s.server.logger.Info("HTTP API server listening on %s:%d", s.bind, s.port)
 	return nil
 }
 
@@ -583,8 +588,9 @@ func (s *HTTPServer) Stop() error {
 		return nil
 	}
 
-	s.cancel()
-	s.wg.Wait()
+	if s.web != nil {
+		s.web.Stop()
+	}
 	return nil
 }
 

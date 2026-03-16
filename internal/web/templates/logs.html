@@ -1,0 +1,229 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Logs - XxSql</title>
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+    <div class="layout">
+        <aside class="sidebar">
+            <div class="logo"><h1>XxSql</h1><span>Web Management</span></div>
+            <nav>
+                <a href="/"><span class="icon">📊</span><span>Dashboard</span></a>
+                <a href="/query"><span class="icon">🔍</span><span>Query</span></a>
+                <a href="/tables"><span class="icon">📋</span><span>Tables</span></a>
+                <a href="/users"><span class="icon">👥</span><span>Users</span></a>
+                <a href="/backup"><span class="icon">💾</span><span>Backup</span></a>
+                <a href="/logs" class="active"><span class="icon">📜</span><span>Logs</span></a>
+                <a href="/config"><span class="icon">⚙️</span><span>Config</span></a>
+            </nav>
+        </aside>
+
+        <main class="main">
+            <header class="header">
+                <h2>Log Viewer</h2>
+                <div class="user-info"><span>{{.User}}</span><a href="/api/logout" onclick="logout(event)">Logout</a></div>
+            </header>
+
+            <div class="card">
+                <div class="log-controls">
+                    <div class="log-tabs">
+                        <button class="tab-btn active" onclick="switchTab('server')">Server Logs</button>
+                        <button class="tab-btn" onclick="switchTab('audit')">Audit Logs</button>
+                    </div>
+                    <div class="log-options">
+                        <label>
+                            Lines:
+                            <select id="lines-limit" onchange="loadLogs()">
+                                <option value="100">100</option>
+                                <option value="200">200</option>
+                                <option value="500">500</option>
+                                <option value="1000">1000</option>
+                            </select>
+                        </label>
+                        <label>
+                            <input type="checkbox" id="auto-refresh" onchange="toggleAutoRefresh()">
+                            Auto-refresh
+                        </label>
+                        <button class="btn btn-secondary btn-sm" onclick="loadLogs()">Refresh</button>
+                    </div>
+                </div>
+
+                <div class="log-viewer" id="log-content">
+                    Loading...
+                </div>
+            </div>
+        </main>
+    </div>
+
+    <style>
+        .log-controls {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 15px;
+            flex-wrap: wrap;
+            gap: 10px;
+        }
+        .log-tabs {
+            display: flex;
+            gap: 5px;
+        }
+        .tab-btn {
+            padding: 8px 16px;
+            border: 1px solid #ddd;
+            background: #f8f9fa;
+            border-radius: 4px;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+        .tab-btn:hover {
+            background: #e9ecef;
+        }
+        .tab-btn.active {
+            background: #3498db;
+            color: white;
+            border-color: #3498db;
+        }
+        .log-options {
+            display: flex;
+            align-items: center;
+            gap: 15px;
+        }
+        .log-options label {
+            display: flex;
+            align-items: center;
+            gap: 5px;
+            font-size: 0.9rem;
+            color: #666;
+        }
+        .log-options select {
+            padding: 5px 10px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+        }
+        .log-viewer {
+            background: #1a1a2e;
+            color: #16c79a;
+            padding: 15px;
+            border-radius: 4px;
+            font-family: 'JetBrains Mono', 'Fira Code', 'Courier New', monospace;
+            font-size: 0.85rem;
+            height: 600px;
+            overflow-y: auto;
+            white-space: pre-wrap;
+            word-break: break-all;
+            line-height: 1.5;
+        }
+        .log-viewer::-webkit-scrollbar {
+            width: 8px;
+        }
+        .log-viewer::-webkit-scrollbar-track {
+            background: #0f0f1a;
+        }
+        .log-viewer::-webkit-scrollbar-thumb {
+            background: #333;
+            border-radius: 4px;
+        }
+        .log-line {
+            padding: 2px 0;
+        }
+        .log-line.error {
+            color: #ff6b6b;
+        }
+        .log-line.warn {
+            color: #feca57;
+        }
+        .log-line.info {
+            color: #54a0ff;
+        }
+        .log-line.debug {
+            color: #a0a0a0;
+        }
+        .empty-state {
+            color: #666;
+            font-style: italic;
+        }
+    </style>
+
+    <script>
+        let currentTab = 'server';
+        let autoRefreshInterval = null;
+
+        function switchTab(tab) {
+            currentTab = tab;
+            document.querySelectorAll('.tab-btn').forEach(btn => {
+                btn.classList.toggle('active', btn.textContent.toLowerCase().includes(tab));
+            });
+            loadLogs();
+        }
+
+        async function loadLogs() {
+            const lines = document.getElementById('lines-limit').value;
+            const viewer = document.getElementById('log-content');
+
+            viewer.textContent = 'Loading...';
+
+            try {
+                const resp = await fetch(`/api/logs/${currentTab}?lines=${lines}`);
+                const data = await resp.json();
+
+                if (data.error) {
+                    viewer.textContent = 'Error: ' + data.error;
+                    return;
+                }
+
+                if (data.lines && data.lines.length > 0) {
+                    viewer.innerHTML = data.lines.map(line => {
+                        let className = 'log-line';
+                        const lowerLine = line.toLowerCase();
+                        if (lowerLine.includes('error') || lowerLine.includes('fatal')) {
+                            className += ' error';
+                        } else if (lowerLine.includes('warn')) {
+                            className += ' warn';
+                        } else if (lowerLine.includes('info')) {
+                            className += ' info';
+                        } else if (lowerLine.includes('debug')) {
+                            className += ' debug';
+                        }
+                        return `<div class="${className}">${escapeHtml(line)}</div>`;
+                    }).join('');
+                    viewer.scrollTop = viewer.scrollHeight;
+                } else {
+                    viewer.innerHTML = '<div class="empty-state">No logs available</div>';
+                }
+            } catch (err) {
+                viewer.textContent = 'Failed to load logs: ' + err.message;
+            }
+        }
+
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.textContent = text;
+            return div.innerHTML;
+        }
+
+        function toggleAutoRefresh() {
+            const enabled = document.getElementById('auto-refresh').checked;
+            if (enabled) {
+                autoRefreshInterval = setInterval(loadLogs, 5000);
+            } else {
+                if (autoRefreshInterval) {
+                    clearInterval(autoRefreshInterval);
+                    autoRefreshInterval = null;
+                }
+            }
+        }
+
+        function logout(e) {
+            e.preventDefault();
+            fetch('/api/logout', { method: 'POST' }).then(() => window.location.href = '/login');
+        }
+
+        // Initial load
+        loadLogs();
+    </script>
+</body>
+</html>

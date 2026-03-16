@@ -1,0 +1,281 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Backup - XxSql</title>
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+    <div class="layout">
+        <aside class="sidebar">
+            <div class="logo"><h1>XxSql</h1><span>Web Management</span></div>
+            <nav>
+                <a href="/"><span class="icon">📊</span><span>Dashboard</span></a>
+                <a href="/query"><span class="icon">🔍</span><span>Query</span></a>
+                <a href="/tables"><span class="icon">📋</span><span>Tables</span></a>
+                <a href="/users"><span class="icon">👥</span><span>Users</span></a>
+                <a href="/backup" class="active"><span class="icon">💾</span><span>Backup</span></a>
+                <a href="/logs"><span class="icon">📜</span><span>Logs</span></a>
+                <a href="/config"><span class="icon">⚙️</span><span>Config</span></a>
+            </nav>
+        </aside>
+
+        <main class="main">
+            <header class="header">
+                <h2>Backup & Restore</h2>
+                <div class="user-info"><span>{{.User}}</span><a href="/api/logout" onclick="logout(event)">Logout</a></div>
+            </header>
+
+            <div class="card">
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px;">
+                    <h3 style="margin: 0;">Backup Management</h3>
+                    <div style="display: flex; gap: 10px;">
+                        <label style="display: flex; align-items: center; gap: 5px; font-size: 0.9rem;">
+                            <input type="checkbox" id="compress-option" checked> Compress
+                        </label>
+                        <button class="btn btn-primary" onclick="createBackup()">+ Create Backup</button>
+                    </div>
+                </div>
+                <div id="backups-list"></div>
+            </div>
+
+            <div class="card">
+                <h3>Restore from File</h3>
+                <p style="color: #666; margin-bottom: 15px;">Restore the database from a backup file. <strong>Warning:</strong> This will replace all current data.</p>
+                <div class="form-group">
+                    <label for="restore-path">Backup File Path</label>
+                    <div style="display: flex; gap: 10px;">
+                        <input type="text" id="restore-path" placeholder="Enter backup file path or select from list above">
+                        <button class="btn btn-danger" onclick="restoreBackup()">Restore</button>
+                    </div>
+                </div>
+            </div>
+        </main>
+    </div>
+
+    <!-- Restore Confirmation Modal -->
+    <div id="restore-modal" class="modal" style="display: none;">
+        <div class="modal-content" style="max-width: 450px;">
+            <div class="modal-header">
+                <h3>⚠️ Confirm Restore</h3>
+                <button class="modal-close" onclick="closeRestoreModal()">&times;</button>
+            </div>
+            <p>Are you sure you want to restore from:</p>
+            <p><strong id="restore-file"></strong></p>
+            <p style="color: #e74c3c;">This will replace all current data and cannot be undone!</p>
+            <div class="modal-footer">
+                <button type="button" class="btn btn-secondary" onclick="closeRestoreModal()">Cancel</button>
+                <button type="button" class="btn btn-danger" onclick="confirmRestore()">Restore</button>
+            </div>
+        </div>
+    </div>
+
+    <style>
+        .modal {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0,0,0,0.5);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            z-index: 1000;
+        }
+        .modal-content {
+            background: white;
+            border-radius: 8px;
+            width: 100%;
+            max-width: 500px;
+            box-shadow: 0 4px 20px rgba(0,0,0,0.2);
+        }
+        .modal-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 20px;
+            border-bottom: 1px solid #eee;
+        }
+        .modal-header h3 {
+            margin: 0;
+        }
+        .modal-close {
+            background: none;
+            border: none;
+            font-size: 1.5rem;
+            cursor: pointer;
+            color: #666;
+        }
+        .modal-content p {
+            padding: 0 20px;
+            margin: 10px 0;
+        }
+        .modal-footer {
+            display: flex;
+            justify-content: flex-end;
+            gap: 10px;
+            padding: 20px;
+            border-top: 1px solid #eee;
+        }
+        .backup-item {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 15px;
+            border: 1px solid #eee;
+            border-radius: 4px;
+            margin-bottom: 10px;
+        }
+        .backup-item:hover {
+            background: #f8f9fa;
+        }
+        .backup-item .info {
+            flex: 1;
+        }
+        .backup-item .name {
+            font-weight: 500;
+            color: #2c3e50;
+            margin-bottom: 5px;
+        }
+        .backup-item .meta {
+            color: #7f8c8d;
+            font-size: 0.85rem;
+        }
+        .backup-item .actions {
+            display: flex;
+            gap: 10px;
+        }
+        .empty-state {
+            text-align: center;
+            padding: 40px;
+            color: #7f8c8d;
+        }
+    </style>
+
+    <script>
+        let restorePath = '';
+
+        async function loadBackups() {
+            const resp = await fetch('/api/backups');
+            const data = await resp.json();
+            const container = document.getElementById('backups-list');
+
+            if (data.backups && data.backups.length > 0) {
+                container.innerHTML = data.backups.map(b => `
+                    <div class="backup-item">
+                        <div class="info">
+                            <div class="name">${b.name}</div>
+                            <div class="meta">
+                                Size: ${formatSize(b.size)} | Path: ${b.path}
+                            </div>
+                        </div>
+                        <div class="actions">
+                            <button class="btn btn-sm btn-secondary" onclick="downloadBackup('${b.name}')">Download</button>
+                            <button class="btn btn-sm btn-danger" onclick="selectRestore('${b.path}')">Restore</button>
+                        </div>
+                    </div>
+                `).join('');
+            } else {
+                container.innerHTML = '<div class="empty-state">No backups found. Create your first backup above.</div>';
+            }
+        }
+
+        function formatSize(bytes) {
+            if (bytes < 1024) return bytes + ' B';
+            if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
+            if (bytes < 1024 * 1024 * 1024) return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
+            return (bytes / (1024 * 1024 * 1024)).toFixed(2) + ' GB';
+        }
+
+        async function createBackup() {
+            const compress = document.getElementById('compress-option').checked;
+            const btn = event.target;
+            btn.disabled = true;
+            btn.textContent = 'Creating...';
+
+            try {
+                const resp = await fetch('/api/backups', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ compress })
+                });
+                const data = await resp.json();
+
+                if (resp.ok) {
+                    alert(`Backup created successfully!\nTables: ${data.table_count}\nTimestamp: ${data.timestamp}`);
+                    loadBackups();
+                } else {
+                    alert('Failed to create backup: ' + (data.error || 'Unknown error'));
+                }
+            } catch (err) {
+                alert('Request failed: ' + err.message);
+            } finally {
+                btn.disabled = false;
+                btn.textContent = '+ Create Backup';
+            }
+        }
+
+        function downloadBackup(name) {
+            window.location.href = `/api/backups/${name}`;
+        }
+
+        function selectRestore(path) {
+            document.getElementById('restore-path').value = path;
+            showRestoreModal(path);
+        }
+
+        function showRestoreModal(path) {
+            restorePath = path;
+            document.getElementById('restore-file').textContent = path;
+            document.getElementById('restore-modal').style.display = 'flex';
+        }
+
+        function closeRestoreModal() {
+            document.getElementById('restore-modal').style.display = 'none';
+            restorePath = '';
+        }
+
+        function restoreBackup() {
+            const path = document.getElementById('restore-path').value.trim();
+            if (!path) {
+                alert('Please enter a backup file path');
+                return;
+            }
+            showRestoreModal(path);
+        }
+
+        async function confirmRestore() {
+            if (!restorePath) return;
+
+            closeRestoreModal();
+
+            try {
+                const resp = await fetch('/api/restore', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ path: restorePath })
+                });
+                const data = await resp.json();
+
+                if (resp.ok) {
+                    alert(`Restore completed successfully!\nTables restored: ${data.table_count}`);
+                    location.reload();
+                } else {
+                    alert('Failed to restore: ' + (data.error || 'Unknown error'));
+                }
+            } catch (err) {
+                alert('Request failed: ' + err.message);
+            }
+        }
+
+        function logout(e) {
+            e.preventDefault();
+            fetch('/api/logout', { method: 'POST' }).then(() => window.location.href = '/login');
+        }
+
+        loadBackups();
+    </script>
+</body>
+</html>
