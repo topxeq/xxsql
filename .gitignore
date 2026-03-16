@@ -36,3 +36,28 @@ data/
 *.log.*
 *.gz
 backup/
+
+# Test coverage
+coverage.out
+coverage.html
+
+# Temporary files
+*.tmp
+*.temp
+
+# Database files
+*.xdb
+*.xmeta
+*.xwal
+*.xidx
+*.seq
+
+# User data
+users.json
+grants.json
+audit.log
+audit.log.*
+checkpoint.meta
+recovery.state
+recovery.log
+.unclean
