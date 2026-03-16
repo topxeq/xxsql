@@ -789,6 +789,8 @@ func (e *Executor) executeCreateTable(stmt *sql.CreateTableStmt) (*Result, error
 			Name:       colDef.Name,
 			Type:       colType,
 			Size:       colDef.Type.Size,
+			Precision:  colDef.Type.Precision,
+			Scale:      colDef.Type.Scale,
 			Nullable:   colDef.Nullable,
 			PrimaryKey: colDef.PrimaryKey,
 			AutoIncr:   colDef.AutoIncr,
@@ -1210,6 +1212,10 @@ func (e *Executor) expressionToValue(expr sql.Expression, col *types.ColumnInfo)
 		}
 		if ex.Type == sql.LiteralNumber {
 			// Check target column type first
+			if col != nil && col.Type == types.TypeDecimal {
+				// Store as DECIMAL
+				return types.NewDecimalFromString(fmt.Sprintf("%v", ex.Value))
+			}
 			if col != nil && col.Type == types.TypeFloat {
 				// Store as float for FLOAT columns
 				if f, err := strconv.ParseFloat(fmt.Sprintf("%v", ex.Value), 64); err == nil {
@@ -1226,10 +1232,34 @@ func (e *Executor) expressionToValue(expr sql.Expression, col *types.ColumnInfo)
 			}
 		}
 		if ex.Type == sql.LiteralString {
+			// Check if target column is DECIMAL
+			if col != nil && col.Type == types.TypeDecimal {
+				return types.NewDecimalFromString(fmt.Sprintf("%v", ex.Value))
+			}
 			return types.NewStringValue(fmt.Sprintf("%v", ex.Value), col.Type), nil
 		}
 		if ex.Type == sql.LiteralBool {
 			return types.NewBoolValue(ex.Value.(bool)), nil
+		}
+
+	case *sql.UnaryExpr:
+		if ex.Op == sql.OpNeg {
+			// Handle negative numbers
+			rightVal, err := e.expressionToValue(ex.Right, col)
+			if err != nil {
+				return types.Value{Null: true}, err
+			}
+
+			// Negate the value
+			switch rightVal.Type {
+			case types.TypeInt:
+				return types.NewIntValue(-rightVal.AsInt()), nil
+			case types.TypeFloat:
+				return types.NewFloatValue(-rightVal.AsFloat()), nil
+			case types.TypeDecimal:
+				unscaled, scale := rightVal.AsDecimal()
+				return types.NewDecimalValue(-unscaled, scale), nil
+			}
 		}
 
 	case *sql.ColumnRef:
@@ -1250,6 +1280,8 @@ func (e *Executor) valueToInterface(v types.Value) interface{} {
 		return v.AsInt()
 	case types.TypeFloat:
 		return v.AsFloat()
+	case types.TypeDecimal:
+		return v.AsDecimalString()
 	case types.TypeBool:
 		return v.AsBool()
 	case types.TypeChar, types.TypeVarchar, types.TypeText:

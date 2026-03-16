@@ -16,6 +16,7 @@ const (
 	TypeSeq
 	TypeInt
 	TypeFloat
+	TypeDecimal
 	TypeChar
 	TypeVarchar
 	TypeText
@@ -37,6 +38,8 @@ func (t TypeID) String() string {
 		return "INT"
 	case TypeFloat:
 		return "FLOAT"
+	case TypeDecimal:
+		return "DECIMAL"
 	case TypeChar:
 		return "CHAR"
 	case TypeVarchar:
@@ -67,6 +70,8 @@ func ParseTypeID(name string) TypeID {
 		return TypeInt
 	case "FLOAT", "float", "DOUBLE", "double":
 		return TypeFloat
+	case "DECIMAL", "decimal", "DEC", "dec", "NUMERIC", "numeric":
+		return TypeDecimal
 	case "CHAR", "char":
 		return TypeChar
 	case "VARCHAR", "varchar":
@@ -125,6 +130,70 @@ func NewFloatValue(v float64) Value {
 	data := make([]byte, 8)
 	binary.LittleEndian.PutUint64(data, math.Float64bits(v))
 	return Value{Type: TypeFloat, Data: data, Null: false}
+}
+
+// NewDecimalValue creates a DECIMAL value from an unscaled integer and scale.
+// For example, NewDecimalValue(12345, 2) represents 123.45
+func NewDecimalValue(unscaled int64, scale int) Value {
+	// Layout: scale (1 byte) + unscaled value (8 bytes)
+	data := make([]byte, 9)
+	data[0] = byte(scale)
+	binary.LittleEndian.PutUint64(data[1:9], uint64(unscaled))
+	return Value{Type: TypeDecimal, Data: data, Null: false}
+}
+
+// NewDecimalFromString creates a DECIMAL value from a string representation.
+func NewDecimalFromString(s string) (Value, error) {
+	// Parse the decimal string
+	var intPart, fracPart string
+	var negative bool
+
+	str := s
+	if len(str) > 0 && str[0] == '-' {
+		negative = true
+		str = str[1:]
+	}
+
+	// Split by decimal point
+	dotIdx := -1
+	for i := 0; i < len(str); i++ {
+		if str[i] == '.' {
+			dotIdx = i
+			break
+		}
+	}
+
+	if dotIdx >= 0 {
+		intPart = str[:dotIdx]
+		fracPart = str[dotIdx+1:]
+	} else {
+		intPart = str
+		fracPart = ""
+	}
+
+	// Calculate scale
+	scale := len(fracPart)
+
+	// Combine integer and fractional parts
+	combined := intPart + fracPart
+	if combined == "" {
+		combined = "0"
+	}
+
+	// Parse as int64
+	var unscaled int64
+	for _, c := range combined {
+		if c < '0' || c > '9' {
+			return NewNullValue(), fmt.Errorf("invalid decimal string: %s", s)
+		}
+		unscaled = unscaled*10 + int64(c-'0')
+	}
+
+	if negative {
+		unscaled = -unscaled
+	}
+
+	return NewDecimalValue(unscaled, scale), nil
 }
 
 // NewStringValue creates a string value (VARCHAR/CHAR/TEXT).
@@ -192,6 +261,68 @@ func (v Value) AsFloat() float64 {
 	return math.Float64frombits(binary.LittleEndian.Uint64(v.Data))
 }
 
+// AsDecimal returns the unscaled value and scale for DECIMAL type.
+// Returns (unscaled, scale) where the actual value is unscaled / 10^scale.
+func (v Value) AsDecimal() (unscaled int64, scale int) {
+	if v.Null || len(v.Data) < 9 {
+		return 0, 0
+	}
+	scale = int(v.Data[0])
+	unscaled = int64(binary.LittleEndian.Uint64(v.Data[1:9]))
+	return unscaled, scale
+}
+
+// AsDecimalString returns the DECIMAL value as a string.
+func (v Value) AsDecimalString() string {
+	if v.Null {
+		return "NULL"
+	}
+	unscaled, scale := v.AsDecimal()
+	return FormatDecimal(unscaled, scale)
+}
+
+// FormatDecimal formats an unscaled value with scale as a decimal string.
+func FormatDecimal(unscaled int64, scale int) string {
+	if scale == 0 {
+		return fmt.Sprintf("%d", unscaled)
+	}
+
+	// Convert to string
+	s := fmt.Sprintf("%0*d", scale+1, unscaled)
+
+	// Handle negative numbers
+	negative := false
+	if len(s) > 0 && s[0] == '-' {
+		negative = true
+		s = s[1:]
+	}
+
+	// Pad with leading zeros if needed
+	for len(s) <= scale {
+		s = "0" + s
+	}
+
+	// Insert decimal point
+	intPart := s[:len(s)-scale]
+	fracPart := s[len(s)-scale:]
+
+	// Remove trailing zeros from fractional part
+	for len(fracPart) > 0 && fracPart[len(fracPart)-1] == '0' {
+		fracPart = fracPart[:len(fracPart)-1]
+	}
+
+	result := intPart
+	if len(fracPart) > 0 {
+		result += "." + fracPart
+	}
+
+	if negative {
+		result = "-" + result
+	}
+
+	return result
+}
+
 // AsString returns the value as string.
 func (v Value) AsString() string {
 	if v.Null {
@@ -249,6 +380,35 @@ func (v Value) Compare(other Value) int {
 		if a < b {
 			return -1
 		} else if a > b {
+			return 1
+		}
+		return 0
+
+	case TypeDecimal:
+		// Compare decimals by converting to same scale
+		aUnscaled, aScale := v.AsDecimal()
+		bUnscaled, bScale := other.AsDecimal()
+
+		// Normalize to same scale
+		maxScale := aScale
+		if bScale > maxScale {
+			maxScale = bScale
+		}
+
+		// Scale both to maxScale
+		aNormalized := aUnscaled
+		for i := 0; i < maxScale-aScale; i++ {
+			aNormalized *= 10
+		}
+
+		bNormalized := bUnscaled
+		for i := 0; i < maxScale-bScale; i++ {
+			bNormalized *= 10
+		}
+
+		if aNormalized < bNormalized {
+			return -1
+		} else if aNormalized > bNormalized {
 			return 1
 		}
 		return 0
@@ -374,6 +534,9 @@ func UnmarshalValue(data []byte, typ TypeID) (Value, int) {
 	case TypeInt, TypeSeq, TypeFloat, TypeDatetime:
 		dataLen = 8
 		offset = 1
+	case TypeDecimal:
+		dataLen = 9 // scale (1) + unscaled (8)
+		offset = 1
 	case TypeDate, TypeTime:
 		dataLen = 4
 		offset = 1
@@ -422,6 +585,8 @@ func (v Value) String() string {
 		return fmt.Sprintf("%d", v.AsInt())
 	case TypeFloat:
 		return fmt.Sprintf("%f", v.AsFloat())
+	case TypeDecimal:
+		return v.AsDecimalString()
 	case TypeChar, TypeVarchar, TypeText:
 		return fmt.Sprintf("'%s'", v.AsString())
 	case TypeBool:
