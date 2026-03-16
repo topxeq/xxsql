@@ -86,11 +86,24 @@ mysql -h 127.0.0.1 -P 3306 -u admin -p
 | SEQ | Auto-increment integer (like MySQL AUTO_INCREMENT) |
 | INT | 64-bit integer |
 | FLOAT | 64-bit floating point |
+| DECIMAL(p,s) | Exact numeric with precision and scale |
 | CHAR(n) | Fixed-length string |
 | VARCHAR(n) | Variable-length string |
 | TEXT | Large text |
 | BOOL | Boolean |
 | DATE, TIME, DATETIME | Date/time types |
+
+**DECIMAL Example:**
+```sql
+CREATE TABLE products (
+    id SEQ PRIMARY KEY,
+    name VARCHAR(100),
+    price DECIMAL(10,2)    -- 10 total digits, 2 after decimal
+);
+
+INSERT INTO products (id, name, price) VALUES (1, 'Widget', 99.99);
+INSERT INTO products (id, name, price) VALUES (2, 'Gadget', -1234.56);
+```
 
 ### DDL Statements
 
