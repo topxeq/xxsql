@@ -471,12 +471,21 @@ func (h *MySQLHandler) readLengthEncodedInt(data []byte) (uint64, int) {
 		return uint64(first), 1
 	}
 	if first == 0xFC {
+		if len(data) < 3 {
+			return 0, 0
+		}
 		return uint64(binary.LittleEndian.Uint16(data[1:])), 3
 	}
 	if first == 0xFD {
-		return uint64(binary.LittleEndian.Uint32(data[1:]) & 0xFFFFFF), 4
+		if len(data) < 4 {
+			return 0, 0
+		}
+		return uint64(data[1]) | uint64(data[2])<<8 | uint64(data[3])<<16, 4
 	}
 	if first == 0xFE {
+		if len(data) < 9 {
+			return 0, 0
+		}
 		return binary.LittleEndian.Uint64(data[1:]), 9
 	}
 	return 0, 0
@@ -496,7 +505,9 @@ func (h *MySQLHandler) writeLengthEncodedInt(n uint64) []byte {
 	if n < 16777216 {
 		buf := make([]byte, 4)
 		buf[0] = 0xFD
-		binary.LittleEndian.PutUint32(buf[1:], uint32(n)&0xFFFFFF)
+		buf[1] = byte(n)
+		buf[2] = byte(n >> 8)
+		buf[3] = byte(n >> 16)
 		return buf
 	}
 	buf := make([]byte, 9)
