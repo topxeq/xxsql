@@ -38,6 +38,11 @@ var (
 var srv *server.Server
 
 func main() {
+	os.Exit(run())
+}
+
+// run contains the main server logic. It returns an exit code.
+func run() int {
 	flag.Parse()
 
 	// Handle version flag
@@ -45,7 +50,7 @@ func main() {
 		fmt.Printf("XxSql Server v%s\n", Version)
 		fmt.Printf("Git Commit: %s\n", GitCommit)
 		fmt.Printf("Build Time: %s\n", BuildTime)
-		os.Exit(0)
+		return 0
 	}
 
 	// Handle init-config flag
@@ -53,10 +58,10 @@ func main() {
 		cfg, err := config.GenerateExampleConfig()
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error generating config: %v\n", err)
-			os.Exit(1)
+			return 1
 		}
 		fmt.Println(string(cfg))
-		os.Exit(0)
+		return 0
 	}
 
 	// Load configuration
@@ -64,7 +69,7 @@ func main() {
 	cfg, err := loader.Load()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Error loading configuration: %v\n", err)
-		os.Exit(1)
+		return 1
 	}
 
 	// Apply command-line overrides
@@ -80,21 +85,21 @@ func main() {
 	// Create PID file
 	if err := server.CreatePIDFile(cfg.Server.PIDFile); err != nil {
 		logger.Error("Failed to create PID file: %v", err)
-		os.Exit(1)
+		return 1
 	}
 	defer server.RemovePIDFile(cfg.Server.PIDFile)
 
 	// Ensure data directory exists
 	if err := os.MkdirAll(cfg.Server.DataDir, 0755); err != nil {
 		logger.Error("Failed to create data directory: %v", err)
-		os.Exit(1)
+		return 1
 	}
 
 	// Initialize storage engine
 	engine := storage.NewEngine(cfg.Server.DataDir)
 	if err := engine.Open(); err != nil {
 		logger.Error("Failed to open storage engine: %v", err)
-		os.Exit(1)
+		return 1
 	}
 	defer engine.Close()
 
@@ -102,7 +107,7 @@ func main() {
 	srv = server.New(cfg, logger, engine)
 	if err := srv.Start(); err != nil {
 		logger.Error("Failed to start server: %v", err)
-		os.Exit(1)
+		return 1
 	}
 
 	// Setup signal handling
@@ -131,7 +136,7 @@ func main() {
 			logger.Info("Received %v, shutting down...", sig)
 			srv.Stop()
 			logger.Info("Server stopped")
-			return
+			return 0
 		}
 	}
 }
