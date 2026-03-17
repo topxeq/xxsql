@@ -282,7 +282,15 @@ func (h *MySQLHandler) sendHandshake() error {
 		AuthPluginName:     AuthPluginNativePassword,
 	}
 
-	return h.writePacket(h.encodeHandshake(hs))
+	// encodeHandshake already includes the header, write directly
+	data := h.encodeHandshake(hs)
+	h.mu.Lock()
+	defer h.mu.Unlock()
+
+	if _, err := h.writer.Write(data); err != nil {
+		return err
+	}
+	return h.writer.Flush()
 }
 
 // encodeHandshake encodes the handshake packet.

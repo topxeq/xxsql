@@ -2,8 +2,10 @@ package mysql
 
 import (
 	"crypto/sha1"
+	"encoding/binary"
 	"fmt"
 	"net"
+	"sync"
 	"testing"
 	"time"
 )
@@ -1155,31 +1157,930 @@ func TestMySQLHandler_EncodeRowData(t *testing.T) {
 }
 
 func TestMySQLHandler_ProcessCommand_Quit(t *testing.T) {
-	server, client := net.Pipe()
+	server, _ := net.Pipe()
 	defer server.Close()
-	defer client.Close()
 
 	handler := NewMySQLHandler(server, 1)
 
-	// COM_QUIT should return error
+	// COM_QUIT should return error (without needing to read)
 	err := handler.processCommand(COM_QUIT, nil)
 	if err == nil {
 		t.Error("COM_QUIT should return error")
 	}
 }
 
-func TestMySQLHandler_ProcessCommand_InitDB(t *testing.T) {
+// ============================================================================
+// sendOK/sendERR Tests (with proper synchronization)
+// ============================================================================
+
+func TestMySQLHandler_SendOK(t *testing.T) {
+	server, client := net.Pipe()
+	defer server.Close()
+	defer client.Close()
+
+	handler := NewMySQLHandler(server, 1)
+	defer handler.Close()
+
+	// Read in goroutine since net.Pipe is synchronous
+	var buf []byte
+	var n int
+	readDone := make(chan struct{})
+	go func() {
+		defer close(readDone)
+		data := make([]byte, 128)
+		n, _ = client.Read(data)
+		buf = data
+	}()
+
+	// Send OK packet
+	err := handler.sendOK(100, 5)
+	if err != nil {
+		t.Errorf("sendOK failed: %v", err)
+	}
+
+	<-readDone
+
+	if n < 1 {
+		t.Error("Expected at least 1 byte")
+	}
+
+	// First byte should be OK_PACKET (0x00)
+	if buf[4] != OK_PACKET {
+		t.Errorf("Expected OK_PACKET (0x00), got 0x%02X", buf[4])
+	}
+}
+
+func TestMySQLHandler_SendERR(t *testing.T) {
+	server, client := net.Pipe()
+	defer server.Close()
+	defer client.Close()
+
+	handler := NewMySQLHandler(server, 1)
+	defer handler.Close()
+
+	// Read in goroutine since net.Pipe is synchronous
+	var buf []byte
+	var n int
+	readDone := make(chan struct{})
+	go func() {
+		defer close(readDone)
+		data := make([]byte, 128)
+		n, _ = client.Read(data)
+		buf = data
+	}()
+
+	// Send ERR packet
+	err := handler.sendERR(1045, "28000", "Access denied")
+	if err != nil {
+		t.Errorf("sendERR failed: %v", err)
+	}
+
+	<-readDone
+
+	if n < 1 {
+		t.Error("Expected at least 1 byte")
+	}
+
+	// First byte should be ERR_PACKET (0xFF)
+	if buf[4] != ERR_PACKET {
+		t.Errorf("Expected ERR_PACKET (0xFF), got 0x%02X", buf[4])
+	}
+}
+
+// ============================================================================
+// encodeHandshake Tests
+// ============================================================================
+
+func TestMySQLHandler_EncodeHandshake(t *testing.T) {
 	server, _ := net.Pipe()
 	defer server.Close()
 
 	handler := NewMySQLHandler(server, 1)
+	defer handler.Close()
 
-	// This will set the database without writing
-	handler.mu.Lock()
-	handler.database = "testdb"
-	handler.mu.Unlock()
-
-	if handler.Database() != "testdb" {
-		t.Errorf("Database should be 'testdb', got %q", handler.Database())
+	hs := &ServerHandshakePacket{
+		ProtocolVersion:     ProtocolVersion,
+		ServerVersion:       "5.7.0-XxSql-Test",
+		ConnectionID:        12345,
+		AuthPluginDataPart1: []byte{1, 2, 3, 4, 5, 6, 7, 8},
+		CapabilityFlags1:    0xFFFF,
+		CharacterSet:        CharacterSetUTF8MB4,
+		StatusFlags:         0,
+		CapabilityFlags2:    0xFFFF,
+		AuthPluginDataLen:   21,
+		AuthPluginDataPart2: []byte{9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20},
+		AuthPluginName:      AuthPluginNativePassword,
 	}
+
+	result := handler.encodeHandshake(hs)
+	if len(result) == 0 {
+		t.Error("encodeHandshake should return non-empty data")
+	}
+
+	// Verify protocol version at position 4 (after header)
+	if result[4] != ProtocolVersion {
+		t.Errorf("Protocol version: got %d, want %d", result[4], ProtocolVersion)
+	}
+}
+
+// ============================================================================
+// sendHandshake Tests
+// ============================================================================
+
+func TestMySQLHandler_SendHandshake(t *testing.T) {
+	server, client := net.Pipe()
+	defer server.Close()
+	defer client.Close()
+
+	handler := NewMySQLHandler(server, 1)
+	defer handler.Close()
+
+	// Read in goroutine since net.Pipe is synchronous
+	var buf []byte
+	var n int
+	readDone := make(chan struct{})
+	go func() {
+		defer close(readDone)
+		data := make([]byte, 256)
+		n, _ = client.Read(data)
+		buf = data
+	}()
+
+	// Send handshake
+	err := handler.sendHandshake()
+	if err != nil {
+		t.Errorf("sendHandshake failed: %v", err)
+	}
+
+	<-readDone
+
+	if n < 10 {
+		t.Errorf("Expected at least 10 bytes, got %d", n)
+	}
+
+	// First byte (after header) should be protocol version 10
+	// MySQL packet format: 3 bytes length + 1 byte seq + payload
+	// So buf[4] is the first byte of payload (protocol version)
+	if n >= 5 && buf[4] != 10 {
+		t.Errorf("Expected protocol version 10, got %d", buf[4])
+	}
+}
+
+// ============================================================================
+// processCommand Tests (with proper synchronization)
+// ============================================================================
+
+func TestMySQLHandler_ProcessCommand_Ping(t *testing.T) {
+	server, client := net.Pipe()
+	defer server.Close()
+	defer client.Close()
+
+	handler := NewMySQLHandler(server, 1)
+	defer handler.Close()
+
+	// Read in goroutine since net.Pipe is synchronous
+	var n int
+	readDone := make(chan struct{})
+	go func() {
+		defer close(readDone)
+		data := make([]byte, 64)
+		n, _ = client.Read(data)
+	}()
+
+	// Process PING command
+	err := handler.processCommand(COM_PING, nil)
+	if err != nil {
+		t.Errorf("COM_PING failed: %v", err)
+	}
+
+	<-readDone
+
+	if n < 1 {
+		t.Error("Expected response")
+	}
+}
+
+func TestMySQLHandler_ProcessCommand_Unknown(t *testing.T) {
+	server, client := net.Pipe()
+	defer server.Close()
+	defer client.Close()
+
+	handler := NewMySQLHandler(server, 1)
+	defer handler.Close()
+
+	// Read in goroutine since net.Pipe is synchronous
+	var buf []byte
+	readDone := make(chan struct{})
+	go func() {
+		defer close(readDone)
+		data := make([]byte, 64)
+		client.Read(data)
+		buf = data
+	}()
+
+	// Process unknown command
+	err := handler.processCommand(0xFF, nil)
+	if err != nil {
+		t.Errorf("Unknown command should return error packet, not error: %v", err)
+	}
+
+	<-readDone
+
+	// First byte (after header) should be ERR_PACKET
+	if buf[4] != ERR_PACKET {
+		t.Errorf("Expected ERR_PACKET, got 0x%02X", buf[4])
+	}
+}
+
+func TestMySQLHandler_ProcessCommand_Query_NilHandler(t *testing.T) {
+	server, client := net.Pipe()
+	defer server.Close()
+	defer client.Close()
+
+	handler := NewMySQLHandler(server, 1) // No query handler set
+	defer handler.Close()
+
+	// Read in goroutine since net.Pipe is synchronous
+	var n int
+	readDone := make(chan struct{})
+	go func() {
+		defer close(readDone)
+		data := make([]byte, 64)
+		n, _ = client.Read(data)
+	}()
+
+	// Process QUERY command without handler
+	err := handler.processCommand(COM_QUERY, []byte("SELECT 1"))
+	if err != nil {
+		t.Errorf("COM_QUERY without handler should return OK: %v", err)
+	}
+
+	<-readDone
+
+	if n < 1 {
+		t.Error("Expected response")
+	}
+}
+
+func TestMySQLHandler_ProcessCommand_Query_WithHandler(t *testing.T) {
+	server, client := net.Pipe()
+	defer server.Close()
+	defer client.Close()
+
+	queryCalled := false
+	handler := NewMySQLHandler(server, 1,
+		WithMySQLQueryHandler(func(h *MySQLHandler, sql string) ([]*ColumnDefinition, [][]interface{}, error) {
+			queryCalled = true
+			return []*ColumnDefinition{
+				{Name: "id", Type: 3, Charset: CharacterSetUTF8MB4, Length: 11},
+			}, [][]interface{}{{1}, {2}}, nil
+		}),
+	)
+	defer handler.Close()
+
+	// Read all responses in goroutine
+	readDone := make(chan struct{})
+	go func() {
+		defer close(readDone)
+		buf := make([]byte, 4096)
+		for {
+			_, err := client.Read(buf)
+			if err != nil {
+				break
+			}
+		}
+	}()
+
+	err := handler.processCommand(COM_QUERY, []byte("SELECT id FROM test"))
+	if err != nil {
+		t.Errorf("COM_QUERY failed: %v", err)
+	}
+
+	// Close client to stop reading
+	client.Close()
+	<-readDone
+
+	if !queryCalled {
+		t.Error("Query handler should have been called")
+	}
+}
+
+func TestMySQLHandler_ProcessCommand_Query_Error(t *testing.T) {
+	server, client := net.Pipe()
+	defer server.Close()
+	defer client.Close()
+
+	handler := NewMySQLHandler(server, 1,
+		WithMySQLQueryHandler(func(h *MySQLHandler, sql string) ([]*ColumnDefinition, [][]interface{}, error) {
+			return nil, nil, fmt.Errorf("query error")
+		}),
+	)
+	defer handler.Close()
+
+	// Read in goroutine since net.Pipe is synchronous
+	var buf []byte
+	readDone := make(chan struct{})
+	go func() {
+		defer close(readDone)
+		data := make([]byte, 64)
+		client.Read(data)
+		buf = data
+	}()
+
+	err := handler.processCommand(COM_QUERY, []byte("BAD SQL"))
+	if err != nil {
+		t.Errorf("COM_QUERY error should return error packet: %v", err)
+	}
+
+	<-readDone
+
+	// First byte (after header) should be ERR_PACKET
+	if buf[4] != ERR_PACKET {
+		t.Errorf("Expected ERR_PACKET, got 0x%02X", buf[4])
+	}
+}
+
+func TestMySQLHandler_ProcessCommand_InitDB(t *testing.T) {
+	server, client := net.Pipe()
+	defer server.Close()
+	defer client.Close()
+
+	handler := NewMySQLHandler(server, 1)
+	defer handler.Close()
+
+	// Read in goroutine since net.Pipe is synchronous
+	readDone := make(chan struct{})
+	go func() {
+		defer close(readDone)
+		buf := make([]byte, 64)
+		client.Read(buf)
+	}()
+
+	err := handler.processCommand(COM_INIT_DB, []byte("mydb"))
+	if err != nil {
+		t.Errorf("COM_INIT_DB failed: %v", err)
+	}
+
+	<-readDone
+
+	if handler.Database() != "mydb" {
+		t.Errorf("Database should be 'mydb', got %q", handler.Database())
+	}
+}
+
+// ============================================================================
+// handleFieldList Tests (with proper synchronization)
+// ============================================================================
+
+func TestMySQLHandler_HandleFieldList_NoHandler(t *testing.T) {
+	server, client := net.Pipe()
+	defer server.Close()
+	defer client.Close()
+
+	handler := NewMySQLHandler(server, 1) // No field list handler
+	defer handler.Close()
+
+	// Read in goroutine since net.Pipe is synchronous
+	var buf []byte
+	readDone := make(chan struct{})
+	go func() {
+		defer close(readDone)
+		data := make([]byte, 64)
+		client.Read(data)
+		buf = data
+	}()
+
+	err := handler.handleFieldList("users")
+	if err != nil {
+		t.Errorf("handleFieldList should return error packet: %v", err)
+	}
+
+	<-readDone
+
+	// First byte (after header) should be ERR_PACKET
+	if buf[4] != ERR_PACKET {
+		t.Errorf("Expected ERR_PACKET, got 0x%02X", buf[4])
+	}
+}
+
+func TestMySQLHandler_HandleFieldList_WithHandler(t *testing.T) {
+	server, client := net.Pipe()
+	defer server.Close()
+	defer client.Close()
+
+	handler := NewMySQLHandler(server, 1,
+		WithMySQLFieldListHandler(func(h *MySQLHandler, table string) ([]*ColumnDefinition, error) {
+			return []*ColumnDefinition{
+				{Name: "id", Type: 3, Charset: CharacterSetUTF8MB4, Length: 11},
+				{Name: "name", Type: 253, Charset: CharacterSetUTF8MB4, Length: 255},
+			}, nil
+		}),
+	)
+	defer handler.Close()
+
+	// Read all responses in goroutine
+	readDone := make(chan struct{})
+	go func() {
+		defer close(readDone)
+		buf := make([]byte, 4096)
+		for {
+			_, err := client.Read(buf)
+			if err != nil {
+				break
+			}
+		}
+	}()
+
+	err := handler.handleFieldList("users")
+	if err != nil {
+		t.Errorf("handleFieldList failed: %v", err)
+	}
+
+	// Close client to stop reading
+	client.Close()
+	<-readDone
+}
+
+func TestMySQLHandler_HandleFieldList_TableNotExist(t *testing.T) {
+	server, client := net.Pipe()
+	defer server.Close()
+	defer client.Close()
+
+	handler := NewMySQLHandler(server, 1,
+		WithMySQLFieldListHandler(func(h *MySQLHandler, table string) ([]*ColumnDefinition, error) {
+			return nil, fmt.Errorf("table does not exist")
+		}),
+	)
+	defer handler.Close()
+
+	// Read in goroutine since net.Pipe is synchronous
+	var buf []byte
+	readDone := make(chan struct{})
+	go func() {
+		defer close(readDone)
+		data := make([]byte, 64)
+		client.Read(data)
+		buf = data
+	}()
+
+	err := handler.handleFieldList("nonexistent")
+	if err != nil {
+		t.Errorf("handleFieldList should return error packet: %v", err)
+	}
+
+	<-readDone
+
+	// First byte (after header) should be ERR_PACKET
+	if buf[4] != ERR_PACKET {
+		t.Errorf("Expected ERR_PACKET, got 0x%02X", buf[4])
+	}
+}
+
+// ============================================================================
+// handleStatistics Tests
+// ============================================================================
+
+func TestMySQLHandler_HandleStatistics(t *testing.T) {
+	server, client := net.Pipe()
+	defer server.Close()
+	defer client.Close()
+
+	handler := NewMySQLHandler(server, 1)
+	defer handler.Close()
+
+	// Read in goroutine since net.Pipe is synchronous
+	var n int
+	readDone := make(chan struct{})
+	go func() {
+		defer close(readDone)
+		data := make([]byte, 256)
+		n, _ = client.Read(data)
+	}()
+
+	err := handler.handleStatistics()
+	if err != nil {
+		t.Errorf("handleStatistics failed: %v", err)
+	}
+
+	<-readDone
+
+	if n < 1 {
+		t.Error("Expected statistics response")
+	}
+}
+
+// ============================================================================
+// handleQuery Tests (with proper synchronization)
+// ============================================================================
+
+func TestMySQLHandler_HandleQuery_WithColumns(t *testing.T) {
+	server, client := net.Pipe()
+	defer server.Close()
+	defer client.Close()
+
+	handler := NewMySQLHandler(server, 1,
+		WithMySQLQueryHandler(func(h *MySQLHandler, sql string) ([]*ColumnDefinition, [][]interface{}, error) {
+			return []*ColumnDefinition{
+				{Name: "id", Type: 3, Charset: CharacterSetUTF8MB4, Length: 11},
+			}, [][]interface{}{{1}}, nil
+		}),
+	)
+	defer handler.Close()
+
+	// Read all responses in goroutine
+	readDone := make(chan struct{})
+	go func() {
+		defer close(readDone)
+		buf := make([]byte, 4096)
+		for {
+			_, err := client.Read(buf)
+			if err != nil {
+				break
+			}
+		}
+	}()
+
+	err := handler.handleQuery("SELECT 1")
+	if err != nil {
+		t.Errorf("handleQuery failed: %v", err)
+	}
+
+	// Close client to stop reading
+	client.Close()
+	<-readDone
+}
+
+func TestMySQLHandler_HandleQuery_NoColumns(t *testing.T) {
+	server, client := net.Pipe()
+	defer server.Close()
+	defer client.Close()
+
+	handler := NewMySQLHandler(server, 1,
+		WithMySQLQueryHandler(func(h *MySQLHandler, sql string) ([]*ColumnDefinition, [][]interface{}, error) {
+			return nil, nil, nil // INSERT/UPDATE/DELETE
+		}),
+	)
+	defer handler.Close()
+
+	// Read in goroutine since net.Pipe is synchronous
+	var buf []byte
+	readDone := make(chan struct{})
+	go func() {
+		defer close(readDone)
+		data := make([]byte, 64)
+		client.Read(data)
+		buf = data
+	}()
+
+	err := handler.handleQuery("INSERT INTO t VALUES (1)")
+	if err != nil {
+		t.Errorf("handleQuery failed: %v", err)
+	}
+
+	<-readDone
+
+	// First byte (after header) should be OK_PACKET
+	if buf[4] != OK_PACKET {
+		t.Errorf("Expected OK_PACKET, got 0x%02X", buf[4])
+	}
+}
+
+func TestMySQLHandler_HandleQuery_Error(t *testing.T) {
+	server, client := net.Pipe()
+	defer server.Close()
+	defer client.Close()
+
+	handler := NewMySQLHandler(server, 1,
+		WithMySQLQueryHandler(func(h *MySQLHandler, sql string) ([]*ColumnDefinition, [][]interface{}, error) {
+			return nil, nil, fmt.Errorf("syntax error")
+		}),
+	)
+	defer handler.Close()
+
+	// Read in goroutine since net.Pipe is synchronous
+	var buf []byte
+	readDone := make(chan struct{})
+	go func() {
+		defer close(readDone)
+		data := make([]byte, 64)
+		client.Read(data)
+		buf = data
+	}()
+
+	err := handler.handleQuery("BAD SQL")
+	if err != nil {
+		t.Errorf("handleQuery should return error packet: %v", err)
+	}
+
+	<-readDone
+
+	// First byte (after header) should be ERR_PACKET
+	if buf[4] != ERR_PACKET {
+		t.Errorf("Expected ERR_PACKET, got 0x%02X", buf[4])
+	}
+}
+
+// ============================================================================
+// decodeClientHandshake Tests
+// ============================================================================
+
+func TestMySQLHandler_DecodeClientHandshake_TooShort(t *testing.T) {
+	server, _ := net.Pipe()
+	defer server.Close()
+
+	handler := NewMySQLHandler(server, 1)
+	defer handler.Close()
+
+	// Too short packet
+	_, err := handler.decodeClientHandshake([]byte{0x01, 0x02, 0x03})
+	if err == nil {
+		t.Error("decodeClientHandshake should return error for short packet")
+	}
+}
+
+func TestMySQLHandler_DecodeClientHandshake_Valid(t *testing.T) {
+	server, _ := net.Pipe()
+	defer server.Close()
+
+	handler := NewMySQLHandler(server, 1)
+	defer handler.Close()
+
+	// Create a valid client handshake packet
+	data := make([]byte, 100)
+	offset := 0
+
+	// Capability flags
+	binary.LittleEndian.PutUint32(data[offset:], DefaultServerCapabilities)
+	offset += 4
+
+	// Max packet size
+	binary.LittleEndian.PutUint32(data[offset:], 16777216)
+	offset += 4
+
+	// Character set
+	data[offset] = CharacterSetUTF8MB4
+	offset += 1
+
+	// Reserved (23 bytes)
+	offset += 23
+
+	// Username (null-terminated)
+	copy(data[offset:], "root")
+	offset += 4
+	data[offset] = 0
+	offset += 1
+
+	// Auth response length
+	data[offset] = 20
+	offset += 1
+
+	// Auth response (20 bytes)
+	for i := 0; i < 20; i++ {
+		data[offset+i] = byte(i)
+	}
+	offset += 20
+
+	// Database (null-terminated)
+	copy(data[offset:], "test")
+	offset += 4
+	data[offset] = 0
+
+	hs, err := handler.decodeClientHandshake(data)
+	if err != nil {
+		t.Errorf("decodeClientHandshake failed: %v", err)
+	}
+
+	if hs.Username != "root" {
+		t.Errorf("Username: got %q, want 'root'", hs.Username)
+	}
+
+	if hs.Database != "test" {
+		t.Errorf("Database: got %q, want 'test'", hs.Database)
+	}
+}
+
+// ============================================================================
+// readRawPacket Tests (with goroutines)
+// ============================================================================
+
+func TestMySQLHandler_ReadRawPacket(t *testing.T) {
+	server, client := net.Pipe()
+	defer server.Close()
+	defer client.Close()
+
+	handler := NewMySQLHandler(server, 1)
+	defer handler.Close()
+
+	// Write a packet from client side in a goroutine
+	payload := []byte{0x01, 0x02, 0x03}
+	header := []byte{byte(len(payload)), 0, 0, 0}
+	go func() {
+		client.Write(header)
+		client.Write(payload)
+	}()
+
+	// Read the packet
+	data, err := handler.readRawPacket()
+	if err != nil {
+		t.Errorf("readRawPacket failed: %v", err)
+	}
+
+	if len(data) != len(payload) {
+		t.Errorf("Payload length: got %d, want %d", len(data), len(payload))
+	}
+}
+
+func TestMySQLHandler_ReadPacket(t *testing.T) {
+	server, client := net.Pipe()
+	defer server.Close()
+	defer client.Close()
+
+	handler := NewMySQLHandler(server, 1)
+	defer handler.Close()
+
+	// Write a packet with command type in a goroutine
+	payload := []byte{COM_PING}
+	header := []byte{byte(len(payload)), 0, 0, 0}
+	go func() {
+		client.Write(header)
+		client.Write(payload)
+	}()
+
+	// Read the packet
+	cmd, data, err := handler.readPacket()
+	if err != nil {
+		t.Errorf("readPacket failed: %v", err)
+	}
+
+	if cmd != COM_PING {
+		t.Errorf("Command: got 0x%02X, want 0x%02X", cmd, COM_PING)
+	}
+
+	if len(data) != 0 {
+		t.Errorf("Payload data length: got %d, want 0", len(data))
+	}
+}
+
+// ============================================================================
+// writePacket Tests (with goroutines)
+// ============================================================================
+
+func TestMySQLHandler_WritePacket(t *testing.T) {
+	server, client := net.Pipe()
+	defer server.Close()
+	defer client.Close()
+
+	handler := NewMySQLHandler(server, 1)
+	defer handler.Close()
+
+	// Read from client in a goroutine
+	buf := make([]byte, 64)
+	var n int
+	var readErr error
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		n, readErr = client.Read(buf)
+	}()
+
+	// Write a packet
+	data := []byte{0x01, 0x02, 0x03}
+	err := handler.writePacket(data)
+	if err != nil {
+		t.Errorf("writePacket failed: %v", err)
+	}
+
+	<-done
+
+	if readErr != nil {
+		t.Errorf("Failed to read from client: %v", readErr)
+	}
+
+	// Packet should be: 3 bytes length + 1 byte seq + 3 bytes payload
+	if n != 7 {
+		t.Errorf("Packet length: got %d, want 7", n)
+	}
+}
+
+func TestMySQLHandler_WritePacket_Sequence(t *testing.T) {
+	server, client := net.Pipe()
+	defer server.Close()
+	defer client.Close()
+
+	handler := NewMySQLHandler(server, 1)
+	defer handler.Close()
+
+	// Read all packets in a goroutine
+	type readResult struct {
+		data []byte
+		err  error
+	}
+	results := make(chan readResult, 3)
+	go func() {
+		for i := 0; i < 3; i++ {
+			buf := make([]byte, 64)
+			n, err := client.Read(buf)
+			results <- readResult{data: buf[:n], err: err}
+		}
+	}()
+
+	// Write multiple packets
+	for i := 0; i < 3; i++ {
+		err := handler.writePacket([]byte{0x01})
+		if err != nil {
+			t.Errorf("writePacket %d failed: %v", i, err)
+		}
+	}
+
+	// Verify sequence IDs: 0, 1, 2
+	for i := 0; i < 3; i++ {
+		result := <-results
+		if result.err != nil {
+			t.Errorf("Failed to read packet %d: %v", i, result.err)
+		}
+		// Each packet is 5 bytes: 3 length + 1 seq + 1 payload
+		seq := result.data[3]
+		if seq != byte(i) {
+			t.Errorf("Packet %d sequence: got %d, want %d", i, seq, i)
+		}
+	}
+}
+
+// ============================================================================
+// Concurrent Access Tests
+// ============================================================================
+
+func TestMySQLHandler_ConcurrentAccess(t *testing.T) {
+	server, _ := net.Pipe()
+	defer server.Close()
+
+	handler := NewMySQLHandler(server, 1)
+	defer handler.Close()
+
+	var wg sync.WaitGroup
+	for i := 0; i < 10; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			_ = handler.ConnectionID()
+			_ = handler.IsClosed()
+			_ = handler.Username()
+			_ = handler.Database()
+			_ = handler.SessionID()
+		}()
+	}
+	wg.Wait()
+}
+
+func TestServer_ConcurrentConnections(t *testing.T) {
+	config := &ServerConfig{
+		Bind:           "127.0.0.1",
+		Port:           13320,
+		MaxConnections: 50,
+	}
+
+	server := NewServer(config)
+
+	if err := server.Start(); err != nil {
+		t.Fatalf("Failed to start server: %v", err)
+	}
+	defer server.Stop()
+
+	time.Sleep(50 * time.Millisecond)
+
+	var wg sync.WaitGroup
+	for i := 0; i < 5; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			conn, err := net.Dial("tcp", "127.0.0.1:13320")
+			if err == nil {
+				time.Sleep(50 * time.Millisecond)
+				conn.Close()
+			}
+		}()
+	}
+	wg.Wait()
+}
+
+// ============================================================================
+// Read Timeout Tests
+// ============================================================================
+
+func TestServer_ReadTimeout(t *testing.T) {
+	config := &ServerConfig{
+		Bind:           "127.0.0.1",
+		Port:           13321,
+		MaxConnections: 10,
+		ReadTimeout:    100 * time.Millisecond,
+	}
+
+	server := NewServer(config)
+
+	if err := server.Start(); err != nil {
+		t.Fatalf("Failed to start server: %v", err)
+	}
+	defer server.Stop()
+
+	time.Sleep(50 * time.Millisecond)
 }

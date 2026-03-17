@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/topxeq/xxsql/internal/auth"
 	"github.com/topxeq/xxsql/internal/config"
 	"github.com/topxeq/xxsql/internal/log"
 	"github.com/topxeq/xxsql/internal/storage"
@@ -406,4 +407,766 @@ func TestMysqlTypeFromString(t *testing.T) {
 			}
 		})
 	}
+}
+
+// ============================================================================
+// MySQLServer Tests
+// ============================================================================
+
+func TestMySQLServer_New(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	cfg := config.DefaultConfig()
+	cfg.Server.DataDir = tmpDir
+	cfg.Network.PrivatePort = 19550
+	cfg.Network.MySQLPort = 13350
+	cfg.Auth.Enabled = false
+
+	engine := storage.NewEngine(tmpDir)
+	engine.Open()
+	defer engine.Close()
+
+	logger := log.NewLogger(log.WithLevel(log.INFO))
+	srv := New(cfg, logger, engine)
+
+	mysqlSrv := NewMySQLServer(srv, "127.0.0.1", 13350)
+	if mysqlSrv == nil {
+		t.Error("NewMySQLServer should not return nil")
+	}
+}
+
+func TestMySQLServer_StartStop(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	cfg := config.DefaultConfig()
+	cfg.Server.DataDir = tmpDir
+	cfg.Network.PrivatePort = 19551
+	cfg.Network.MySQLPort = 13351
+	cfg.Auth.Enabled = false
+
+	engine := storage.NewEngine(tmpDir)
+	engine.Open()
+	defer engine.Close()
+
+	logger := log.NewLogger(log.WithLevel(log.INFO))
+	srv := New(cfg, logger, engine)
+
+	mysqlSrv := NewMySQLServer(srv, "127.0.0.1", 13351)
+
+	if err := mysqlSrv.Start(); err != nil {
+		t.Fatalf("Start failed: %v", err)
+	}
+
+	time.Sleep(50 * time.Millisecond)
+
+	if err := mysqlSrv.Stop(); err != nil {
+		t.Errorf("Stop failed: %v", err)
+	}
+}
+
+func TestMySQLServer_DoubleStart(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	cfg := config.DefaultConfig()
+	cfg.Server.DataDir = tmpDir
+	cfg.Network.PrivatePort = 19552
+	cfg.Network.MySQLPort = 13352
+	cfg.Auth.Enabled = false
+
+	engine := storage.NewEngine(tmpDir)
+	engine.Open()
+	defer engine.Close()
+
+	logger := log.NewLogger(log.WithLevel(log.INFO))
+	srv := New(cfg, logger, engine)
+
+	mysqlSrv := NewMySQLServer(srv, "127.0.0.1", 13352)
+
+	if err := mysqlSrv.Start(); err != nil {
+		t.Fatalf("Start failed: %v", err)
+	}
+	defer mysqlSrv.Stop()
+
+	if err := mysqlSrv.Start(); err == nil {
+		t.Error("Double start should return error")
+	}
+}
+
+func TestMySQLServer_DoubleStop(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	cfg := config.DefaultConfig()
+	cfg.Server.DataDir = tmpDir
+	cfg.Network.PrivatePort = 19553
+	cfg.Network.MySQLPort = 13353
+	cfg.Auth.Enabled = false
+
+	engine := storage.NewEngine(tmpDir)
+	engine.Open()
+	defer engine.Close()
+
+	logger := log.NewLogger(log.WithLevel(log.INFO))
+	srv := New(cfg, logger, engine)
+
+	mysqlSrv := NewMySQLServer(srv, "127.0.0.1", 13353)
+
+	mysqlSrv.Start()
+
+	mysqlSrv.Stop()
+
+	if err := mysqlSrv.Stop(); err != nil {
+		t.Errorf("Double stop should not error: %v", err)
+	}
+}
+
+// ============================================================================
+// HTTPServer Tests
+// ============================================================================
+
+func TestHTTPServer_New(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	cfg := config.DefaultConfig()
+	cfg.Server.DataDir = tmpDir
+	cfg.Network.PrivatePort = 19554
+	cfg.Network.HTTPPort = 18084
+	cfg.Auth.Enabled = false
+
+	engine := storage.NewEngine(tmpDir)
+	engine.Open()
+	defer engine.Close()
+
+	logger := log.NewLogger(log.WithLevel(log.INFO))
+	srv := New(cfg, logger, engine)
+
+	httpSrv := NewHTTPServer(srv, "127.0.0.1", 18084)
+	if httpSrv == nil {
+		t.Error("NewHTTPServer should not return nil")
+	}
+}
+
+func TestHTTPServer_StartStop(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	cfg := config.DefaultConfig()
+	cfg.Server.DataDir = tmpDir
+	cfg.Network.PrivatePort = 19555
+	cfg.Network.HTTPPort = 18085
+	cfg.Auth.Enabled = false
+
+	engine := storage.NewEngine(tmpDir)
+	engine.Open()
+	defer engine.Close()
+
+	logger := log.NewLogger(log.WithLevel(log.INFO))
+	srv := New(cfg, logger, engine)
+
+	httpSrv := NewHTTPServer(srv, "127.0.0.1", 18085)
+
+	if err := httpSrv.Start(); err != nil {
+		t.Fatalf("Start failed: %v", err)
+	}
+
+	time.Sleep(50 * time.Millisecond)
+
+	if err := httpSrv.Stop(); err != nil {
+		t.Errorf("Stop failed: %v", err)
+	}
+}
+
+func TestHTTPServer_DoubleStart(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	cfg := config.DefaultConfig()
+	cfg.Server.DataDir = tmpDir
+	cfg.Network.PrivatePort = 19556
+	cfg.Network.HTTPPort = 18086
+	cfg.Auth.Enabled = false
+
+	engine := storage.NewEngine(tmpDir)
+	engine.Open()
+	defer engine.Close()
+
+	logger := log.NewLogger(log.WithLevel(log.INFO))
+	srv := New(cfg, logger, engine)
+
+	httpSrv := NewHTTPServer(srv, "127.0.0.1", 18086)
+
+	if err := httpSrv.Start(); err != nil {
+		t.Fatalf("Start failed: %v", err)
+	}
+	defer httpSrv.Stop()
+
+	if err := httpSrv.Start(); err == nil {
+		t.Error("Double start should return error")
+	}
+}
+
+func TestHTTPServer_DoubleStop(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	cfg := config.DefaultConfig()
+	cfg.Server.DataDir = tmpDir
+	cfg.Network.PrivatePort = 19557
+	cfg.Network.HTTPPort = 18087
+	cfg.Auth.Enabled = false
+
+	engine := storage.NewEngine(tmpDir)
+	engine.Open()
+	defer engine.Close()
+
+	logger := log.NewLogger(log.WithLevel(log.INFO))
+	srv := New(cfg, logger, engine)
+
+	httpSrv := NewHTTPServer(srv, "127.0.0.1", 18087)
+
+	httpSrv.Start()
+
+	httpSrv.Stop()
+
+	if err := httpSrv.Stop(); err != nil {
+		t.Errorf("Double stop should not error: %v", err)
+	}
+}
+
+// ============================================================================
+// Server Core Tests
+// ============================================================================
+
+func TestServer_New_WithNilEngine(t *testing.T) {
+	cfg := config.DefaultConfig()
+	logger := log.NewLogger(log.WithLevel(log.INFO))
+
+	srv := New(cfg, logger, nil)
+	if srv == nil {
+		t.Error("New with nil engine should still return server")
+	}
+}
+
+func TestServer_DoubleStart(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	cfg := config.DefaultConfig()
+	cfg.Server.DataDir = tmpDir
+	cfg.Network.PrivatePort = 19558
+	cfg.Network.MySQLPort = 0
+	cfg.Network.HTTPPort = 0
+	cfg.Auth.Enabled = false
+
+	engine := storage.NewEngine(tmpDir)
+	engine.Open()
+	defer engine.Close()
+
+	logger := log.NewLogger(log.WithLevel(log.INFO))
+	srv := New(cfg, logger, engine)
+
+	if err := srv.Start(); err != nil {
+		t.Fatalf("Start failed: %v", err)
+	}
+	defer srv.Stop()
+
+	if err := srv.Start(); err == nil {
+		t.Error("Double start should return error")
+	}
+}
+
+func TestServer_GetStats_AfterQuery(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	cfg := config.DefaultConfig()
+	cfg.Server.DataDir = tmpDir
+	cfg.Network.PrivatePort = 19559
+	cfg.Auth.Enabled = false
+
+	engine := storage.NewEngine(tmpDir)
+	engine.Open()
+	defer engine.Close()
+
+	logger := log.NewLogger(log.WithLevel(log.INFO))
+	srv := New(cfg, logger, engine)
+
+	if err := srv.Start(); err != nil {
+		t.Fatalf("Start failed: %v", err)
+	}
+	defer srv.Stop()
+
+	// Get initial stats
+	stats := srv.GetStats()
+	initialQueries := stats.TotalQueries
+
+	_ = initialQueries // Just verify we can get stats
+}
+
+func TestServer_NextConnectionID(t *testing.T) {
+	cfg := config.DefaultConfig()
+	logger := log.NewLogger(log.WithLevel(log.INFO))
+	srv := New(cfg, logger, nil)
+
+	id1 := srv.nextConnectionID()
+	id2 := srv.nextConnectionID()
+
+	if id1 == id2 {
+		t.Error("Connection IDs should be unique")
+	}
+
+	if id2 <= id1 {
+		t.Errorf("Connection IDs should increment: id1=%d, id2=%d", id1, id2)
+	}
+}
+
+// ============================================================================
+// PID File Tests
+// ============================================================================
+
+func TestCreatePIDFile_EmptyPath(t *testing.T) {
+	if err := CreatePIDFile(""); err != nil {
+		t.Errorf("CreatePIDFile with empty path should not error: %v", err)
+	}
+}
+
+func TestRemovePIDFile_EmptyPath(t *testing.T) {
+	// Should not panic
+	RemovePIDFile("")
+}
+
+func TestRemovePIDFile_NonExistent(t *testing.T) {
+	// Should not error
+	RemovePIDFile("/tmp/nonexistent-pid-file-12345.pid")
+}
+
+// ============================================================================
+// Backup Manager Tests
+// ============================================================================
+
+func TestServer_BackupManager(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	cfg := config.DefaultConfig()
+	cfg.Server.DataDir = tmpDir
+	cfg.Network.PrivatePort = 19560
+	cfg.Auth.Enabled = false
+
+	engine := storage.NewEngine(tmpDir)
+	engine.Open()
+	defer engine.Close()
+
+	logger := log.NewLogger(log.WithLevel(log.INFO))
+	srv := New(cfg, logger, engine)
+
+	if srv.backup == nil {
+		t.Error("Backup manager should be initialized with engine")
+	}
+}
+
+// ============================================================================
+// Executor Tests
+// ============================================================================
+
+func TestServer_Executor(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	cfg := config.DefaultConfig()
+	cfg.Server.DataDir = tmpDir
+	cfg.Network.PrivatePort = 19561
+	cfg.Auth.Enabled = false
+
+	engine := storage.NewEngine(tmpDir)
+	engine.Open()
+	defer engine.Close()
+
+	logger := log.NewLogger(log.WithLevel(log.INFO))
+	srv := New(cfg, logger, engine)
+
+	if srv.executor == nil {
+		t.Error("Executor should be initialized with engine")
+	}
+}
+
+func TestServer_Executor_NilEngine(t *testing.T) {
+	cfg := config.DefaultConfig()
+	logger := log.NewLogger(log.WithLevel(log.INFO))
+	srv := New(cfg, logger, nil)
+
+	if srv.executor != nil {
+		t.Error("Executor should be nil with nil engine")
+	}
+}
+
+// ============================================================================
+// Context and Cancellation Tests
+// ============================================================================
+
+func TestServer_Context(t *testing.T) {
+	cfg := config.DefaultConfig()
+	logger := log.NewLogger(log.WithLevel(log.INFO))
+	srv := New(cfg, logger, nil)
+
+	if srv.ctx == nil {
+		t.Error("Context should be initialized")
+	}
+
+	if srv.cancel == nil {
+		t.Error("Cancel function should be initialized")
+	}
+}
+
+// ============================================================================
+// onConnect and onDisconnect Tests
+// ============================================================================
+
+func TestServer_OnConnectDisconnect(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	cfg := config.DefaultConfig()
+	cfg.Server.DataDir = tmpDir
+	cfg.Network.PrivatePort = 19562
+	cfg.Auth.Enabled = false
+
+	engine := storage.NewEngine(tmpDir)
+	engine.Open()
+	defer engine.Close()
+
+	logger := log.NewLogger(log.WithLevel(log.INFO))
+	srv := New(cfg, logger, engine)
+
+	if err := srv.Start(); err != nil {
+		t.Fatalf("Start failed: %v", err)
+	}
+	defer srv.Stop()
+
+	// Stats should be available
+	stats := srv.GetStats()
+	_ = stats
+}
+
+// ============================================================================
+// Auth Tests with Enabled Auth
+// ============================================================================
+
+func TestServer_AuthEnabled_InvalidUser(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	cfg := config.DefaultConfig()
+	cfg.Server.DataDir = tmpDir
+	cfg.Network.PrivatePort = 19563
+	cfg.Auth.Enabled = true
+	cfg.Auth.AdminUser = "admin"
+	cfg.Auth.AdminPassword = "password123"
+
+	engine := storage.NewEngine(tmpDir)
+	engine.Open()
+	defer engine.Close()
+
+	logger := log.NewLogger(log.WithLevel(log.INFO))
+	srv := New(cfg, logger, engine)
+
+	if err := srv.Start(); err != nil {
+		t.Fatalf("Start failed: %v", err)
+	}
+	defer srv.Stop()
+
+	time.Sleep(50 * time.Millisecond)
+
+	// Verify admin user was created
+	auth := srv.Auth()
+	user, err := auth.GetUser("admin")
+	if err != nil {
+		t.Fatalf("Admin user should exist: %v", err)
+	}
+
+	if user.Username != "admin" {
+		t.Errorf("Username: got %q, want 'admin'", user.Username)
+	}
+}
+
+func TestServer_AuthEnabled_PreExistingAdmin(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	cfg := config.DefaultConfig()
+	cfg.Server.DataDir = tmpDir
+	cfg.Network.PrivatePort = 19564
+	cfg.Auth.Enabled = true
+	cfg.Auth.AdminUser = "admin"
+	cfg.Auth.AdminPassword = "password123"
+
+	engine := storage.NewEngine(tmpDir)
+	engine.Open()
+	defer engine.Close()
+
+	logger := log.NewLogger(log.WithLevel(log.INFO))
+	srv := New(cfg, logger, engine)
+
+	// Create admin user before start
+	srv.auth.CreateUser("admin", "existingpass", auth.RoleAdmin)
+
+	if err := srv.Start(); err != nil {
+		t.Fatalf("Start failed: %v", err)
+	}
+	defer srv.Stop()
+
+	time.Sleep(50 * time.Millisecond)
+
+	// Verify existing admin user was not overwritten
+	_, getUserErr := srv.auth.GetUser("admin")
+	if getUserErr != nil {
+		t.Fatalf("Admin user should exist: %v", getUserErr)
+	}
+
+	// Password should still be the original - verify by authenticating
+	session, authErr := srv.auth.Authenticate("admin", "existingpass")
+	if authErr != nil || session == nil {
+		t.Error("Password should not have been changed")
+	}
+}
+
+// ============================================================================
+// Uptime Edge Cases Tests
+// ============================================================================
+
+func TestServer_Uptime_BeforeStart(t *testing.T) {
+	cfg := config.DefaultConfig()
+	logger := log.NewLogger(log.WithLevel(log.INFO))
+	srv := New(cfg, logger, nil)
+
+	// Uptime may be negative or zero before start
+	uptime := srv.Uptime()
+	_ = uptime
+}
+
+func TestServer_Uptime_AfterStop(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	cfg := config.DefaultConfig()
+	cfg.Server.DataDir = tmpDir
+	cfg.Network.PrivatePort = 19565
+	cfg.Auth.Enabled = false
+
+	engine := storage.NewEngine(tmpDir)
+	engine.Open()
+	defer engine.Close()
+
+	logger := log.NewLogger(log.WithLevel(log.INFO))
+	srv := New(cfg, logger, engine)
+
+	srv.Start()
+	time.Sleep(50 * time.Millisecond)
+	srv.Stop()
+
+	// Uptime should still be accessible after stop
+	uptime := srv.Uptime()
+	if uptime < 0 {
+		t.Error("Uptime should not be negative")
+	}
+}
+
+// ============================================================================
+// Concurrent Stats Access Tests
+// ============================================================================
+
+func TestServer_ConcurrentStatsAccess(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	cfg := config.DefaultConfig()
+	cfg.Server.DataDir = tmpDir
+	cfg.Network.PrivatePort = 19566
+	cfg.Auth.Enabled = false
+
+	engine := storage.NewEngine(tmpDir)
+	engine.Open()
+	defer engine.Close()
+
+	logger := log.NewLogger(log.WithLevel(log.INFO))
+	srv := New(cfg, logger, engine)
+
+	if err := srv.Start(); err != nil {
+		t.Fatalf("Start failed: %v", err)
+	}
+	defer srv.Stop()
+
+	var wg sync.WaitGroup
+	for i := 0; i < 20; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			_ = srv.GetStats()
+			_ = srv.Uptime()
+			_ = srv.IsRunning()
+		}()
+	}
+	wg.Wait()
+}
+
+// ============================================================================
+// Multiple Server Instances Tests
+// ============================================================================
+
+func TestServer_MultipleInstances_DifferentPorts(t *testing.T) {
+	tmpDir1 := t.TempDir()
+	tmpDir2 := t.TempDir()
+
+	cfg1 := config.DefaultConfig()
+	cfg1.Server.DataDir = tmpDir1
+	cfg1.Network.PrivatePort = 19567
+	cfg1.Auth.Enabled = false
+
+	cfg2 := config.DefaultConfig()
+	cfg2.Server.DataDir = tmpDir2
+	cfg2.Network.PrivatePort = 19568
+	cfg2.Auth.Enabled = false
+
+	engine1 := storage.NewEngine(tmpDir1)
+	engine1.Open()
+	defer engine1.Close()
+
+	engine2 := storage.NewEngine(tmpDir2)
+	engine2.Open()
+	defer engine2.Close()
+
+	logger := log.NewLogger(log.WithLevel(log.INFO))
+
+	srv1 := New(cfg1, logger, engine1)
+	srv2 := New(cfg2, logger, engine2)
+
+	if err := srv1.Start(); err != nil {
+		t.Fatalf("Server 1 start failed: %v", err)
+	}
+	defer srv1.Stop()
+
+	if err := srv2.Start(); err != nil {
+		t.Fatalf("Server 2 start failed: %v", err)
+	}
+	defer srv2.Stop()
+
+	time.Sleep(100 * time.Millisecond)
+}
+
+// ============================================================================
+// Auth Manager Access Tests
+// ============================================================================
+
+func TestServer_Auth_ManagerMethods(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	cfg := config.DefaultConfig()
+	cfg.Server.DataDir = tmpDir
+	cfg.Network.PrivatePort = 19569
+	cfg.Auth.Enabled = true
+
+	engine := storage.NewEngine(tmpDir)
+	engine.Open()
+	defer engine.Close()
+
+	logger := log.NewLogger(log.WithLevel(log.INFO))
+	srv := New(cfg, logger, engine)
+
+	authMgr := srv.Auth()
+	if authMgr == nil {
+		t.Fatal("Auth manager should not be nil")
+	}
+
+	// Test creating a user
+	user, err := authMgr.CreateUser("testuser", "testpass", auth.RoleUser)
+	if err != nil {
+		t.Fatalf("CreateUser failed: %v", err)
+	}
+
+	if user.Username != "testuser" {
+		t.Errorf("Username: got %q, want 'testuser'", user.Username)
+	}
+
+	// Test getting user
+	retrieved, err := authMgr.GetUser("testuser")
+	if err != nil {
+		t.Fatalf("GetUser failed: %v", err)
+	}
+
+	if retrieved.Username != "testuser" {
+		t.Errorf("Retrieved username: got %q", retrieved.Username)
+	}
+}
+
+// ============================================================================
+// ServerStats Fields Tests
+// ============================================================================
+
+func TestServerStats_AllFields(t *testing.T) {
+	stats := ServerStats{
+		TotalConnections:  100,
+		ActiveConnections: 10,
+		TotalQueries:      500,
+		QueriesPerSecond:  50,
+		LastQueryTime:     time.Now(),
+	}
+
+	if stats.TotalConnections != 100 {
+		t.Errorf("TotalConnections: got %d", stats.TotalConnections)
+	}
+	if stats.ActiveConnections != 10 {
+		t.Errorf("ActiveConnections: got %d", stats.ActiveConnections)
+	}
+	if stats.TotalQueries != 500 {
+		t.Errorf("TotalQueries: got %d", stats.TotalQueries)
+	}
+	if stats.QueriesPerSecond != 50 {
+		t.Errorf("QueriesPerSecond: got %d", stats.QueriesPerSecond)
+	}
+	if stats.LastQueryTime.IsZero() {
+		t.Error("LastQueryTime should not be zero")
+	}
+}
+
+// ============================================================================
+// Port Configuration Edge Cases Tests
+// ============================================================================
+
+func TestServer_ZeroPorts(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	cfg := config.DefaultConfig()
+	cfg.Server.DataDir = tmpDir
+	cfg.Network.PrivatePort = 19570
+	cfg.Network.MySQLPort = 0
+	cfg.Network.HTTPPort = 0
+	cfg.Auth.Enabled = false
+
+	engine := storage.NewEngine(tmpDir)
+	engine.Open()
+	defer engine.Close()
+
+	logger := log.NewLogger(log.WithLevel(log.INFO))
+	srv := New(cfg, logger, engine)
+
+	if err := srv.Start(); err != nil {
+		t.Fatalf("Start failed: %v", err)
+	}
+	defer srv.Stop()
+
+	// With zero MySQL and HTTP ports, those servers should not start
+	if srv.mysql != nil {
+		t.Error("MySQL server should be nil with zero port")
+	}
+	if srv.http != nil {
+		t.Error("HTTP server should be nil with zero port")
+	}
+}
+
+// ============================================================================
+// Logger Access Tests
+// ============================================================================
+
+func TestServer_Logger_Methods(t *testing.T) {
+	cfg := config.DefaultConfig()
+	logger := log.NewLogger(log.WithLevel(log.DEBUG))
+	srv := New(cfg, logger, nil)
+
+	srvLogger := srv.Logger()
+	if srvLogger == nil {
+		t.Error("Logger should not be nil")
+	}
+
+	// Test logger methods
+	srvLogger.Debug("Test debug message")
+	srvLogger.Info("Test info message")
+	srvLogger.Warn("Test warn message")
+	srvLogger.Error("Test error message")
 }

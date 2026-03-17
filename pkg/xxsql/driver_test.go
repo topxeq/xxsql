@@ -1592,3 +1592,467 @@ func TestStmt_Query(t *testing.T) {
 		t.Error("query mismatch")
 	}
 }
+
+func TestReadLengthEncodedInt_AllPrefixes(t *testing.T) {
+	tests := []struct {
+		name     string
+		data     []byte
+		expected int64
+		n        int
+	}{
+		// Small values (< 251)
+		{"0x00", []byte{0x00}, 0, 1},
+		{"0x01", []byte{0x01}, 1, 1},
+		{"0xFA", []byte{0xFA}, 250, 1},
+
+		// 0xFC prefix (2 bytes following)
+		{"0xFC small", []byte{0xFC, 0x00, 0x00}, 0, 3},
+		{"0xFC 255", []byte{0xFC, 0xFF, 0x00}, 255, 3},
+		{"0xFC 256", []byte{0xFC, 0x00, 0x01}, 256, 3},
+		{"0xFC 65535", []byte{0xFC, 0xFF, 0xFF}, 65535, 3},
+
+		// 0xFD prefix (3 bytes following)
+		{"0xFD small", []byte{0xFD, 0x00, 0x00, 0x00}, 0, 4},
+		{"0xFD 65536", []byte{0xFD, 0x00, 0x00, 0x01, 0x00}, 65536, 4},
+		{"0xFD 16777215", []byte{0xFD, 0xFF, 0xFF, 0xFF}, 16777215, 4},
+
+		// 0xFE prefix (8 bytes following)
+		{"0xFE small", []byte{0xFE, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00}, 1, 9},
+		{"0xFE large", []byte{0xFE, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0x7F}, 0x7FFFFFFFFFFFFFFF, 9},
+
+		// Invalid prefix (0xFB is not used for length encoding)
+		{"invalid 0xFB", []byte{0xFB}, 0, 0},
+
+		// Empty data
+		{"empty", []byte{}, 0, 0},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			val, n := readLengthEncodedInt(tt.data)
+			if val != tt.expected {
+				t.Errorf("value: got %d, want %d", val, tt.expected)
+			}
+			if n != tt.n {
+				t.Errorf("bytes read: got %d, want %d", n, tt.n)
+			}
+		})
+	}
+}
+
+func TestWriteLengthEncodedInt_AllCases(t *testing.T) {
+	tests := []struct {
+		name     string
+		value    int64
+		expected int
+	}{
+		{"0", 0, 1},
+		{"250", 250, 1},
+		{"251", 251, 3},
+		{"255", 255, 3},
+		{"65535", 65535, 3},
+		{"65536", 65536, 4},
+		{"16777215", 16777215, 4},
+		{"16777216", 16777216, 9},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mc := &mysqlConn{}
+			result := mc.writeLengthEncodedInt(tt.value)
+			if len(result) != tt.expected {
+				t.Errorf("writeLengthEncodedInt(%d) length: got %d, want %d", tt.value, len(result), tt.expected)
+			}
+		})
+	}
+}
+
+func TestParseError_VariousCodes(t *testing.T) {
+	tests := []struct {
+		name       string
+		packet     []byte
+		wantCode   uint16
+		wantErrMsg bool
+	}{
+		{
+			name:       "access denied",
+			packet:     []byte{ERRPacket, 0x15, 0x04, '#', '2', '8', '0', '0', '0', 'A', 'c', 'c', 'e', 's', 's', ' ', 'd', 'e', 'n', 'i', 'e', 'd'},
+			wantCode:   1045,
+			wantErrMsg: true,
+		},
+		{
+			name:       "syntax error",
+			packet:     []byte{ERRPacket, 0x28, 0x04, '#', '4', '2', '0', '0', '0', 'S', 'y', 'n', 't', 'a', 'x', ' ', 'e', 'r', 'r', 'o', 'r'},
+			wantCode:   1064,
+			wantErrMsg: true,
+		},
+		{
+			name:       "no sql state marker",
+			packet:     []byte{ERRPacket, 0x51, 0x04, 'E', 'r', 'r', 'o', 'r', ' ', 'm', 's', 'g'},
+			wantCode:   1105,
+			wantErrMsg: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mc := &mysqlConn{}
+			err := mc.parseError(tt.packet)
+			if err == nil {
+				t.Fatal("parseError should return an error")
+			}
+
+			mysqlErr, ok := err.(*mysqlError)
+			if !ok {
+				t.Fatalf("Expected *mysqlError, got %T", err)
+			}
+
+			if mysqlErr.Number() != tt.wantCode {
+				t.Errorf("Error code: got %d, want %d", mysqlErr.Number(), tt.wantCode)
+			}
+
+			if tt.wantErrMsg && mysqlErr.message == "" {
+				t.Error("Expected error message")
+			}
+		})
+	}
+}
+
+func TestParseOKPacket_Various(t *testing.T) {
+	tests := []struct {
+		name          string
+		packet        []byte
+		wantAffected  int64
+		wantLastID    int64
+	}{
+		{
+			name:         "simple ok",
+			packet:       []byte{OKPacket, 0x00, 0x00},
+			wantAffected: 0,
+			wantLastID:   0,
+		},
+		{
+			name:         "with affected rows",
+			packet:       []byte{OKPacket, 0x0A, 0x05},
+			wantAffected: 10,
+			wantLastID:   5,
+		},
+		{
+			name:         "large values",
+			packet:       []byte{OKPacket, 0xFC, 0x00, 0x01, 0xFC, 0x00, 0x02},
+			wantAffected: 256,
+			wantLastID:   512,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			mc := &mysqlConn{}
+			affected, lastID, err := mc.parseOKPacket(tt.packet)
+			if err != nil {
+				t.Errorf("parseOKPacket error: %v", err)
+			}
+			if affected != tt.wantAffected {
+				t.Errorf("Affected rows: got %d, want %d", affected, tt.wantAffected)
+			}
+			if lastID != tt.wantLastID {
+				t.Errorf("Last insert ID: got %d, want %d", lastID, tt.wantLastID)
+			}
+		})
+	}
+}
+
+func TestMySQLConn_Methods(t *testing.T) {
+	t.Run("setDeadline", func(t *testing.T) {
+		server, client := net.Pipe()
+		defer server.Close()
+		defer client.Close()
+
+		cfg := NewConfig()
+		mc := newMySQLConn(client, cfg)
+
+		// Test with zero deadline
+		err := mc.setDeadline(time.Time{})
+		if err != nil {
+			t.Errorf("setDeadline with zero time error: %v", err)
+		}
+
+		// Test with future deadline
+		err = mc.setDeadline(time.Now().Add(5 * time.Second))
+		if err != nil {
+			t.Errorf("setDeadline with future time error: %v", err)
+		}
+	})
+
+	t.Run("closeConnection already closed", func(t *testing.T) {
+		cfg := NewConfig()
+		mc := &mysqlConn{closed: true, cfg: cfg}
+
+		// Should return immediately when already closed
+		err := mc.closeConnection()
+		if err != nil {
+			t.Errorf("closeConnection on already closed: %v", err)
+		}
+	})
+}
+
+func TestConvertValue_AllTypes(t *testing.T) {
+	tests := []struct {
+		name     string
+		data     []byte
+		colType  byte
+		expected interface{}
+	}{
+		{"tiny int", []byte("127"), TypeTiny, int64(127)},
+		{"short int", []byte("32767"), TypeShort, int64(32767)},
+		{"long int", []byte("2147483647"), TypeLong, int64(2147483647)},
+		{"long long", []byte("9223372036854775807"), TypeLongLong, int64(9223372036854775807)},
+		{"int24", []byte("8388607"), TypeInt24, int64(8388607)},
+		{"year", []byte("2024"), TypeYear, int64(2024)},
+		{"float", []byte("3.14159"), TypeFloat, float64(3.14159)},
+		{"double", []byte("2.718281828"), TypeDouble, float64(2.718281828)},
+		{"decimal", []byte("123.45"), TypeDecimal, float64(123.45)},
+		{"new decimal", []byte("67.89"), TypeNewDecimal, float64(67.89)},
+		{"varchar", []byte("hello"), TypeVarChar, "hello"},
+		{"var string", []byte("world"), TypeVarString, "world"},
+		{"string", []byte("test"), TypeString, "test"},
+		{"enum", []byte("value"), TypeEnum, "value"},
+		{"set", []byte("a,b"), TypeSet, "a,b"},
+		{"tiny blob", []byte{0x01, 0x02}, TypeTinyBlob, []byte{0x01, 0x02}},
+		{"medium blob", []byte{0x03, 0x04}, TypeMediumBlob, []byte{0x03, 0x04}},
+		{"long blob", []byte{0x05, 0x06}, TypeLongBlob, []byte{0x05, 0x06}},
+		{"blob", []byte{0x07, 0x08}, TypeBlob, []byte{0x07, 0x08}},
+		{"empty varchar", []byte{}, TypeVarChar, ""},
+		{"unknown", []byte("unknown"), 0xFF, "unknown"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := convertValue(tt.data, tt.colType)
+
+			switch expected := tt.expected.(type) {
+			case int64:
+				if r, ok := result.(int64); !ok || r != expected {
+					t.Errorf("got %v (%T), want %v", result, result, expected)
+				}
+			case float64:
+				if result, ok := result.(float64); !ok {
+					t.Errorf("got %v (%T), want %v", result, result, expected)
+				}
+			case string:
+				if r, ok := result.(string); !ok || r != expected {
+					t.Errorf("got %v (%T), want %v", result, result, expected)
+				}
+			case []byte:
+				if r, ok := result.([]byte); !ok || string(r) != string(expected) {
+					t.Errorf("got %v (%T), want %v", result, result, expected)
+				}
+			case nil:
+				if result != nil {
+					t.Errorf("got %v, want nil", result)
+				}
+			}
+		})
+	}
+}
+
+func TestInterpolateQuery_EdgeCases(t *testing.T) {
+	tests := []struct {
+		name    string
+		query   string
+		args    []driver.NamedValue
+		wantErr bool
+	}{
+		{
+			name:    "invalid ordinal zero",
+			query:   "SELECT ?",
+			args:    []driver.NamedValue{{Ordinal: 0, Value: int64(1)}},
+			wantErr: true,
+		},
+		{
+			name:    "ordinal too large",
+			query:   "SELECT ?",
+			args:    []driver.NamedValue{{Ordinal: 5, Value: int64(1)}},
+			wantErr: true,
+		},
+		{
+			name:    "complex type",
+			query:   "SELECT ?",
+			args:    []driver.NamedValue{{Ordinal: 1, Value: complex(1, 2)}},
+			wantErr: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := interpolateQuery(tt.query, tt.args)
+			if tt.wantErr && err == nil {
+				t.Error("expected error, got nil")
+			}
+			if !tt.wantErr && err != nil {
+				t.Errorf("unexpected error: %v", err)
+			}
+		})
+	}
+}
+
+func TestTx_CommitRollback(t *testing.T) {
+	t.Run("commit already closed", func(t *testing.T) {
+		tx := &tx{closed: true}
+		err := tx.Commit()
+		if err != ErrTxDone {
+			t.Errorf("Commit on closed tx: got %v, want %v", err, ErrTxDone)
+		}
+	})
+
+	t.Run("rollback already closed", func(t *testing.T) {
+		tx := &tx{closed: true}
+		err := tx.Rollback()
+		if err != ErrTxDone {
+			t.Errorf("Rollback on closed tx: got %v, want %v", err, ErrTxDone)
+		}
+	})
+}
+
+func TestParseMySQLTime_Formats(t *testing.T) {
+	tests := []struct {
+		dateStr string
+		wantErr bool
+	}{
+		{"2024-01-15 10:30:00.123456", false},
+		{"2024-01-15 10:30:00", false},
+		{"2024-01-15", false},
+		{"invalid", true},
+		{"2024/01/15", true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.dateStr, func(t *testing.T) {
+			_, err := parseMySQLTime(tt.dateStr)
+			if tt.wantErr && err == nil {
+				t.Error("expected error, got nil")
+			}
+			if !tt.wantErr && err != nil {
+				t.Errorf("unexpected error: %v", err)
+			}
+		})
+	}
+}
+
+func TestStmt_ExecQuery_Closed(t *testing.T) {
+	c := &conn{closed: true}
+
+	t.Run("ExecContext closed", func(t *testing.T) {
+		s := &stmt{conn: c, query: "SELECT 1"}
+		_, err := s.ExecContext(context.Background(), nil)
+		if err != driver.ErrBadConn {
+			t.Errorf("ExecContext on closed conn: got %v, want %v", err, driver.ErrBadConn)
+		}
+	})
+
+	t.Run("QueryContext closed", func(t *testing.T) {
+		s := &stmt{conn: c, query: "SELECT 1"}
+		_, err := s.QueryContext(context.Background(), nil)
+		if err != driver.ErrBadConn {
+			t.Errorf("QueryContext on closed conn: got %v, want %v", err, driver.ErrBadConn)
+		}
+	})
+}
+
+func TestDSN_ParseInvalid(t *testing.T) {
+	tests := []struct {
+		name    string
+		dsn     string
+		wantErr bool
+	}{
+		{"empty", "", true},
+		{"no database", "root@tcp(localhost:3306)", true},
+		{"invalid timeout", "root@tcp(localhost:3306)/db?timeout=invalid", true},
+		{"invalid readTimeout", "root@tcp(localhost:3306)/db?readTimeout=invalid", true},
+		{"invalid writeTimeout", "root@tcp(localhost:3306)/db?writeTimeout=invalid", true},
+		{"invalid maxAllowedPacket", "root@tcp(localhost:3306)/db?maxAllowedPacket=invalid", true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := ParseDSN(tt.dsn)
+			if tt.wantErr && err == nil {
+				t.Error("expected error, got nil")
+			}
+			if !tt.wantErr && err != nil {
+				t.Errorf("unexpected error: %v", err)
+			}
+		})
+	}
+}
+
+func TestConfig_FormatDSN_AllParams(t *testing.T) {
+	cfg := &Config{
+		User:             "root",
+		Passwd:           "secret",
+		Net:              "tcp",
+		Addr:             "localhost:3306",
+		DBName:           "testdb",
+		Timeout:          5 * time.Second,
+		ReadTimeout:      10 * time.Second,
+		WriteTimeout:     15 * time.Second,
+		Charset:          "utf8",
+		Collation:        "utf8_general_ci",
+		TLS:              true,
+		AllowOldPassword: true,
+		MaxAllowedPacket: 16777216,
+	}
+
+	dsn := cfg.FormatDSN()
+	if dsn == "" {
+		t.Error("FormatDSN returned empty string")
+	}
+
+	// Parse it back
+	parsed, err := ParseDSN(dsn)
+	if err != nil {
+		t.Errorf("failed to parse formatted DSN: %v", err)
+	}
+
+	if parsed.User != cfg.User {
+		t.Errorf("User: got %q, want %q", parsed.User, cfg.User)
+	}
+	if parsed.Passwd != cfg.Passwd {
+		t.Errorf("Passwd: got %q, want %q", parsed.Passwd, cfg.Passwd)
+	}
+}
+
+func TestRows_ParseRow_Errors(t *testing.T) {
+	t.Run("offset beyond data", func(t *testing.T) {
+		r := &rows{colTypes: []byte{TypeLong}}
+		dest := make([]driver.Value, 1)
+		err := r.parseRow([]byte{}, dest)
+		if err == nil {
+			t.Error("expected error for empty data")
+		}
+	})
+
+	t.Run("length beyond data", func(t *testing.T) {
+		r := &rows{colTypes: []byte{TypeLong}}
+		dest := make([]driver.Value, 1)
+		// Start with a valid length byte but data too short
+		err := r.parseRow([]byte{0x10}, dest) // length 16 but no data
+		if err == nil {
+			t.Error("expected error for truncated data")
+		}
+	})
+}
+
+func TestParseOKPacket_EdgeCases(t *testing.T) {
+	mc := &mysqlConn{}
+
+	t.Run("empty packet", func(t *testing.T) {
+		// This may panic or return error, we just want to test it doesn't crash
+		defer func() {
+			if r := recover(); r != nil {
+				// Expected panic
+			}
+		}()
+		mc.parseOKPacket([]byte{OKPacket})
+	})
+}

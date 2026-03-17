@@ -28,11 +28,10 @@ type Latch struct {
 	// Use a read-write mutex for efficient shared/exclusive locking
 	mu sync.RWMutex
 
-	// Track holder for debugging
-	holder     uint64
-	holderType LatchType
+	// Track exclusive holder for debugging (only valid when exclusively locked)
+	holder uint64
 
-	// Statistics
+	// Statistics (protected by atomic operations)
 	acquireCount uint64
 	waitCount    uint64
 }
@@ -60,7 +59,6 @@ func (l *Latch) Acquire(latchType LatchType, timeout time.Duration) bool {
 
 	select {
 	case <-done:
-		l.holderType = latchType
 		return true
 	case <-time.After(timeout):
 		atomic.AddUint64(&l.waitCount, 1)
@@ -74,9 +72,9 @@ func (l *Latch) Release(latchType LatchType) {
 	case LatchTypeShared:
 		l.mu.RUnlock()
 	case LatchTypeExclusive:
+		l.holder = 0
 		l.mu.Unlock()
 	}
-	l.holder = 0
 }
 
 // TryAcquire attempts to acquire a latch without blocking.

@@ -660,3 +660,226 @@ func TestTableFormatter_Width(t *testing.T) {
 	f := &tableFormatter{}
 	f.Format(columns, rows)
 }
+
+func TestHandleMetaCommand_FormatCommand(t *testing.T) {
+	err := handleMetaCommand("\\format")
+	if err != nil {
+		t.Errorf("Unexpected error: %v", err)
+	}
+}
+
+func TestCompleter_NoMatch(t *testing.T) {
+	c := &completer{}
+
+	tests := []struct {
+		line string
+	}{
+		{"XYZ"},
+		{"SELECT * FROM users XYZ"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.line, func(t *testing.T) {
+			newLine, _ := c.Do([]rune(tt.line), len(tt.line))
+			if len(newLine) > 0 {
+				t.Errorf("Unexpected completions for %q", tt.line)
+			}
+		})
+	}
+}
+
+func TestCompleter_SingleSpace(t *testing.T) {
+	c := &completer{}
+
+	// A line with just a space should have no completions
+	newLine, _ := c.Do([]rune(" "), 1)
+	if len(newLine) > 0 {
+		t.Errorf("Unexpected completions for space")
+	}
+}
+
+func TestCompleter_TableNameContext(t *testing.T) {
+	c := &completer{}
+
+	// After FROM, JOIN, INTO, TABLE - should return no completions (not implemented)
+	tests := []string{
+		"SELECT * FROM users ",
+		"INSERT INTO users ",
+		"CREATE TABLE users ",
+		"DROP TABLE ",
+	}
+
+	for _, tt := range tests {
+		t.Run(tt, func(t *testing.T) {
+			newLine, _ := c.Do([]rune(tt), len(tt))
+			// Currently returns no completions for table names
+			// This test just ensures no panic
+			_ = newLine
+		})
+	}
+}
+
+func TestFormatter_WithMoreColumns(t *testing.T) {
+	columns := []string{"id", "name", "email", "created_at", "status"}
+	rows := [][]interface{}{
+		{1, "Alice", "alice@example.com", "2024-01-15", "active"},
+		{2, "Bob", "bob@example.com", "2024-01-16", "inactive"},
+	}
+
+	t.Run("table", func(t *testing.T) {
+		f := &tableFormatter{}
+		f.Format(columns, rows)
+	})
+
+	t.Run("vertical", func(t *testing.T) {
+		f := &verticalFormatter{}
+		f.Format(columns, rows)
+	})
+
+	t.Run("json", func(t *testing.T) {
+		f := &jsonFormatter{}
+		f.Format(columns, rows)
+	})
+
+	t.Run("tsv", func(t *testing.T) {
+		f := &tsvFormatter{}
+		f.Format(columns, rows)
+	})
+}
+
+func TestTableFormatter_VeryLongValue(t *testing.T) {
+	columns := []string{"description"}
+	longValue := strings.Repeat("x", 100)
+	rows := [][]interface{}{
+		{longValue},
+	}
+
+	f := &tableFormatter{}
+	f.Format(columns, rows)
+}
+
+func TestVerticalFormatter_NoRows(t *testing.T) {
+	f := &verticalFormatter{}
+	f.Format([]string{"id", "name"}, nil)
+}
+
+func TestJSONFormatter_MarshalError(t *testing.T) {
+	// Create a value that can't be marshalled to JSON
+	columns := []string{"data"}
+	rows := [][]interface{}{
+		{make(chan int)}, // channels can't be marshalled to JSON
+	}
+
+	f := &jsonFormatter{}
+	f.Format(columns, rows) // Should handle gracefully
+}
+
+func TestFormatValue_AdditionalTypes(t *testing.T) {
+	tests := []struct {
+		name     string
+		value    interface{}
+		contains string
+	}{
+		{"int8", int8(42), "42"},
+		{"int16", int16(100), "100"},
+		{"uint8", uint8(50), "50"},
+		{"uint16", uint16(200), "200"},
+		{"int", int(123), "123"},
+		{"int64", int64(999), "999"},
+		{"float32", float32(1.5), "1.5"},
+		{"float64", float64(2.5), "2.5"},
+		{"true", true, "1"},
+		{"false", false, "0"},
+		{"nil", nil, "NULL"},
+		{"string", "hello", "hello"},
+		{"bytes", []byte("test"), "test"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := formatValue(tt.value)
+			if !strings.Contains(result, tt.contains) {
+				t.Errorf("formatValue(%v) = %q, should contain %q", tt.value, result, tt.contains)
+			}
+		})
+	}
+}
+
+func TestPadRight_EdgeCases(t *testing.T) {
+	tests := []struct {
+		input    string
+		width    int
+		expected string
+	}{
+		{"", 0, ""},
+		{"a", 0, "a"},
+		{"a", 1, "a"},
+		{"ab", 1, "ab"},
+		{"abc", 2, "abc"},
+		{"", 5, "     "},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.input, func(t *testing.T) {
+			result := padRight(tt.input, tt.width)
+			if result != tt.expected {
+				t.Errorf("padRight(%q, %d) = %q, want %q", tt.input, tt.width, result, tt.expected)
+			}
+		})
+	}
+}
+
+func TestOutputFormat_Default(t *testing.T) {
+	// Test that unknown format defaults to table
+	result := parseOutputFormat("unknown_format")
+	if result != FormatTable {
+		t.Errorf("parseOutputFormat('unknown_format') = %v, want %v", result, FormatTable)
+	}
+}
+
+func TestBuildDSN_EdgeCases(t *testing.T) {
+	origHost := *flagHost
+	origPort := *flagPort
+	origUser := *flagUser
+	origPassword := *flagPassword
+	origDatabase := *flagDatabase
+	defer func() {
+		*flagHost = origHost
+		*flagPort = origPort
+		*flagUser = origUser
+		*flagPassword = origPassword
+		*flagDatabase = origDatabase
+	}()
+
+	t.Run("only password no user", func(t *testing.T) {
+		*flagHost = "localhost"
+		*flagPort = 3306
+		*flagUser = ""
+		*flagPassword = "secret"
+		*flagDatabase = "test"
+
+		result := buildDSN()
+		// Password without user should still work
+		if result == "" {
+			t.Error("buildDSN returned empty string")
+		}
+	})
+}
+
+func TestGetHistoryPath_NoHome(t *testing.T) {
+	// This test just ensures the function doesn't panic
+	path := getHistoryPath()
+	_ = path
+}
+
+func TestVersionInfo_NonEmpty(t *testing.T) {
+	if Version == "" {
+		t.Error("Version should not be empty")
+	}
+	if GitCommit == "" {
+		t.Error("GitCommit should not be empty")
+	}
+	if BuildTime == "" {
+		t.Error("BuildTime should not be empty")
+	}
+}

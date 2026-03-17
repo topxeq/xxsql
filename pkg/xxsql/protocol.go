@@ -448,7 +448,9 @@ func (c *mysqlConn) writeLengthEncodedInt(n int64) []byte {
 	if n < 16777216 {
 		buf := make([]byte, 4)
 		buf[0] = 0xFD
-		binary.LittleEndian.PutUint32(buf[1:4], uint32(n)&0xFFFFFF)
+		buf[1] = byte(n)
+		buf[2] = byte(n >> 8)
+		buf[3] = byte(n >> 16)
 		return buf
 	}
 	buf := make([]byte, 9)
