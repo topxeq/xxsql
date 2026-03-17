@@ -4,6 +4,7 @@ package executor
 import (
 	"fmt"
 	"regexp"
+	"sort"
 	"strings"
 
 	"github.com/topxeq/xxsql/internal/sql"
@@ -752,8 +753,13 @@ func (e *Executor) executeSelectWithJoin(stmt *sql.SelectStmt) (*Result, error) 
 		return nil, err
 	}
 
-	// Apply ORDER BY (simplified - no sorting for now)
-	// TODO: Implement ORDER BY for JOINs
+	// Apply ORDER BY
+	if len(stmt.OrderBy) > 0 {
+		resultRows, err = e.sortJoinedRows(stmt.OrderBy, resultCols, resultRows, ctx)
+		if err != nil {
+			return nil, err
+		}
+	}
 
 	// Apply LIMIT
 	if stmt.Limit != nil && *stmt.Limit < len(resultRows) {
@@ -775,4 +781,189 @@ func (e *Executor) executeSelectWithJoin(stmt *sql.SelectStmt) (*Result, error) 
 // Engine returns the storage engine (for testing).
 func (e *Executor) Engine() *storage.Engine {
 	return e.engine
+}
+
+// sortJoinedRows sorts the result rows according to ORDER BY clause.
+func (e *Executor) sortJoinedRows(orderBy []*sql.OrderByItem, cols []ColumnInfo, rows [][]interface{}, ctx *joinContext) ([][]interface{}, error) {
+	// Build column index map
+	colIndexMap := make(map[string]int)
+	for i, col := range cols {
+		colIndexMap[strings.ToLower(col.Name)] = i
+	}
+
+	// Determine sort indices and directions
+	type sortKey struct {
+		index     int
+		ascending bool
+	}
+	sortKeys := make([]sortKey, 0, len(orderBy))
+
+	for _, item := range orderBy {
+		var colName string
+		switch expr := item.Expr.(type) {
+		case *sql.ColumnRef:
+			colName = strings.ToLower(expr.Name)
+		case *sql.Literal:
+			// Handle numeric column reference (e.g., ORDER BY 1)
+			if expr.Type == sql.LiteralNumber {
+				var idx int
+				switch v := expr.Value.(type) {
+				case int:
+					idx = v - 1
+				case int64:
+					idx = int(v) - 1
+				case float64:
+					idx = int(v) - 1
+				default:
+					continue
+				}
+				if idx >= 0 && idx < len(cols) {
+					sortKeys = append(sortKeys, sortKey{index: idx, ascending: item.Ascending})
+				}
+			}
+			continue
+		default:
+			continue
+		}
+
+		// Check if column name has table prefix (e.g., "t1.id")
+		if parts := strings.SplitN(colName, ".", 2); len(parts) == 2 {
+			colName = parts[1]
+		}
+
+		idx, ok := colIndexMap[colName]
+		if !ok {
+			// Try to find column in context tables
+			for _, tbl := range ctx.tables {
+				if tbl.hasColumn(colName) {
+					idx = tbl.startIdx + tbl.colIndex[colName]
+					if idx < len(cols) {
+						sortKeys = append(sortKeys, sortKey{index: idx, ascending: item.Ascending})
+					}
+					break
+				}
+			}
+			continue
+		}
+		sortKeys = append(sortKeys, sortKey{index: idx, ascending: item.Ascending})
+	}
+
+	if len(sortKeys) == 0 {
+		return rows, nil
+	}
+
+	// Sort rows
+	sort.Slice(rows, func(i, j int) bool {
+		for _, key := range sortKeys {
+			if key.index >= len(rows[i]) || key.index >= len(rows[j]) {
+				continue
+			}
+
+			vi := rows[i][key.index]
+			vj := rows[j][key.index]
+
+			cmp := compareValues(vi, vj)
+			if cmp == 0 {
+				continue
+			}
+
+			if key.ascending {
+				return cmp < 0
+			}
+			return cmp > 0
+		}
+		return false
+	})
+
+	return rows, nil
+}
+
+// compareValues compares two values for sorting.
+// Returns -1 if a < b, 0 if a == b, 1 if a > b.
+func compareValues(a, b interface{}) int {
+	// Handle NULL values
+	if a == nil && b == nil {
+		return 0
+	}
+	if a == nil {
+		return -1 // NULLs sort first
+	}
+	if b == nil {
+		return 1
+	}
+
+	switch va := a.(type) {
+	case int:
+		vb, ok := b.(int)
+		if !ok {
+			vb2, ok2 := b.(int64)
+			if ok2 {
+				return compareInts(int64(va), vb2)
+			}
+			return 0
+		}
+		return compareInts(int64(va), int64(vb))
+	case int64:
+		vb, ok := b.(int64)
+		if !ok {
+			vb2, ok2 := b.(int)
+			if ok2 {
+				return compareInts(va, int64(vb2))
+			}
+			return 0
+		}
+		return compareInts(va, vb)
+	case float64:
+		vb, ok := b.(float64)
+		if !ok {
+			return 0
+		}
+		if va < vb {
+			return -1
+		} else if va > vb {
+			return 1
+		}
+		return 0
+	case string:
+		vb, ok := b.(string)
+		if !ok {
+			return 0
+		}
+		if va < vb {
+			return -1
+		} else if va > vb {
+			return 1
+		}
+		return 0
+	case bool:
+		vb, ok := b.(bool)
+		if !ok {
+			return 0
+		}
+		if !va && vb {
+			return -1
+		} else if va && !vb {
+			return 1
+		}
+		return 0
+	default:
+		// Fallback to string comparison
+		as := fmt.Sprintf("%v", a)
+		bs := fmt.Sprintf("%v", b)
+		if as < bs {
+			return -1
+		} else if as > bs {
+			return 1
+		}
+		return 0
+	}
+}
+
+func compareInts(a, b int64) int {
+	if a < b {
+		return -1
+	} else if a > b {
+		return 1
+	}
+	return 0
 }

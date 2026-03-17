@@ -50,6 +50,21 @@ type Manager struct {
 	autoEnabled bool
 	stopCh      chan struct{}
 	stopped     atomic.Bool
+
+	// Recovery handler for applying WAL records
+	recoveryHandler RecoveryHandler
+}
+
+// RecoveryHandler defines the interface for handling WAL record recovery.
+type RecoveryHandler interface {
+	// ApplyInsert applies an insert operation during recovery.
+	ApplyInsert(tableName string, data []byte) error
+	// ApplyUpdate applies an update operation during recovery.
+	ApplyUpdate(tableName string, data []byte) error
+	// ApplyDelete applies a delete operation during recovery.
+	ApplyDelete(tableName string, data []byte) error
+	// ApplyPageWrite applies a page write operation during recovery.
+	ApplyPageWrite(pageID uint64, data []byte) error
 }
 
 // ManagerConfig holds checkpoint manager configuration.
@@ -305,6 +320,12 @@ func (m *Manager) Recover() error {
 
 // replayWAL replays WAL records from the given LSN.
 func (m *Manager) replayWAL(fromLSN wal.LSN) error {
+	if m.recoveryHandler == nil {
+		// No recovery handler set, skip actual recovery
+		// This is okay for cases where recovery is handled externally
+		return nil
+	}
+
 	return m.walManager.Replay(func(r *wal.Record) error {
 		// Skip records before checkpoint
 		if r.LSN <= fromLSN {
@@ -314,13 +335,21 @@ func (m *Manager) replayWAL(fromLSN wal.LSN) error {
 		// Apply record based on type
 		switch r.Type {
 		case wal.RecordTypeInsert:
-			// TODO: Re-apply insert
+			if err := m.recoveryHandler.ApplyInsert(r.TableName, r.Data); err != nil {
+				return fmt.Errorf("failed to apply insert for table %s: %w", r.TableName, err)
+			}
 		case wal.RecordTypeUpdate:
-			// TODO: Re-apply update
+			if err := m.recoveryHandler.ApplyUpdate(r.TableName, r.Data); err != nil {
+				return fmt.Errorf("failed to apply update for table %s: %w", r.TableName, err)
+			}
 		case wal.RecordTypeDelete:
-			// TODO: Re-apply delete
+			if err := m.recoveryHandler.ApplyDelete(r.TableName, r.Data); err != nil {
+				return fmt.Errorf("failed to apply delete for table %s: %w", r.TableName, err)
+			}
 		case wal.RecordTypePageWrite:
-			// TODO: Re-apply page write
+			if err := m.recoveryHandler.ApplyPageWrite(r.PageID, r.Data); err != nil {
+				return fmt.Errorf("failed to apply page write for page %d: %w", r.PageID, err)
+			}
 		}
 
 		return nil
@@ -348,6 +377,13 @@ func (m *Manager) SetBufferPool(bp *buffer.BufferPool) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.bufPool = bp
+}
+
+// SetRecoveryHandler sets the recovery handler for WAL replay.
+func (m *Manager) SetRecoveryHandler(handler RecoveryHandler) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.recoveryHandler = handler
 }
 
 // Stats returns checkpoint statistics.

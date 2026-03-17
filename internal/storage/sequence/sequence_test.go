@@ -4,6 +4,7 @@ package sequence_test
 import (
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 
@@ -573,24 +574,43 @@ func TestManagerConcurrentAccess(t *testing.T) {
 
 // MockWALLogger for testing WAL integration
 type MockWALLogger struct {
+	mu      sync.Mutex
 	creates []string
 	drops   []string
 	nexts   []string
 }
 
 func (m *MockWALLogger) LogSequenceCreate(name string, startValue int64) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	m.creates = append(m.creates, name)
 	return nil
 }
 
 func (m *MockWALLogger) LogSequenceDrop(name string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	m.drops = append(m.drops, name)
 	return nil
 }
 
 func (m *MockWALLogger) LogSequenceNext(name string, value int64) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	m.nexts = append(m.nexts, name)
 	return nil
+}
+
+func (m *MockWALLogger) lenNexts() int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return len(m.nexts)
+}
+
+func (m *MockWALLogger) lenCreates() int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return len(m.creates)
 }
 
 func TestManagerWALIntegration(t *testing.T) {
@@ -605,8 +625,8 @@ func TestManagerWALIntegration(t *testing.T) {
 	// Wait for async log
 	time.Sleep(50 * time.Millisecond)
 
-	if len(mockLogger.creates) != 1 {
-		t.Errorf("Expected 1 create log, got %d", len(mockLogger.creates))
+	if mockLogger.lenCreates() != 1 {
+		t.Errorf("Expected 1 create log, got %d", mockLogger.lenCreates())
 	}
 
 	// Get next value
@@ -615,8 +635,8 @@ func TestManagerWALIntegration(t *testing.T) {
 	// Wait for async log
 	time.Sleep(50 * time.Millisecond)
 
-	if len(mockLogger.nexts) != 1 {
-		t.Errorf("Expected 1 next log, got %d", len(mockLogger.nexts))
+	if mockLogger.lenNexts() != 1 {
+		t.Errorf("Expected 1 next log, got %d", mockLogger.lenNexts())
 	}
 
 	// Drop sequence

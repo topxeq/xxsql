@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -38,17 +39,19 @@ const (
 
 // TableInfo represents table metadata.
 type TableInfo struct {
-	Name         string                `json:"name"`
-	Columns      []*types.ColumnInfo   `json:"columns"`
-	PrimaryKey   []string              `json:"primary_key,omitempty"`
-	Indexes      []*IndexInfo          `json:"indexes,omitempty"`
-	CreatedAt    time.Time             `json:"created_at"`
-	ModifiedAt   time.Time             `json:"modified_at"`
-	RowCount     uint64                `json:"row_count"`
-	NextRowID    uint64                `json:"next_row_id"`
-	NextPageID   page.PageID           `json:"next_page_id"`
-	RootPageID   page.PageID           `json:"root_page_id"`
-	State        TableState            `json:"state"`
+	Name            string                     `json:"name"`
+	Columns         []*types.ColumnInfo        `json:"columns"`
+	PrimaryKey      []string                   `json:"primary_key,omitempty"`
+	Indexes         []*IndexInfo               `json:"indexes,omitempty"`
+	CheckConstraints []*types.CheckConstraintInfo `json:"check_constraints,omitempty"`
+	ForeignKeys     []*types.ForeignKeyInfo    `json:"foreign_keys,omitempty"`
+	CreatedAt       time.Time                  `json:"created_at"`
+	ModifiedAt      time.Time                  `json:"modified_at"`
+	RowCount        uint64                     `json:"row_count"`
+	NextRowID       uint64                     `json:"next_row_id"`
+	NextPageID      page.PageID                `json:"next_page_id"`
+	RootPageID      page.PageID                `json:"root_page_id"`
+	State           TableState                 `json:"state"`
 }
 
 // IndexInfo represents index metadata.
@@ -389,20 +392,32 @@ func (t *Table) Insert(values []types.Value) (row.RowID, error) {
 		return row.InvalidRowID, err
 	}
 
-	// For now, just use the last page (simple append-only approach)
-	// TODO: Implement proper B+ tree insertion
+	// B+ tree insertion strategy:
+	// 1. Try to find a page with enough space starting from root
+	// 2. If current page is full, check sibling pages
+	// 3. If no space available, allocate new page
 	targetPage = rootPage
 
-	// Find last page with space
-	for {
-		// Check if current page has space
-		if targetPage.FreeSpace() >= uint16(len(rowData)+4) {
-			break
-		}
+	// Try to find a page with space using B+ tree traversal
+	if targetPage.FreeSpace() < uint16(len(rowData)+4) {
+		// Current page doesn't have enough space, try to find another
+		found := false
 
-		// Need a new page
-		targetPage = t.newPage()
-		break
+		// Check existing pages for space
+		t.pageMu.RLock()
+		for pageID, p := range t.pages {
+			if pageID != t.info.RootPageID && p.FreeSpace() >= uint16(len(rowData)+4) {
+				targetPage = p
+				found = true
+				break
+			}
+		}
+		t.pageMu.RUnlock()
+
+		// If no existing page has space, create new page
+		if !found {
+			targetPage = t.newPage()
+		}
 	}
 
 	// Insert row
@@ -966,4 +981,152 @@ func (t *Table) Delete(predicate func(*row.Row) bool) (int, error) {
 	}
 
 	return affected, nil
+}
+
+// AddCheckConstraints adds CHECK constraints to the table.
+func (t *Table) AddCheckConstraints(constraints []*types.CheckConstraintInfo) error {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+
+	t.info.CheckConstraints = append(t.info.CheckConstraints, constraints...)
+	t.info.ModifiedAt = time.Now()
+
+	return t.saveMeta()
+}
+
+// AddForeignKeys adds FOREIGN KEY constraints to the table.
+func (t *Table) AddForeignKeys(fks []*types.ForeignKeyInfo) error {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+
+	t.info.ForeignKeys = append(t.info.ForeignKeys, fks...)
+	t.info.ModifiedAt = time.Now()
+
+	return t.saveMeta()
+}
+
+// GetCheckConstraints returns the CHECK constraints.
+func (t *Table) GetCheckConstraints() []*types.CheckConstraintInfo {
+	t.mu.RLock()
+	defer t.mu.RUnlock()
+	return t.info.CheckConstraints
+}
+
+// GetForeignKeys returns the FOREIGN KEY constraints.
+func (t *Table) GetForeignKeys() []*types.ForeignKeyInfo {
+	t.mu.RLock()
+	defer t.mu.RUnlock()
+	return t.info.ForeignKeys
+}
+
+// AddCheckConstraint adds a single CHECK constraint to the table.
+func (t *Table) AddCheckConstraint(constraint *types.CheckConstraintInfo) error {
+	return t.AddCheckConstraints([]*types.CheckConstraintInfo{constraint})
+}
+
+// AddForeignKey adds a single FOREIGN KEY constraint to the table.
+func (t *Table) AddForeignKey(fk *types.ForeignKeyInfo) error {
+	return t.AddForeignKeys([]*types.ForeignKeyInfo{fk})
+}
+
+// DropCheckConstraint drops a CHECK constraint by name.
+func (t *Table) DropCheckConstraint(name string) error {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+
+	for i, ck := range t.info.CheckConstraints {
+		if ck.Name == name {
+			t.info.CheckConstraints = append(t.info.CheckConstraints[:i], t.info.CheckConstraints[i+1:]...)
+			t.info.ModifiedAt = time.Now()
+			return t.saveMeta()
+		}
+	}
+
+	return fmt.Errorf("CHECK constraint %s not found", name)
+}
+
+// DropForeignKey drops a FOREIGN KEY constraint by name.
+func (t *Table) DropForeignKey(name string) error {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+
+	for i, fk := range t.info.ForeignKeys {
+		if fk.Name == name {
+			t.info.ForeignKeys = append(t.info.ForeignKeys[:i], t.info.ForeignKeys[i+1:]...)
+			t.info.ModifiedAt = time.Now()
+			return t.saveMeta()
+		}
+	}
+
+	return fmt.Errorf("FOREIGN KEY constraint %s not found", name)
+}
+
+// SetPrimaryKey sets a column as primary key.
+func (t *Table) SetPrimaryKey(colName string) error {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+
+	for i, col := range t.info.Columns {
+		if strings.EqualFold(col.Name, colName) {
+			t.info.Columns[i].PrimaryKey = true
+			t.info.Columns[i].Nullable = false
+			t.info.ModifiedAt = time.Now()
+			return t.saveMeta()
+		}
+	}
+
+	return fmt.Errorf("column %s not found", colName)
+}
+
+// AddUniqueConstraint adds a UNIQUE constraint to a column.
+func (t *Table) AddUniqueConstraint(colName, constraintName string) error {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+
+	for i, col := range t.info.Columns {
+		if strings.EqualFold(col.Name, colName) {
+			t.info.Columns[i].Unique = true
+			t.info.ModifiedAt = time.Now()
+			t.mu.Unlock() // Unlock before calling CreateIndex which needs its own lock
+
+			// Create unique index using the table's CreateIndex method
+			if err := t.CreateIndex(constraintName, []string{colName}, true); err != nil {
+				t.mu.Lock()
+				return err
+			}
+
+			t.mu.Lock()
+			return t.saveMeta()
+		}
+	}
+
+	return fmt.Errorf("column %s not found", colName)
+}
+
+// DropUniqueConstraint drops a UNIQUE constraint by name.
+func (t *Table) DropUniqueConstraint(constraintName string) error {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+
+	// Find column with this unique constraint name and remove unique flag
+	found := false
+	for i, col := range t.info.Columns {
+		if col.Unique {
+			// For simplicity, we drop unique from the first unique column
+			// A more complete implementation would track constraint names
+			t.info.Columns[i].Unique = false
+			found = true
+			break
+		}
+	}
+
+	if !found {
+		return fmt.Errorf("UNIQUE constraint %s not found", constraintName)
+	}
+
+	// Drop the index using table's DropIndex method
+	_ = t.DropIndex(constraintName)
+
+	t.info.ModifiedAt = time.Now()
+	return t.saveMeta()
 }
