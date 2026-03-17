@@ -40,6 +40,19 @@ test-coverage:
 	$(GOTEST) -coverprofile=coverage.out ./...
 	$(GOCMD) tool cover -html=coverage.out -o coverage.html
 
+test-race:
+	@echo "Running tests with race detector..."
+	$(GOTEST) -v -race ./...
+
+test-integration:
+	@echo "Running integration tests..."
+	$(GOTEST) -v ./tests/integration/...
+
+coverage-report:
+	@echo "Generating coverage report..."
+	$(GOTEST) -coverprofile=coverage.out ./...
+	$(GOCMD) tool cover -func=coverage.out | tail -1
+
 bench:
 	@echo "Running benchmarks..."
 	$(GOTEST) -bench=. ./...

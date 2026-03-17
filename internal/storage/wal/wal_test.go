@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/topxeq/xxsql/internal/storage/wal"
 )
@@ -206,8 +207,8 @@ func TestWALRecordTypes(t *testing.T) {
 
 	// Test various record types
 	tests := []struct {
-		name   string
-		logFn  func() (wal.LSN, error)
+		name  string
+		logFn func() (wal.LSN, error)
 	}{
 		{"Begin", func() (wal.LSN, error) { return m.LogBegin(1) }},
 		{"Commit", func() (wal.LSN, error) { return m.LogCommit(1) }},
@@ -261,5 +262,338 @@ func TestWALSync(t *testing.T) {
 	// Check flushed LSN
 	if m.GetFlushedLSN() == 0 {
 		t.Error("Flushed LSN should not be 0 after sync")
+	}
+}
+
+func TestWALRecordTypeString(t *testing.T) {
+	tests := []struct {
+		rt       wal.RecordType
+		expected string
+	}{
+		{wal.RecordTypeBegin, "BEGIN"},
+		{wal.RecordTypeCommit, "COMMIT"},
+		{wal.RecordTypeAbort, "ABORT"},
+		{wal.RecordTypeInsert, "INSERT"},
+		{wal.RecordTypeUpdate, "UPDATE"},
+		{wal.RecordTypeDelete, "DELETE"},
+		{wal.RecordTypeCreateTable, "CREATE_TABLE"},
+		{wal.RecordTypeDropTable, "DROP_TABLE"},
+		{wal.RecordType(99), "UNKNOWN"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.expected, func(t *testing.T) {
+			result := tt.rt.String()
+			if result != tt.expected {
+				t.Errorf("RecordType.String() = %q, want %q", result, tt.expected)
+			}
+		})
+	}
+}
+
+func TestWALRecordMarshal(t *testing.T) {
+	r := &wal.Record{
+		Type:      wal.RecordTypeInsert,
+		LSN:       1,
+		TxnID:     100,
+		PageID:    5,
+		TableName: "users",
+		Data:      []byte("testdata"),
+	}
+
+	data := r.Marshal()
+	if len(data) == 0 {
+		t.Error("Marshal should return non-empty data")
+	}
+
+	r2, n, err := wal.UnmarshalRecord(data)
+	if err != nil {
+		t.Fatalf("UnmarshalRecord error: %v", err)
+	}
+	if n != len(data) {
+		t.Errorf("UnmarshalRecord bytes read: got %d, want %d", n, len(data))
+	}
+	if r2.Type != r.Type {
+		t.Errorf("Type: got %v, want %v", r2.Type, r.Type)
+	}
+	if r2.LSN != r.LSN {
+		t.Errorf("LSN: got %d, want %d", r2.LSN, r.LSN)
+	}
+	if r2.TxnID != r.TxnID {
+		t.Errorf("TxnID: got %d, want %d", r2.TxnID, r.TxnID)
+	}
+	if r2.TableName != r.TableName {
+		t.Errorf("TableName: got %q, want %q", r2.TableName, r.TableName)
+	}
+}
+
+func TestWALUnmarshalInvalidData(t *testing.T) {
+	_, _, err := wal.UnmarshalRecord([]byte{})
+	if err == nil {
+		t.Error("UnmarshalRecord should error for empty data")
+	}
+
+	_, _, err = wal.UnmarshalRecord([]byte{0x00})
+	if err == nil {
+		t.Error("UnmarshalRecord should error for short data")
+	}
+}
+
+func TestWALUpdate(t *testing.T) {
+	tempDir, err := os.MkdirTemp("", "wal-update-test-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tempDir)
+
+	walPath := filepath.Join(tempDir, "test.xwal")
+	m := wal.NewManager(wal.ManagerConfig{
+		Path: walPath,
+	})
+
+	if err := m.Open(); err != nil {
+		t.Fatalf("Failed to open WAL: %v", err)
+	}
+	defer m.Close()
+
+	lsn, err := m.LogUpdate(1, "users", []byte("olddata"), []byte("newdata"))
+	if err != nil {
+		t.Fatalf("LogUpdate error: %v", err)
+	}
+	if lsn == 0 {
+		t.Error("LSN should not be 0")
+	}
+}
+
+func TestWALPageWrite(t *testing.T) {
+	tempDir, err := os.MkdirTemp("", "wal-page-test-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tempDir)
+
+	walPath := filepath.Join(tempDir, "test.xwal")
+	m := wal.NewManager(wal.ManagerConfig{
+		Path: walPath,
+	})
+
+	if err := m.Open(); err != nil {
+		t.Fatalf("Failed to open WAL: %v", err)
+	}
+	defer m.Close()
+
+	lsn, err := m.LogPageWrite(1, 42, []byte("pagedata"))
+	if err != nil {
+		t.Fatalf("LogPageWrite error: %v", err)
+	}
+	if lsn == 0 {
+		t.Error("LSN should not be 0")
+	}
+}
+
+func TestWALCheckpoint(t *testing.T) {
+	tempDir, err := os.MkdirTemp("", "wal-checkpoint-test-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tempDir)
+
+	walPath := filepath.Join(tempDir, "test.xwal")
+	m := wal.NewManager(wal.ManagerConfig{
+		Path: walPath,
+	})
+
+	if err := m.Open(); err != nil {
+		t.Fatalf("Failed to open WAL: %v", err)
+	}
+	defer m.Close()
+
+	lsn, err := m.LogCheckpoint(1, []byte("checkpointdata"))
+	if err != nil {
+		t.Fatalf("LogCheckpoint error: %v", err)
+	}
+	if lsn == 0 {
+		t.Error("LSN should not be 0")
+	}
+}
+
+func TestWALSequenceOps(t *testing.T) {
+	tempDir, err := os.MkdirTemp("", "wal-seq-test-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tempDir)
+
+	walPath := filepath.Join(tempDir, "test.xwal")
+	m := wal.NewManager(wal.ManagerConfig{
+		Path: walPath,
+	})
+
+	if err := m.Open(); err != nil {
+		t.Fatalf("Failed to open WAL: %v", err)
+	}
+	defer m.Close()
+
+	if err := m.LogSequenceCreate("seq1", 1); err != nil {
+		t.Fatalf("LogSequenceCreate error: %v", err)
+	}
+
+	if err := m.LogSequenceNext("seq1", 2); err != nil {
+		t.Fatalf("LogSequenceNext error: %v", err)
+	}
+
+	if err := m.LogSequenceDrop("seq1"); err != nil {
+		t.Fatalf("LogSequenceDrop error: %v", err)
+	}
+}
+
+func TestWALAppendRecord(t *testing.T) {
+	tempDir, err := os.MkdirTemp("", "wal-append-test-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tempDir)
+
+	walPath := filepath.Join(tempDir, "test.xwal")
+	m := wal.NewManager(wal.ManagerConfig{
+		Path: walPath,
+	})
+
+	if err := m.Open(); err != nil {
+		t.Fatalf("Failed to open WAL: %v", err)
+	}
+	defer m.Close()
+
+	r := &wal.Record{
+		Type:      wal.RecordTypeInsert,
+		TxnID:     1,
+		TableName: "users",
+		Data:      []byte("data"),
+	}
+
+	lsn, err := m.AppendRecord(r)
+	if err != nil {
+		t.Fatalf("AppendRecord error: %v", err)
+	}
+	if lsn == 0 {
+		t.Error("LSN should not be 0")
+	}
+}
+
+func TestWALNeedsCheckpoint(t *testing.T) {
+	tempDir, err := os.MkdirTemp("", "wal-checkpoint-need-test-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tempDir)
+
+	walPath := filepath.Join(tempDir, "test.xwal")
+	m := wal.NewManager(wal.ManagerConfig{
+		Path:    walPath,
+		MaxSize: 1024 * 1024,
+	})
+
+	if err := m.Open(); err != nil {
+		t.Fatalf("Failed to open WAL: %v", err)
+	}
+	defer m.Close()
+
+	needs, err := m.NeedsCheckpoint()
+	if err != nil {
+		t.Fatalf("NeedsCheckpoint error: %v", err)
+	}
+
+	t.Logf("NeedsCheckpoint: %v", needs)
+}
+
+func TestWALReopen(t *testing.T) {
+	tempDir, err := os.MkdirTemp("", "wal-reopen-test-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tempDir)
+
+	walPath := filepath.Join(tempDir, "test.xwal")
+	m := wal.NewManager(wal.ManagerConfig{
+		Path: walPath,
+	})
+
+	if err := m.Open(); err != nil {
+		t.Fatalf("Failed to open WAL: %v", err)
+	}
+
+	for i := 0; i < 5; i++ {
+		m.LogInsert(uint64(i), "users", []byte("data"))
+	}
+
+	lsnBefore := m.GetCurrentLSN()
+	m.Close()
+
+	m2 := wal.NewManager(wal.ManagerConfig{
+		Path: walPath,
+	})
+
+	if err := m2.Open(); err != nil {
+		t.Fatalf("Failed to reopen WAL: %v", err)
+	}
+	defer m2.Close()
+
+	lsnAfter := m2.GetCurrentLSN()
+	if lsnAfter != lsnBefore {
+		t.Errorf("LSN after reopen: got %d, want %d", lsnAfter, lsnBefore)
+	}
+}
+
+func TestWALAutoSync(t *testing.T) {
+	tempDir, err := os.MkdirTemp("", "wal-autosync-test-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tempDir)
+
+	walPath := filepath.Join(tempDir, "test.xwal")
+	m := wal.NewManager(wal.ManagerConfig{
+		Path:         walPath,
+		SyncInterval: 100,
+	})
+
+	if err := m.Open(); err != nil {
+		t.Fatalf("Failed to open WAL: %v", err)
+	}
+	defer m.Close()
+
+	for i := 0; i < 5; i++ {
+		m.LogInsert(uint64(i), "users", []byte("data"))
+	}
+
+	time.Sleep(200 * time.Millisecond)
+}
+
+func TestWALManyRecords(t *testing.T) {
+	tempDir, err := os.MkdirTemp("", "wal-many-test-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tempDir)
+
+	walPath := filepath.Join(tempDir, "test.xwal")
+	m := wal.NewManager(wal.ManagerConfig{
+		Path: walPath,
+	})
+
+	if err := m.Open(); err != nil {
+		t.Fatalf("Failed to open WAL: %v", err)
+	}
+	defer m.Close()
+
+	for i := 0; i < 100; i++ {
+		_, err := m.LogInsert(uint64(i), "users", []byte("data"))
+		if err != nil {
+			t.Fatalf("LogInsert error at %d: %v", i, err)
+		}
+	}
+
+	if m.GetCurrentLSN() != 100 {
+		t.Errorf("LSN: got %d, want 100", m.GetCurrentLSN())
 	}
 }

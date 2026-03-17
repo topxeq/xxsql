@@ -1,5 +1,10 @@
 # XxSql
 
+[![Go Report Card](https://goreportcard.com/badge/github.com/topxeq/xxsql)](https://goreportcard.com/report/github.com/topxeq/xxsql)
+[![Go Reference](https://pkg.go.dev/badge/github.com/topxeq/xxsql.svg)](https://pkg.go.dev/github.com/topxeq/xxsql)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![Go Version](https://img.shields.io/badge/Go-1.21+-00ADD8?logo=go)](https://golang.org/)
+
 A lightweight SQL database implemented in pure Go, featuring a B+ tree storage engine and MySQL-compatible protocol.
 
 ## Goal
@@ -561,41 +566,58 @@ xxsql/
 
 ```bash
 # Run all tests
+make test
+# or
 go test ./...
 
-# Run with coverage
-go test -cover ./...
+# Run with race detector
+make test-race
 
-# Run specific package tests
-go test -v ./internal/storage/...
+# Run with coverage
+make test-coverage
+
+# Run integration tests
+make test-integration
+
+# View coverage report
+make coverage-report
 
 # Run benchmarks
-go test -bench=. ./internal/storage/btree/...
+make bench
+
+# Run linter
+make lint
 ```
 
 ### Test Coverage
 
-| Package | Tests |
-|---------|-------|
-| Storage Engine | 6 |
-| B+ Tree | 11 |
-| Buffer Pool | 7 |
-| WAL | 7 |
-| Lock Manager | 13 |
-| Sequence Manager | 19 |
-| Recovery | 11 |
-| Protocol | 15 |
-| MySQL | 15 |
-| Executor | 6 |
-| JOIN | 13 |
-| UNION | 12 |
-| SQL Parser | 55 |
-| Auth | 14 |
-| Security | 19 |
-| Backup | 8 |
-| Go SQL Driver | 18 |
-| CLI Client | 6 |
-| **Total** | **262+** |
+| Package | Coverage |
+|---------|----------|
+| Pkg/Errors | 98.0% |
+| Storage/Page | 100.0% |
+| Storage/Catalog | 90.5% |
+| Storage/Storage | 89.4% |
+| Storage/Row | 89.1% |
+| Storage/Types | 88.1% |
+| Internal/Log | 82.5% |
+| Storage/Sequence | 85.1% |
+| Storage/Table | 73.8% |
+| Storage/Checkpoint | 79.5% |
+| Config | 75.0% |
+| Protocol | 73.6% |
+| Auth | 72.5% |
+| Storage/Lock | 68.0% |
+| Storage/WAL | 66.3% |
+| Storage/Recovery | 66.2% |
+| Executor | 64.0% |
+| Backup | 62.6% |
+| Storage/Buffer | 59.4% |
+| Storage/BTree | 52.2% |
+| Security | 50.1% |
+| Cmd/Xxsqlc | 48.0% |
+| **Total** | **59.1%** |
+
+See [docs/TESTING.md](docs/TESTING.md) for testing guidelines.
 
 ## Roadmap
 

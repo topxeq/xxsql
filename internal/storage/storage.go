@@ -131,6 +131,11 @@ func (e *Engine) GetCatalog() *catalog.Catalog {
 	return e.catalog
 }
 
+// GetDataDir returns the data directory path.
+func (e *Engine) GetDataDir() string {
+	return e.dataDir
+}
+
 // Stats returns storage engine statistics.
 func (e *Engine) Stats() *Stats {
 	stats := &Stats{

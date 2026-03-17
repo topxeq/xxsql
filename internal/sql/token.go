@@ -127,6 +127,13 @@ const (
 	TokEngine
 	TokCharset
 	TokComment
+	TokCheck
+	TokCascade
+	TokRestrict
+	TokAction
+	TokDescribe
+	TokBackup
+	TokRestore
 
 	// Keywords - Privileges
 	TokGrant
@@ -409,6 +416,12 @@ func (t TokenType) String() string {
 		return "@"
 	case TokFor:
 		return "FOR"
+	case TokDescribe:
+		return "DESCRIBE"
+	case TokBackup:
+		return "BACKUP"
+	case TokRestore:
+		return "RESTORE"
 	default:
 		return "UNKNOWN"
 	}
@@ -517,6 +530,13 @@ var keywords = map[string]TokenType{
 	"ENGINE":       TokEngine,
 	"CHARSET":      TokCharset,
 	"COMMENT":      TokComment,
+	"CHECK":        TokCheck,
+	"CASCADE":      TokCascade,
+	"RESTRICT":     TokRestrict,
+	"ACTION":       TokAction,
+	"DESCRIBE":     TokDescribe,
+	"BACKUP":       TokBackup,
+	"RESTORE":      TokRestore,
 	"GRANT":        TokGrant,
 	"REVOKE":       TokRevoke,
 	"PRIVILEGES":   TokPrivileges,

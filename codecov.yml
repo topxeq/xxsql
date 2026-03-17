@@ -1,0 +1,22 @@
+coverage:
+  status:
+    project:
+      default:
+        target: 50%
+        threshold: 5%
+        base: auto
+        if_ci_failed: error
+    patch:
+      default:
+        target: 50%
+        threshold: 5%
+
+ignore:
+  - "cmd/xxsqls/main.go"
+  - "internal/web/**"
+  - "pkg/errors/**"
+
+comment:
+  layout: "reach,diff,flags,files,footer"
+  behavior: default
+  require_changes: false

@@ -367,6 +367,28 @@ func (a *RenameTableAction) String() string {
 	return fmt.Sprintf("RENAME TO %s", a.NewName)
 }
 
+// AddConstraintAction represents ADD CONSTRAINT action.
+type AddConstraintAction struct {
+	Constraint *TableConstraint
+}
+
+func (a *AddConstraintAction) node()       {}
+func (a *AddConstraintAction) alterAction() {}
+func (a *AddConstraintAction) String() string {
+	return fmt.Sprintf("ADD %s", a.Constraint.String())
+}
+
+// DropConstraintAction represents DROP CONSTRAINT action.
+type DropConstraintAction struct {
+	ConstraintName string
+}
+
+func (a *DropConstraintAction) node()       {}
+func (a *DropConstraintAction) alterAction() {}
+func (a *DropConstraintAction) String() string {
+	return fmt.Sprintf("DROP CONSTRAINT %s", a.ConstraintName)
+}
+
 // TruncateTableStmt represents a TRUNCATE TABLE statement.
 type TruncateTableStmt struct {
 	TableName string
@@ -411,6 +433,28 @@ func (s *ShowStmt) String() string {
 		sb.WriteString(fmt.Sprintf("'%s'", s.Like))
 	}
 	return sb.String()
+}
+
+// DescribeStmt represents a DESCRIBE/DESC table statement.
+type DescribeStmt struct {
+	TableName string
+}
+
+func (s *DescribeStmt) node()      {}
+func (s *DescribeStmt) statement() {}
+func (s *DescribeStmt) String() string {
+	return fmt.Sprintf("DESCRIBE %s", s.TableName)
+}
+
+// ShowCreateTableStmt represents a SHOW CREATE TABLE statement.
+type ShowCreateTableStmt struct {
+	TableName string
+}
+
+func (s *ShowCreateTableStmt) node()      {}
+func (s *ShowCreateTableStmt) statement() {}
+func (s *ShowCreateTableStmt) String() string {
+	return fmt.Sprintf("SHOW CREATE TABLE %s", s.TableName)
 }
 
 // UnionStmt represents a UNION statement.
@@ -607,6 +651,9 @@ type TableConstraint struct {
 	Columns     []string
 	RefTable    string
 	RefColumns  []string
+	CheckExpr   Expression // For CHECK constraint
+	OnDelete    string     // For FK: CASCADE, SET NULL, RESTRICT, NO ACTION
+	OnUpdate    string     // For FK: CASCADE, SET NULL, RESTRICT, NO ACTION
 }
 
 func (c *TableConstraint) node() {}
@@ -624,6 +671,13 @@ func (c *TableConstraint) String() string {
 		sb.WriteString("UNIQUE (")
 	case ConstraintForeignKey:
 		sb.WriteString("FOREIGN KEY (")
+	case ConstraintCheck:
+		sb.WriteString("CHECK (")
+		if c.CheckExpr != nil {
+			sb.WriteString(c.CheckExpr.String())
+		}
+		sb.WriteString(")")
+		return sb.String()
 	}
 	for i, col := range c.Columns {
 		if i > 0 {
@@ -644,6 +698,14 @@ func (c *TableConstraint) String() string {
 				sb.WriteString(col)
 			}
 			sb.WriteString(")")
+		}
+		if c.OnDelete != "" {
+			sb.WriteString(" ON DELETE ")
+			sb.WriteString(c.OnDelete)
+		}
+		if c.OnUpdate != "" {
+			sb.WriteString(" ON UPDATE ")
+			sb.WriteString(c.OnUpdate)
 		}
 	}
 	return sb.String()
@@ -1276,4 +1338,39 @@ func (s *SetPasswordStmt) String() string {
 	sb.WriteString(s.Password)
 	sb.WriteString("'")
 	return sb.String()
+}
+
+// ============================================================================
+// Backup and Restore Statements
+// ============================================================================
+
+// BackupStmt represents a BACKUP DATABASE statement.
+type BackupStmt struct {
+	Path      string // backup file path
+	Compress  bool   // WITH COMPRESS option
+	Incremental bool  // incremental backup
+}
+
+func (s *BackupStmt) node()      {}
+func (s *BackupStmt) statement() {}
+func (s *BackupStmt) String() string {
+	var sb strings.Builder
+	sb.WriteString("BACKUP DATABASE TO '")
+	sb.WriteString(s.Path)
+	sb.WriteString("'")
+	if s.Compress {
+		sb.WriteString(" WITH COMPRESS")
+	}
+	return sb.String()
+}
+
+// RestoreStmt represents a RESTORE DATABASE statement.
+type RestoreStmt struct {
+	Path string // backup file path
+}
+
+func (s *RestoreStmt) node()      {}
+func (s *RestoreStmt) statement() {}
+func (s *RestoreStmt) String() string {
+	return fmt.Sprintf("RESTORE DATABASE FROM '%s'", s.Path)
 }

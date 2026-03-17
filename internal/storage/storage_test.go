@@ -246,21 +246,18 @@ func TestTableWithPrimaryKey(t *testing.T) {
 }
 
 func TestBTreeIndex(t *testing.T) {
-	// Create temp directory
 	tempDir, err := os.MkdirTemp("", "xxsql-index-test-*")
 	if err != nil {
 		t.Fatalf("Failed to create temp dir: %v", err)
 	}
 	defer os.RemoveAll(tempDir)
 
-	// Create engine
 	engine := storage.NewEngine(tempDir)
 	if err := engine.Open(); err != nil {
 		t.Fatalf("Failed to open engine: %v", err)
 	}
 	defer engine.Close()
 
-	// Create table with primary key
 	columns := []*types.ColumnInfo{
 		{Name: "id", Type: types.TypeInt, PrimaryKey: true},
 		{Name: "value", Type: types.TypeVarchar, Size: 50},
@@ -270,7 +267,6 @@ func TestBTreeIndex(t *testing.T) {
 		t.Fatalf("Failed to create table: %v", err)
 	}
 
-	// Insert rows
 	for i := 1; i <= 100; i++ {
 		values := []types.Value{
 			types.NewIntValue(int64(i)),
@@ -282,7 +278,6 @@ func TestBTreeIndex(t *testing.T) {
 		}
 	}
 
-	// Get table and check index
 	tbl, err := engine.GetTable("indexed")
 	if err != nil {
 		t.Fatalf("Failed to get table: %v", err)
@@ -293,7 +288,6 @@ func TestBTreeIndex(t *testing.T) {
 		t.Fatal("Expected primary key index")
 	}
 
-	// Test index search
 	primaryIdx := idxMgr.GetPrimary()
 	if primaryIdx == nil {
 		t.Fatal("Primary index is nil")
@@ -307,15 +301,381 @@ func TestBTreeIndex(t *testing.T) {
 		t.Error("Row ID should not be 0")
 	}
 
-	// Test non-existent key
 	_, found = primaryIdx.Search(types.NewIntValue(200))
 	if found {
 		t.Error("Should not find key 200 in index")
 	}
 
-	// Verify index count
 	count := primaryIdx.Count()
 	if count != 100 {
 		t.Errorf("Expected index count 100, got %d", count)
+	}
+}
+
+func TestEngineDropTable(t *testing.T) {
+	tempDir := t.TempDir()
+
+	engine := storage.NewEngine(tempDir)
+	if err := engine.Open(); err != nil {
+		t.Fatalf("Failed to open engine: %v", err)
+	}
+	defer engine.Close()
+
+	columns := []*types.ColumnInfo{
+		{Name: "id", Type: types.TypeInt, PrimaryKey: true},
+	}
+
+	if err := engine.CreateTable("to_drop", columns); err != nil {
+		t.Fatalf("CreateTable failed: %v", err)
+	}
+
+	if !engine.TableExists("to_drop") {
+		t.Error("Table should exist")
+	}
+
+	if err := engine.DropTable("to_drop"); err != nil {
+		t.Fatalf("DropTable failed: %v", err)
+	}
+
+	if engine.TableExists("to_drop") {
+		t.Error("Table should not exist after drop")
+	}
+}
+
+func TestEngineRenameTable(t *testing.T) {
+	tempDir := t.TempDir()
+
+	engine := storage.NewEngine(tempDir)
+	if err := engine.Open(); err != nil {
+		t.Fatalf("Failed to open engine: %v", err)
+	}
+	defer engine.Close()
+
+	columns := []*types.ColumnInfo{
+		{Name: "id", Type: types.TypeInt, PrimaryKey: true},
+	}
+
+	if err := engine.CreateTable("old_name", columns); err != nil {
+		t.Fatalf("CreateTable failed: %v", err)
+	}
+
+	values := []types.Value{types.NewIntValue(1)}
+	engine.Insert("old_name", values)
+
+	if err := engine.RenameTable("old_name", "new_name"); err != nil {
+		t.Fatalf("RenameTable failed: %v", err)
+	}
+
+	if engine.TableExists("old_name") {
+		t.Error("Old table name should not exist")
+	}
+
+	if !engine.TableExists("new_name") {
+		t.Error("New table name should exist")
+	}
+}
+
+func TestEngineCreateIndex(t *testing.T) {
+	tempDir := t.TempDir()
+
+	engine := storage.NewEngine(tempDir)
+	if err := engine.Open(); err != nil {
+		t.Fatalf("Failed to open engine: %v", err)
+	}
+	defer engine.Close()
+
+	columns := []*types.ColumnInfo{
+		{Name: "id", Type: types.TypeInt, PrimaryKey: true},
+		{Name: "email", Type: types.TypeVarchar, Size: 100},
+	}
+
+	if err := engine.CreateTable("users", columns); err != nil {
+		t.Fatalf("CreateTable failed: %v", err)
+	}
+
+	if err := engine.CreateIndex("users", "idx_email", []string{"email"}, true); err != nil {
+		t.Fatalf("CreateIndex failed: %v", err)
+	}
+
+	if err := engine.DropIndex("users", "idx_email"); err != nil {
+		t.Fatalf("DropIndex failed: %v", err)
+	}
+}
+
+func TestEngineStats(t *testing.T) {
+	tempDir := t.TempDir()
+
+	engine := storage.NewEngine(tempDir)
+	if err := engine.Open(); err != nil {
+		t.Fatalf("Failed to open engine: %v", err)
+	}
+	defer engine.Close()
+
+	columns := []*types.ColumnInfo{
+		{Name: "id", Type: types.TypeInt, PrimaryKey: true},
+	}
+
+	if err := engine.CreateTable("stats_test", columns); err != nil {
+		t.Fatalf("CreateTable failed: %v", err)
+	}
+
+	for i := 1; i <= 10; i++ {
+		values := []types.Value{types.NewIntValue(int64(i))}
+		engine.Insert("stats_test", values)
+	}
+
+	stats := engine.Stats()
+
+	if stats.TableCount != 1 {
+		t.Errorf("TableCount: got %d, want 1", stats.TableCount)
+	}
+
+	if len(stats.Tables) != 1 {
+		t.Errorf("Tables: got %d, want 1", len(stats.Tables))
+	}
+
+	if stats.Tables[0].RowCount != 10 {
+		t.Errorf("RowCount: got %d, want 10", stats.Tables[0].RowCount)
+	}
+}
+
+func TestEngineGetDataDir(t *testing.T) {
+	tempDir := t.TempDir()
+
+	engine := storage.NewEngine(tempDir)
+
+	if engine.GetDataDir() != tempDir {
+		t.Errorf("GetDataDir: got %q, want %q", engine.GetDataDir(), tempDir)
+	}
+}
+
+func TestEngineGetCatalog(t *testing.T) {
+	tempDir := t.TempDir()
+
+	engine := storage.NewEngine(tempDir)
+	if err := engine.Open(); err != nil {
+		t.Fatalf("Failed to open engine: %v", err)
+	}
+	defer engine.Close()
+
+	catalog := engine.GetCatalog()
+	if catalog == nil {
+		t.Error("GetCatalog should not return nil")
+	}
+}
+
+func TestEngineFlush(t *testing.T) {
+	tempDir := t.TempDir()
+
+	engine := storage.NewEngine(tempDir)
+	if err := engine.Open(); err != nil {
+		t.Fatalf("Failed to open engine: %v", err)
+	}
+	defer engine.Close()
+
+	columns := []*types.ColumnInfo{
+		{Name: "id", Type: types.TypeInt, PrimaryKey: true},
+	}
+
+	engine.CreateTable("flush_test", columns)
+	engine.Insert("flush_test", []types.Value{types.NewIntValue(1)})
+
+	if err := engine.Flush(); err != nil {
+		t.Fatalf("Flush failed: %v", err)
+	}
+}
+
+func TestEngineNonExistentTable(t *testing.T) {
+	tempDir := t.TempDir()
+
+	engine := storage.NewEngine(tempDir)
+	if err := engine.Open(); err != nil {
+		t.Fatalf("Failed to open engine: %v", err)
+	}
+	defer engine.Close()
+
+	if engine.TableExists("nonexistent") {
+		t.Error("Non-existent table should not exist")
+	}
+
+	_, err := engine.GetTable("nonexistent")
+	if err == nil {
+		t.Error("Expected error for non-existent table")
+	}
+
+	_, err = engine.Insert("nonexistent", nil)
+	if err == nil {
+		t.Error("Expected error for insert into non-existent table")
+	}
+
+	_, err = engine.Scan("nonexistent")
+	if err == nil {
+		t.Error("Expected error for scan on non-existent table")
+	}
+}
+
+func TestParseColumnDefs(t *testing.T) {
+	defs := []struct {
+		Name     string
+		Type     string
+		Size     int
+		Nullable bool
+		Default  interface{}
+		Primary  bool
+		AutoIncr bool
+	}{
+		{Name: "id", Type: "INT", Primary: true},
+		{Name: "name", Type: "VARCHAR", Size: 100, Nullable: true},
+		{Name: "count", Type: "INT", Default: 0},
+		{Name: "price", Type: "FLOAT", Default: 0.0},
+		{Name: "active", Type: "BOOL", Default: true},
+	}
+
+	columns := storage.ParseColumnDefs(defs)
+
+	if len(columns) != 5 {
+		t.Fatalf("Columns: got %d, want 5", len(columns))
+	}
+
+	if columns[0].Name != "id" {
+		t.Errorf("Name: got %q, want 'id'", columns[0].Name)
+	}
+
+	if columns[0].Type != types.TypeInt {
+		t.Errorf("Type: got %v, want TypeInt", columns[0].Type)
+	}
+
+	if columns[0].PrimaryKey != true {
+		t.Error("id should be primary key")
+	}
+
+	if columns[1].Size != 100 {
+		t.Errorf("Size: got %d, want 100", columns[1].Size)
+	}
+}
+
+func TestValidateValues(t *testing.T) {
+	tests := []struct {
+		name    string
+		columns []*types.ColumnInfo
+		values  []types.Value
+		wantErr bool
+	}{
+		{
+			name: "matching columns and values",
+			columns: []*types.ColumnInfo{
+				{Name: "id", Type: types.TypeInt},
+				{Name: "name", Type: types.TypeVarchar},
+			},
+			values: []types.Value{
+				types.NewIntValue(1),
+				types.NewStringValue("test", types.TypeVarchar),
+			},
+			wantErr: false,
+		},
+		{
+			name: "column count mismatch",
+			columns: []*types.ColumnInfo{
+				{Name: "id", Type: types.TypeInt},
+				{Name: "name", Type: types.TypeVarchar},
+			},
+			values: []types.Value{
+				types.NewIntValue(1),
+			},
+			wantErr: true,
+		},
+		{
+			name: "null on non-nullable column",
+			columns: []*types.ColumnInfo{
+				{Name: "id", Type: types.TypeInt, Nullable: false},
+			},
+			values: []types.Value{
+				types.NewNullValue(),
+			},
+			wantErr: true,
+		},
+		{
+			name: "null on nullable column",
+			columns: []*types.ColumnInfo{
+				{Name: "id", Type: types.TypeInt, Nullable: true},
+			},
+			values: []types.Value{
+				types.NewNullValue(),
+			},
+			wantErr: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := storage.ValidateValues(tt.columns, tt.values)
+			if (err != nil) != tt.wantErr {
+				t.Errorf("ValidateValues(): error = %v, wantErr %v", err, tt.wantErr)
+			}
+		})
+	}
+}
+
+func TestEngineMultipleTables(t *testing.T) {
+	tempDir := t.TempDir()
+
+	engine := storage.NewEngine(tempDir)
+	if err := engine.Open(); err != nil {
+		t.Fatalf("Failed to open engine: %v", err)
+	}
+	defer engine.Close()
+
+	for i := 1; i <= 5; i++ {
+		columns := []*types.ColumnInfo{
+			{Name: "id", Type: types.TypeInt, PrimaryKey: true},
+		}
+		engine.CreateTable(fmt.Sprintf("table%d", i), columns)
+	}
+
+	tables := engine.ListTables()
+	if len(tables) != 5 {
+		t.Errorf("ListTables: got %d, want 5", len(tables))
+	}
+}
+
+func TestEngineReopen(t *testing.T) {
+	tempDir := t.TempDir()
+
+	engine := storage.NewEngine(tempDir)
+	if err := engine.Open(); err != nil {
+		t.Fatalf("First open failed: %v", err)
+	}
+
+	columns := []*types.ColumnInfo{
+		{Name: "id", Type: types.TypeInt, PrimaryKey: true},
+		{Name: "value", Type: types.TypeInt},
+	}
+
+	engine.CreateTable("persist_test", columns)
+	for i := 1; i <= 5; i++ {
+		engine.Insert("persist_test", []types.Value{
+			types.NewIntValue(int64(i)),
+			types.NewIntValue(int64(i * 10)),
+		})
+	}
+	engine.Close()
+
+	engine2 := storage.NewEngine(tempDir)
+	if err := engine2.Open(); err != nil {
+		t.Fatalf("Second open failed: %v", err)
+	}
+	defer engine2.Close()
+
+	if !engine2.TableExists("persist_test") {
+		t.Error("Table should persist after reopen")
+	}
+
+	rows, err := engine2.Scan("persist_test")
+	if err != nil {
+		t.Fatalf("Scan failed: %v", err)
+	}
+
+	if len(rows) != 5 {
+		t.Errorf("Rows: got %d, want 5", len(rows))
 	}
 }

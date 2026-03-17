@@ -7,9 +7,11 @@ import (
 	"strconv"
 	"strings"
 
+	"github.com/topxeq/xxsql/internal/backup"
 	"github.com/topxeq/xxsql/internal/sql"
 	"github.com/topxeq/xxsql/internal/storage"
 	"github.com/topxeq/xxsql/internal/storage/row"
+	"github.com/topxeq/xxsql/internal/storage/table"
 	"github.com/topxeq/xxsql/internal/storage/types"
 )
 
@@ -232,6 +234,26 @@ func (e *Executor) ExecuteWithPerms(sqlStr string, checker PermissionChecker) (*
 			return nil, err
 		}
 		return e.executeUnion(s)
+	case *sql.DescribeStmt:
+		if err := checkPerm(PermSelect); err != nil {
+			return nil, err
+		}
+		return e.executeDescribe(s)
+	case *sql.ShowCreateTableStmt:
+		if err := checkPerm(PermSelect); err != nil {
+			return nil, err
+		}
+		return e.executeShowCreateTable(s)
+	case *sql.BackupStmt:
+		if err := checkPerm(PermBackup); err != nil {
+			return nil, err
+		}
+		return e.executeBackup(s)
+	case *sql.RestoreStmt:
+		if err := checkPerm(PermRestore); err != nil {
+			return nil, err
+		}
+		return e.executeRestore(s)
 	default:
 		return nil, fmt.Errorf("unsupported statement type: %T", stmt)
 	}
@@ -555,11 +577,45 @@ func (e *Executor) executeInsert(stmt *sql.InsertStmt) (*Result, error) {
 			values[idx] = val
 		}
 
+		// Apply DEFAULT values for missing columns
+		for i, col := range tblInfo.Columns {
+			if values[i].Null && col.Default.Type != types.TypeNull {
+				values[i] = col.Default
+			}
+		}
+
 		// Handle auto-increment columns
 		for i, col := range tblInfo.Columns {
 			if col.AutoIncr && values[i].Null {
 				values[i] = types.Value{Null: false, Type: types.TypeSeq}
 			}
+		}
+
+		// Validate NOT NULL constraints
+		for i, col := range tblInfo.Columns {
+			if !col.Nullable && values[i].Null {
+				return nil, fmt.Errorf("column '%s' cannot be null", col.Name)
+			}
+		}
+
+		// Validate UNIQUE constraints (check existing data)
+		for i, col := range tblInfo.Columns {
+			if col.Unique && !values[i].Null {
+				// Check if value already exists
+				if e.valueExistsInColumn(tbl, i, values[i]) {
+					return nil, fmt.Errorf("duplicate entry '%s' for key '%s'", values[i].String(), col.Name)
+				}
+			}
+		}
+
+		// Validate CHECK constraints
+		if err := e.validateCheckConstraints(tbl, values); err != nil {
+			return nil, err
+		}
+
+		// Validate FOREIGN KEY constraints
+		if err := e.validateForeignKeys(tbl, values, false); err != nil {
+			return nil, err
 		}
 
 		// Insert the row
@@ -617,6 +673,19 @@ func (e *Executor) executeUpdate(stmt *sql.UpdateStmt) (*Result, error) {
 		if err != nil {
 			return nil, fmt.Errorf("invalid value for column %s: %w", a.Column, err)
 		}
+
+		// Validate NOT NULL constraint
+		if !tblInfo.Columns[idx].Nullable && val.Null {
+			return nil, fmt.Errorf("column '%s' cannot be null", tblInfo.Columns[idx].Name)
+		}
+
+		// Validate UNIQUE constraint (if not NULL)
+		if tblInfo.Columns[idx].Unique && !val.Null {
+			if e.valueExistsInColumn(tbl, idx, val) {
+				return nil, fmt.Errorf("duplicate entry '%s' for key '%s'", val.String(), tblInfo.Columns[idx].Name)
+			}
+		}
+
 		updates[idx] = val
 	}
 
@@ -785,7 +854,7 @@ func (e *Executor) executeCreateTable(stmt *sql.CreateTableStmt) (*Result, error
 			return nil, fmt.Errorf("unknown type: %s", colDef.Type.Name)
 		}
 
-		columns[i] = &types.ColumnInfo{
+		col := &types.ColumnInfo{
 			Name:       colDef.Name,
 			Type:       colType,
 			Size:       colDef.Type.Size,
@@ -794,10 +863,25 @@ func (e *Executor) executeCreateTable(stmt *sql.CreateTableStmt) (*Result, error
 			Nullable:   colDef.Nullable,
 			PrimaryKey: colDef.PrimaryKey,
 			AutoIncr:   colDef.AutoIncr,
+			Unique:     colDef.Unique,
 		}
+
+		// Process DEFAULT value
+		if colDef.Default != nil {
+			defaultVal, err := e.expressionToValue(colDef.Default, col)
+			if err != nil {
+				return nil, fmt.Errorf("invalid default value for column %s: %w", colDef.Name, err)
+			}
+			col.Default = defaultVal
+		}
+
+		columns[i] = col
 	}
 
 	// Check for primary key in constraints
+	var checkConstraints []*types.CheckConstraintInfo
+	var foreignKeys []*types.ForeignKeyInfo
+
 	for _, c := range stmt.Constraints {
 		if c.Type == sql.ConstraintPrimaryKey {
 			for _, colName := range c.Columns {
@@ -808,11 +892,76 @@ func (e *Executor) executeCreateTable(stmt *sql.CreateTableStmt) (*Result, error
 				}
 			}
 		}
+		// Check for UNIQUE constraint at table level
+		if c.Type == sql.ConstraintUnique {
+			for _, colName := range c.Columns {
+				for _, col := range columns {
+					if strings.EqualFold(col.Name, colName) {
+						col.Unique = true
+					}
+				}
+			}
+		}
+		// CHECK constraint
+		if c.Type == sql.ConstraintCheck {
+			checkConstraints = append(checkConstraints, &types.CheckConstraintInfo{
+				Name:       c.Name,
+				Expression: c.CheckExpr.String(),
+			})
+		}
+		// FOREIGN KEY constraint
+		if c.Type == sql.ConstraintForeignKey {
+			fk := &types.ForeignKeyInfo{
+				Name:       c.Name,
+				Columns:    c.Columns,
+				RefTable:   c.RefTable,
+				RefColumns: c.RefColumns,
+				OnDelete:   c.OnDelete,
+				OnUpdate:   c.OnUpdate,
+			}
+			// Set default actions if not specified
+			if fk.OnDelete == "" {
+				fk.OnDelete = "RESTRICT"
+			}
+			if fk.OnUpdate == "" {
+				fk.OnUpdate = "RESTRICT"
+			}
+			foreignKeys = append(foreignKeys, fk)
+		}
 	}
 
 	// Create the table
 	if err := e.engine.CreateTable(stmt.TableName, columns); err != nil {
 		return nil, fmt.Errorf("create table error: %w", err)
+	}
+
+	// Get the table and add constraints
+	tbl, err := e.engine.GetTable(stmt.TableName)
+	if err != nil {
+		return nil, err
+	}
+
+	// Add CHECK constraints
+	if len(checkConstraints) > 0 {
+		if err := tbl.AddCheckConstraints(checkConstraints); err != nil {
+			return nil, fmt.Errorf("failed to add check constraints: %w", err)
+		}
+	}
+
+	// Add FOREIGN KEY constraints
+	if len(foreignKeys) > 0 {
+		if err := tbl.AddForeignKeys(foreignKeys); err != nil {
+			return nil, fmt.Errorf("failed to add foreign keys: %w", err)
+		}
+	}
+
+	// Create indexes for UNIQUE columns
+	for _, col := range columns {
+		if col.Unique && !col.PrimaryKey {
+			if err := tbl.CreateIndex(col.Name, []string{col.Name}, true); err != nil {
+				// Log warning but don't fail
+			}
+		}
 	}
 
 	return &Result{Message: "OK"}, nil
@@ -922,6 +1071,14 @@ func (e *Executor) executeAlterTable(stmt *sql.AlterTableStmt) (*Result, error) 
 			}
 			// Update table name for subsequent actions
 			tableName = a.NewName
+		case *sql.AddConstraintAction:
+			if err := e.executeAddConstraint(tableName, a); err != nil {
+				return nil, err
+			}
+		case *sql.DropConstraintAction:
+			if err := e.executeDropConstraint(tableName, a); err != nil {
+				return nil, err
+			}
 		default:
 			return nil, fmt.Errorf("unsupported alter action: %T", action)
 		}
@@ -1065,6 +1222,304 @@ func (e *Executor) executeShow(stmt *sql.ShowStmt) (*Result, error) {
 	default:
 		return nil, fmt.Errorf("unsupported SHOW type: %s", stmt.Type)
 	}
+}
+
+// executeDescribe executes a DESCRIBE/DESC statement.
+func (e *Executor) executeDescribe(stmt *sql.DescribeStmt) (*Result, error) {
+	// Check if table exists
+	tbl, err := e.engine.GetTable(stmt.TableName)
+	if err != nil {
+		return nil, fmt.Errorf("table %s does not exist", stmt.TableName)
+	}
+
+	info := tbl.GetInfo()
+	result := &Result{
+		Columns: []ColumnInfo{
+			{Name: "Field", Type: "VARCHAR"},
+			{Name: "Type", Type: "VARCHAR"},
+			{Name: "Null", Type: "VARCHAR"},
+			{Name: "Key", Type: "VARCHAR"},
+			{Name: "Default", Type: "VARCHAR"},
+			{Name: "Extra", Type: "VARCHAR"},
+		},
+		Rows: make([][]interface{}, len(info.Columns)),
+	}
+
+	for i, col := range info.Columns {
+		key := ""
+		if col.PrimaryKey {
+			key = "PRI"
+		} else if col.Unique {
+			key = "UNI"
+		}
+		extra := ""
+		if col.AutoIncr {
+			extra = "auto_increment"
+		}
+		null := "YES"
+		if !col.Nullable {
+			null = "NO"
+		}
+		var defaultVal interface{}
+		if col.Default.Type != types.TypeNull {
+			defaultVal = col.Default.String()
+		}
+		result.Rows[i] = []interface{}{
+			col.Name,
+			col.Type.String(),
+			null,
+			key,
+			defaultVal,
+			extra,
+		}
+	}
+	result.RowCount = len(info.Columns)
+	return result, nil
+}
+
+// executeShowCreateTable executes a SHOW CREATE TABLE statement.
+func (e *Executor) executeShowCreateTable(stmt *sql.ShowCreateTableStmt) (*Result, error) {
+	// Check if table exists
+	tbl, err := e.engine.GetTable(stmt.TableName)
+	if err != nil {
+		return nil, fmt.Errorf("table %s does not exist", stmt.TableName)
+	}
+
+	info := tbl.GetInfo()
+
+	// Build CREATE TABLE statement
+	var sb strings.Builder
+	sb.WriteString("CREATE TABLE `")
+	sb.WriteString(stmt.TableName)
+	sb.WriteString("` (\n")
+
+	// Columns
+	for i, col := range info.Columns {
+		if i > 0 {
+			sb.WriteString(",\n")
+		}
+		sb.WriteString("  `")
+		sb.WriteString(col.Name)
+		sb.WriteString("` ")
+		sb.WriteString(col.Type.String())
+		if col.Size > 0 && (col.Type == types.TypeChar || col.Type == types.TypeVarchar) {
+			sb.WriteString("(")
+			sb.WriteString(strconv.Itoa(col.Size))
+			sb.WriteString(")")
+		}
+		if !col.Nullable {
+			sb.WriteString(" NOT NULL")
+		}
+		if col.Default.Type != types.TypeNull {
+			sb.WriteString(" DEFAULT ")
+			sb.WriteString(col.Default.String())
+		}
+		if col.AutoIncr {
+			sb.WriteString(" AUTO_INCREMENT")
+		}
+		if col.PrimaryKey {
+			sb.WriteString(" PRIMARY KEY")
+		}
+		if col.Unique {
+			sb.WriteString(" UNIQUE")
+		}
+	}
+
+	// Table constraints (CHECK, FOREIGN KEY)
+	for _, ck := range info.CheckConstraints {
+		sb.WriteString(",\n  CHECK (")
+		sb.WriteString(ck.Expression)
+		sb.WriteString(")")
+	}
+
+	for _, fk := range info.ForeignKeys {
+		sb.WriteString(",\n  FOREIGN KEY (")
+		for i, col := range fk.Columns {
+			if i > 0 {
+				sb.WriteString(", ")
+			}
+			sb.WriteString("`")
+			sb.WriteString(col)
+			sb.WriteString("`")
+		}
+		sb.WriteString(") REFERENCES `")
+		sb.WriteString(fk.RefTable)
+		sb.WriteString("` (")
+		for i, col := range fk.RefColumns {
+			if i > 0 {
+				sb.WriteString(", ")
+			}
+			sb.WriteString("`")
+			sb.WriteString(col)
+			sb.WriteString("`")
+		}
+		sb.WriteString(")")
+		if fk.OnDelete != "" {
+			sb.WriteString(" ON DELETE ")
+			sb.WriteString(fk.OnDelete)
+		}
+		if fk.OnUpdate != "" {
+			sb.WriteString(" ON UPDATE ")
+			sb.WriteString(fk.OnUpdate)
+		}
+	}
+
+	sb.WriteString("\n)")
+
+	result := &Result{
+		Columns: []ColumnInfo{
+			{Name: "Table", Type: "VARCHAR"},
+			{Name: "Create Table", Type: "VARCHAR"},
+		},
+		Rows:    [][]interface{}{{stmt.TableName, sb.String()}},
+		RowCount: 1,
+	}
+	return result, nil
+}
+
+// executeAddConstraint adds a constraint to a table.
+func (e *Executor) executeAddConstraint(tableName string, action *sql.AddConstraintAction) error {
+	tbl, err := e.engine.GetTable(tableName)
+	if err != nil {
+		return err
+	}
+
+	constraint := action.Constraint
+	switch constraint.Type {
+	case sql.ConstraintPrimaryKey:
+		// Create primary key index
+		for _, colName := range constraint.Columns {
+			if err := tbl.SetPrimaryKey(colName); err != nil {
+				return err
+			}
+		}
+
+	case sql.ConstraintUnique:
+		// Create unique index
+		indexName := constraint.Name
+		if indexName == "" {
+			indexName = tableName + "_" + strings.Join(constraint.Columns, "_") + "_unique"
+		}
+		for _, colName := range constraint.Columns {
+			if err := tbl.AddUniqueConstraint(colName, indexName); err != nil {
+				return err
+			}
+		}
+
+	case sql.ConstraintCheck:
+		// Add CHECK constraint
+		exprStr := ""
+		if constraint.CheckExpr != nil {
+			exprStr = constraint.CheckExpr.String()
+		}
+		ckInfo := &types.CheckConstraintInfo{
+			Name:       constraint.Name,
+			Expression: exprStr,
+		}
+		if err := tbl.AddCheckConstraint(ckInfo); err != nil {
+			return err
+		}
+
+	case sql.ConstraintForeignKey:
+		// Add FOREIGN KEY constraint
+		fkInfo := &types.ForeignKeyInfo{
+			Name:       constraint.Name,
+			Columns:    constraint.Columns,
+			RefTable:   constraint.RefTable,
+			RefColumns: constraint.RefColumns,
+			OnDelete:   constraint.OnDelete,
+			OnUpdate:   constraint.OnUpdate,
+		}
+		if err := tbl.AddForeignKey(fkInfo); err != nil {
+			return err
+		}
+	}
+
+	return nil
+}
+
+// executeDropConstraint drops a constraint from a table.
+func (e *Executor) executeDropConstraint(tableName string, action *sql.DropConstraintAction) error {
+	tbl, err := e.engine.GetTable(tableName)
+	if err != nil {
+		return err
+	}
+
+	constraintName := action.ConstraintName
+
+	// Try to drop as CHECK constraint
+	if err := tbl.DropCheckConstraint(constraintName); err == nil {
+		return nil
+	}
+
+	// Try to drop as FOREIGN KEY
+	if err := tbl.DropForeignKey(constraintName); err == nil {
+		return nil
+	}
+
+	// Try to drop as unique constraint
+	if err := tbl.DropUniqueConstraint(constraintName); err == nil {
+		return nil
+	}
+
+	return fmt.Errorf("constraint %s not found", constraintName)
+}
+
+// BackupManagerWrapper wraps the backup.Manager for use with storage.Engine.
+type BackupManagerWrapper struct {
+	*backup.Manager
+}
+
+// NewBackupManager creates a backup manager for the storage engine.
+func NewBackupManager(engine *storage.Engine) *BackupManagerWrapper {
+	return &BackupManagerWrapper{
+		Manager: backup.NewManager(engine.GetDataDir()),
+	}
+}
+
+// executeBackup executes a BACKUP DATABASE statement.
+func (e *Executor) executeBackup(stmt *sql.BackupStmt) (*Result, error) {
+	// Import backup package
+	backupMgr := NewBackupManager(e.engine)
+
+	opts := backup.BackupOptions{
+		Path:     stmt.Path,
+		Compress: stmt.Compress,
+		Database: e.database,
+	}
+
+	manifest, err := backupMgr.Backup(opts)
+	if err != nil {
+		return nil, fmt.Errorf("backup failed: %w", err)
+	}
+
+	// Calculate the actual backup path (backup.Backup adds .xbak extension for compressed backups)
+	backupPath := stmt.Path
+	if stmt.Compress {
+		backupPath = stmt.Path + backup.BackupExt
+	}
+
+	return &Result{
+		Message: fmt.Sprintf("Backup completed: %s (%d tables, %s)", backupPath, manifest.TableCount, manifest.Timestamp),
+	}, nil
+}
+
+// executeRestore executes a RESTORE DATABASE statement.
+func (e *Executor) executeRestore(stmt *sql.RestoreStmt) (*Result, error) {
+	backupMgr := NewBackupManager(e.engine)
+
+	opts := backup.RestoreOptions{
+		Path: stmt.Path,
+	}
+
+	manifest, err := backupMgr.Restore(opts)
+	if err != nil {
+		return nil, fmt.Errorf("restore failed: %w", err)
+	}
+
+	return &Result{
+		Message: fmt.Sprintf("Restore completed: %s (%d tables, %s)", stmt.Path, manifest.TableCount, manifest.Timestamp),
+	}, nil
 }
 
 // executeTruncate executes a TRUNCATE TABLE statement.
@@ -1289,6 +1744,339 @@ func (e *Executor) valueToInterface(v types.Value) interface{} {
 	default:
 		return v.AsString()
 	}
+}
+
+// valueExistsInColumn checks if a value already exists in a column (for UNIQUE constraint).
+func (e *Executor) valueExistsInColumn(tbl *table.Table, colIdx int, value types.Value) bool {
+	// Get the index manager
+	idxMgr := tbl.GetIndexManager()
+	if idxMgr == nil {
+		return false
+	}
+
+	// Get column info
+	cols := tbl.Columns()
+	if colIdx >= len(cols) {
+		return false
+	}
+	col := cols[colIdx]
+
+	// Check if there's a unique index on this column
+	idx, err := idxMgr.GetIndex(col.Name)
+	if err == nil && idx != nil {
+		_, found := idx.Search(value)
+		return found
+	}
+
+	// Fallback: scan all rows (slower)
+	rows, err := tbl.Scan()
+	if err != nil {
+		return false
+	}
+
+	for _, r := range rows {
+		if colIdx < len(r.Values) {
+			if !r.Values[colIdx].Null && r.Values[colIdx].Compare(value) == 0 {
+				return true
+			}
+		}
+	}
+
+	return false
+}
+
+// validateCheckConstraints validates CHECK constraints for a row.
+func (e *Executor) validateCheckConstraints(tbl *table.Table, values []types.Value) error {
+	checks := tbl.GetCheckConstraints()
+	if len(checks) == 0 {
+		return nil
+	}
+
+	cols := tbl.Columns()
+	colMap := make(map[string]int)
+	for i, col := range cols {
+		colMap[strings.ToLower(col.Name)] = i
+	}
+
+	for _, check := range checks {
+		// Parse the check expression using Parse function
+		exprStr := check.Expression
+		stmt, err := sql.Parse("SELECT " + exprStr)
+		if err != nil {
+			// If parsing fails, try direct expression
+			continue
+		}
+
+		selectStmt, ok := stmt.(*sql.SelectStmt)
+		if !ok || len(selectStmt.Columns) == 0 {
+			continue
+		}
+
+		expr := selectStmt.Columns[0]
+
+		// Evaluate the expression
+		result, err := e.evaluateCheckExpression(expr, values, cols, colMap)
+		if err != nil {
+			continue // Skip on error
+		}
+
+		// Check constraint violated if result is false
+		if !result {
+			name := check.Name
+			if name == "" {
+				name = "unnamed"
+			}
+			return fmt.Errorf("check constraint '%s' violated", name)
+		}
+	}
+
+	return nil
+}
+
+// evaluateCheckExpression evaluates a CHECK expression against row values.
+func (e *Executor) evaluateCheckExpression(expr sql.Expression, values []types.Value, cols []*types.ColumnInfo, colMap map[string]int) (bool, error) {
+	switch ex := expr.(type) {
+	case *sql.BinaryExpr:
+		// Handle comparison operators specially
+		switch ex.Op {
+		case sql.OpEq, sql.OpNe, sql.OpLt, sql.OpLe, sql.OpGt, sql.OpGe:
+			return e.compareCheckValues(ex.Left, ex.Right, values, colMap, ex.Op)
+		}
+
+		// Handle logical operators
+		left, err := e.evaluateCheckExpression(ex.Left, values, cols, colMap)
+		if err != nil {
+			return false, err
+		}
+
+		// Short-circuit for AND/OR
+		if ex.Op == sql.OpAnd {
+			if !left {
+				return false, nil
+			}
+			return e.evaluateCheckExpression(ex.Right, values, cols, colMap)
+		}
+		if ex.Op == sql.OpOr {
+			if left {
+				return true, nil
+			}
+			return e.evaluateCheckExpression(ex.Right, values, cols, colMap)
+		}
+
+		return left, nil
+
+	case *sql.Literal:
+		if ex.Type == sql.LiteralBool {
+			return ex.Value.(bool), nil
+		}
+		return true, nil
+
+	case *sql.ColumnRef:
+		idx, ok := colMap[strings.ToLower(ex.Name)]
+		if !ok || idx >= len(values) {
+			return false, fmt.Errorf("unknown column: %s", ex.Name)
+		}
+		// Return true if value is non-null
+		return !values[idx].Null, nil
+
+	case *sql.IsNullExpr:
+		colRef, ok := ex.Expr.(*sql.ColumnRef)
+		if !ok {
+			return false, nil
+		}
+		idx, ok := colMap[strings.ToLower(colRef.Name)]
+		if !ok {
+			return false, nil
+		}
+		isNull := idx >= len(values) || values[idx].Null
+		if ex.Not {
+			return !isNull, nil
+		}
+		return isNull, nil
+
+	case *sql.ParenExpr:
+		// Unwrap parenthesized expressions
+		return e.evaluateCheckExpression(ex.Expr, values, cols, colMap)
+	}
+
+	return true, nil
+}
+
+// compareCheckValues compares two values in a CHECK expression.
+func (e *Executor) compareCheckValues(left, right sql.Expression, values []types.Value, colMap map[string]int, op sql.BinaryOp) (bool, error) {
+	leftVal, err := e.getCheckValue(left, values, colMap)
+	if err != nil {
+		return false, err
+	}
+	rightVal, err := e.getCheckValue(right, values, colMap)
+	if err != nil {
+		return false, err
+	}
+
+	if leftVal == nil || rightVal == nil {
+		return false, nil
+	}
+
+	// Compare based on type
+	switch lv := leftVal.(type) {
+	case int64:
+		rv, ok := rightVal.(int64)
+		if !ok {
+			return false, nil
+		}
+		switch op {
+		case sql.OpLt:
+			return lv < rv, nil
+		case sql.OpLe:
+			return lv <= rv, nil
+		case sql.OpGt:
+			return lv > rv, nil
+		case sql.OpGe:
+			return lv >= rv, nil
+		}
+	case float64:
+		rv, ok := rightVal.(float64)
+		if !ok {
+			// Try int to float
+			if riv, ok := rightVal.(int64); ok {
+				rv = float64(riv)
+			} else {
+				return false, nil
+			}
+		}
+		switch op {
+		case sql.OpLt:
+			return lv < rv, nil
+		case sql.OpLe:
+			return lv <= rv, nil
+		case sql.OpGt:
+			return lv > rv, nil
+		case sql.OpGe:
+			return lv >= rv, nil
+		}
+	}
+
+	return false, nil
+}
+
+// getCheckValue gets a value from an expression for CHECK comparison.
+func (e *Executor) getCheckValue(expr sql.Expression, values []types.Value, colMap map[string]int) (interface{}, error) {
+	switch ex := expr.(type) {
+	case *sql.Literal:
+		if ex.Type == sql.LiteralNumber {
+			if i, err := strconv.ParseInt(fmt.Sprintf("%v", ex.Value), 10, 64); err == nil {
+				return i, nil
+			}
+			if f, err := strconv.ParseFloat(fmt.Sprintf("%v", ex.Value), 64); err == nil {
+				return f, nil
+			}
+		}
+		return ex.Value, nil
+	case *sql.ColumnRef:
+		idx, ok := colMap[strings.ToLower(ex.Name)]
+		if !ok || idx >= len(values) {
+			return nil, fmt.Errorf("unknown column: %s", ex.Name)
+		}
+		v := values[idx]
+		if v.Null {
+			return nil, nil
+		}
+		switch v.Type {
+		case types.TypeInt, types.TypeSeq:
+			return v.AsInt(), nil
+		case types.TypeFloat:
+			return v.AsFloat(), nil
+		case types.TypeChar, types.TypeVarchar, types.TypeText:
+			return v.AsString(), nil
+		case types.TypeBool:
+			return v.AsBool(), nil
+		}
+	}
+	return nil, fmt.Errorf("cannot get value")
+}
+
+// validateForeignKeys validates FOREIGN KEY constraints.
+func (e *Executor) validateForeignKeys(tbl *table.Table, values []types.Value, isUpdate bool) error {
+	fks := tbl.GetForeignKeys()
+	if len(fks) == 0 {
+		return nil
+	}
+
+	cols := tbl.Columns()
+	colMap := make(map[string]int)
+	for i, col := range cols {
+		colMap[strings.ToLower(col.Name)] = i
+	}
+
+	for _, fk := range fks {
+		// Check if referenced table exists
+		if !e.engine.TableExists(fk.RefTable) {
+			return fmt.Errorf("foreign key constraint fails: referenced table '%s' does not exist", fk.RefTable)
+		}
+
+		refTbl, err := e.engine.GetTable(fk.RefTable)
+		if err != nil {
+			return err
+		}
+
+		// Get the value for the FK column
+		if len(fk.Columns) == 0 {
+			continue
+		}
+
+		colIdx, ok := colMap[strings.ToLower(fk.Columns[0])]
+		if !ok {
+			continue
+		}
+
+		if colIdx >= len(values) {
+			continue
+		}
+
+		fkValue := values[colIdx]
+
+		// NULL values don't need FK validation
+		if fkValue.Null {
+			continue
+		}
+
+		// Check if referenced value exists
+		refColIdx := -1
+		refCols := refTbl.Columns()
+		for i, c := range refCols {
+			if strings.EqualFold(c.Name, fk.RefColumns[0]) {
+				refColIdx = i
+				break
+			}
+		}
+
+		if refColIdx < 0 {
+			return fmt.Errorf("foreign key constraint fails: referenced column '%s' not found", fk.RefColumns[0])
+		}
+
+		// Search for the referenced value
+		rows, err := refTbl.Scan()
+		if err != nil {
+			return err
+		}
+
+		found := false
+		for _, r := range rows {
+			if refColIdx < len(r.Values) {
+				if !r.Values[refColIdx].Null && r.Values[refColIdx].Compare(fkValue) == 0 {
+					found = true
+					break
+				}
+			}
+		}
+
+		if !found {
+			return fmt.Errorf("foreign key constraint fails: key '%s' not found in table '%s'",
+				fkValue.String(), fk.RefTable)
+		}
+	}
+
+	return nil
 }
 
 // ============================================================================

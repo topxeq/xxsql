@@ -411,3 +411,425 @@ func TestMySQLAuthVerification(t *testing.T) {
 		t.Error("MySQL auth verification should fail with wrong response")
 	}
 }
+
+func TestGetUserByID(t *testing.T) {
+	m := auth.NewManager()
+	user, _ := m.CreateUser("testuser", "password", auth.RoleUser)
+
+	// Get by ID
+	retrieved, err := m.GetUserByID(user.ID)
+	if err != nil {
+		t.Fatalf("GetUserByID failed: %v", err)
+	}
+	if retrieved.Username != "testuser" {
+		t.Errorf("Username = %s, want testuser", retrieved.Username)
+	}
+
+	// Non-existent ID
+	_, err = m.GetUserByID(9999)
+	if err == nil {
+		t.Error("Expected error for non-existent user ID")
+	}
+}
+
+func TestRefreshSession(t *testing.T) {
+	m := auth.NewManager(auth.WithSessionTTL(time.Hour))
+	m.CreateUser("testuser", "password", auth.RoleUser)
+
+	session, _ := m.Authenticate("testuser", "password")
+
+	// Refresh the session
+	refreshed, err := m.RefreshSession(session.ID)
+	if err != nil {
+		t.Fatalf("RefreshSession failed: %v", err)
+	}
+	if refreshed == nil {
+		t.Fatal("RefreshSession returned nil")
+	}
+
+	// Non-existent session
+	_, err = m.RefreshSession("nonexistent")
+	if err == nil {
+		t.Error("Expected error for non-existent session")
+	}
+}
+
+func TestInvalidateSession(t *testing.T) {
+	m := auth.NewManager()
+	m.CreateUser("testuser", "password", auth.RoleUser)
+
+	session, _ := m.Authenticate("testuser", "password")
+
+	// Invalidate
+	m.InvalidateSession(session.ID)
+
+	// Should fail now
+	_, err := m.ValidateSession(session.ID)
+	if err == nil {
+		t.Error("Expected error for invalidated session")
+	}
+}
+
+func TestSetUserDatabase(t *testing.T) {
+	m := auth.NewManager()
+	m.CreateUser("testuser", "password", auth.RoleUser)
+
+	session, _ := m.Authenticate("testuser", "password")
+
+	// Set database
+	err := m.SetUserDatabase(session.ID, "testdb")
+	if err != nil {
+		t.Fatalf("SetUserDatabase failed: %v", err)
+	}
+
+	// Verify
+	validated, _ := m.ValidateSession(session.ID)
+	if validated.Database != "testdb" {
+		t.Errorf("Database = %s, want testdb", validated.Database)
+	}
+
+	// Non-existent session
+	err = m.SetUserDatabase("nonexistent", "testdb")
+	if err == nil {
+		t.Error("Expected error for non-existent session")
+	}
+}
+
+func TestGrantGlobal(t *testing.T) {
+	m := auth.NewManager()
+	m.CreateUser("testuser", "password", auth.RoleUser)
+
+	priv := &auth.GlobalPrivilege{
+		Select: true,
+		Insert: true,
+		Grant:  true,
+	}
+
+	err := m.GrantGlobal("testuser", priv)
+	if err != nil {
+		t.Fatalf("GrantGlobal failed: %v", err)
+	}
+
+	// Non-existent user
+	err = m.GrantGlobal("nonexistent", priv)
+	if err == nil {
+		t.Error("Expected error for non-existent user")
+	}
+}
+
+func TestGrantDatabase(t *testing.T) {
+	m := auth.NewManager()
+	m.CreateUser("testuser", "password", auth.RoleUser)
+
+	priv := &auth.DatabasePrivilege{
+		Select: true,
+		Insert: true,
+	}
+
+	err := m.GrantDatabase("testuser", "testdb", priv)
+	if err != nil {
+		t.Fatalf("GrantDatabase failed: %v", err)
+	}
+
+	// Non-existent user
+	err = m.GrantDatabase("nonexistent", "testdb", priv)
+	if err == nil {
+		t.Error("Expected error for non-existent user")
+	}
+}
+
+func TestGrantTable(t *testing.T) {
+	m := auth.NewManager()
+	m.CreateUser("testuser", "password", auth.RoleUser)
+
+	priv := &auth.TablePrivilege{
+		Select: true,
+		Insert: true,
+	}
+
+	err := m.GrantTable("testuser", "testdb", "testtable", priv)
+	if err != nil {
+		t.Fatalf("GrantTable failed: %v", err)
+	}
+
+	// Non-existent user
+	err = m.GrantTable("nonexistent", "testdb", "testtable", priv)
+	if err == nil {
+		t.Error("Expected error for non-existent user")
+	}
+}
+
+func TestRevokeGlobal(t *testing.T) {
+	m := auth.NewManager()
+	m.CreateUser("testuser", "password", auth.RoleUser)
+
+	// Grant first
+	m.GrantGlobal("testuser", &auth.GlobalPrivilege{Select: true, Insert: true})
+
+	// Revoke
+	priv := &auth.GlobalPrivilege{Select: true}
+	err := m.RevokeGlobal("testuser", priv)
+	if err != nil {
+		t.Fatalf("RevokeGlobal failed: %v", err)
+	}
+
+	// Non-existent user
+	err = m.RevokeGlobal("nonexistent", priv)
+	if err == nil {
+		t.Error("Expected error for non-existent user")
+	}
+}
+
+func TestRevokeDatabase(t *testing.T) {
+	m := auth.NewManager()
+	m.CreateUser("testuser", "password", auth.RoleUser)
+
+	// Grant first
+	m.GrantDatabase("testuser", "testdb", &auth.DatabasePrivilege{Select: true, Insert: true})
+
+	// Revoke
+	priv := &auth.DatabasePrivilege{Select: true}
+	err := m.RevokeDatabase("testuser", "testdb", priv)
+	if err != nil {
+		t.Fatalf("RevokeDatabase failed: %v", err)
+	}
+
+	// Non-existent user
+	err = m.RevokeDatabase("nonexistent", "testdb", priv)
+	if err == nil {
+		t.Error("Expected error for non-existent user")
+	}
+}
+
+func TestRevokeTable(t *testing.T) {
+	m := auth.NewManager()
+	m.CreateUser("testuser", "password", auth.RoleUser)
+
+	// Grant first
+	m.GrantTable("testuser", "testdb", "testtable", &auth.TablePrivilege{Select: true, Insert: true})
+
+	// Revoke
+	priv := &auth.TablePrivilege{Select: true}
+	err := m.RevokeTable("testuser", "testdb", "testtable", priv)
+	if err != nil {
+		t.Fatalf("RevokeTable failed: %v", err)
+	}
+
+	// Non-existent user
+	err = m.RevokeTable("nonexistent", "testdb", "testtable", priv)
+	if err == nil {
+		t.Error("Expected error for non-existent user")
+	}
+}
+
+func TestCheckTablePermission(t *testing.T) {
+	m := auth.NewManager()
+	m.CreateUser("testuser", "password", auth.RoleUser)
+
+	// Admin should have permission via role
+	m.CreateUser("admin", "password", auth.RoleAdmin)
+	if !m.CheckTablePermission("admin", "testdb", "testtable", auth.PermSelect) {
+		t.Error("Admin should have SELECT permission")
+	}
+
+	// User has SELECT via role (RoleUser has SELECT, INSERT, UPDATE, DELETE)
+	if !m.CheckTablePermission("testuser", "testdb", "testtable", auth.PermSelect) {
+		t.Error("User should have SELECT permission via role")
+	}
+
+	// User does NOT have CreateTable via role
+	if m.CheckTablePermission("testuser", "testdb", "testtable", auth.PermCreateTable) {
+		t.Error("User should not have CREATE TABLE permission via role")
+	}
+
+	// Grant table-level permission to user
+	m.GrantTable("testuser", "testdb", "testtable", &auth.TablePrivilege{Create: true})
+
+	if !m.CheckTablePermission("testuser", "testdb", "testtable", auth.PermCreateTable) {
+		t.Error("User should have CREATE TABLE permission after grant")
+	}
+}
+
+func TestGetGrants(t *testing.T) {
+	m := auth.NewManager()
+	m.CreateUser("testuser", "password", auth.RoleUser)
+
+	// Get grants for user with role-based grants
+	grants, err := m.GetGrants("testuser")
+	if err != nil {
+		t.Fatalf("GetGrants failed: %v", err)
+	}
+	if len(grants) == 0 {
+		t.Error("Should have at least role-based grants")
+	}
+
+	// Grant some permissions
+	m.GrantGlobal("testuser", &auth.GlobalPrivilege{Select: true})
+
+	grants, _ = m.GetGrants("testuser")
+	if len(grants) < 1 {
+		t.Error("Should have grants after GrantGlobal")
+	}
+
+	// Non-existent user
+	_, err = m.GetGrants("nonexistent")
+	if err == nil {
+		t.Error("Expected error for non-existent user")
+	}
+}
+
+func TestPermissionChecker(t *testing.T) {
+	m := auth.NewManager()
+	m.CreateUser("admin", "password", auth.RoleAdmin)
+	m.CreateUser("user", "password", auth.RoleUser)
+
+	adminSession, _ := m.Authenticate("admin", "password")
+	userSession, _ := m.Authenticate("user", "password")
+
+	// Admin checker
+	adminChecker := auth.NewPermissionChecker(adminSession)
+	if !adminChecker.Check(auth.PermCreateTable) {
+		t.Error("Admin should have CreateTable permission")
+	}
+	if adminChecker.Require(auth.PermCreateTable) != nil {
+		t.Error("Require should succeed for admin")
+	}
+
+	// User checker
+	userChecker := auth.NewPermissionChecker(userSession)
+	if userChecker.Check(auth.PermCreateTable) {
+		t.Error("User should not have CreateTable permission")
+	}
+	if userChecker.Require(auth.PermCreateTable) == nil {
+		t.Error("Require should fail for user")
+	}
+
+	// Nil session checker
+	nilChecker := auth.NewPermissionChecker(nil)
+	if nilChecker.Check(auth.PermSelect) {
+		t.Error("Nil session should not have any permission")
+	}
+}
+
+func TestTablePrivilege_HasPrivilege(t *testing.T) {
+	priv := &auth.TablePrivilege{
+		Select: true,
+		Insert: false,
+	}
+
+	if !priv.HasPrivilege(auth.PermSelect) {
+		t.Error("Should have SELECT privilege")
+	}
+	if priv.HasPrivilege(auth.PermInsert) {
+		t.Error("Should not have INSERT privilege")
+	}
+	if priv.HasPrivilege(auth.PermCreateTable) {
+		t.Error("Should not have CREATE privilege")
+	}
+}
+
+func TestGlobalPrivilege_HasPermission(t *testing.T) {
+	priv := &auth.GlobalPrivilege{
+		Select: true,
+		Create: true,
+		Grant:  true,
+	}
+
+	if !priv.HasPermission(auth.PermSelect) {
+		t.Error("Should have SELECT permission")
+	}
+	if !priv.HasPermission(auth.PermCreateTable) {
+		t.Error("Should have CREATE TABLE permission")
+	}
+	if priv.HasPermission(auth.PermInsert) {
+		t.Error("Should not have INSERT permission")
+	}
+}
+
+func TestDatabasePrivilege_HasPrivilege(t *testing.T) {
+	priv := &auth.DatabasePrivilege{
+		Select: true,
+		Update: true,
+	}
+
+	if !priv.HasPrivilege(auth.PermSelect) {
+		t.Error("Should have SELECT privilege")
+	}
+	if !priv.HasPrivilege(auth.PermUpdate) {
+		t.Error("Should have UPDATE privilege")
+	}
+	if priv.HasPrivilege(auth.PermInsert) {
+		t.Error("Should not have INSERT privilege")
+	}
+}
+
+func TestSession_IsExpired(t *testing.T) {
+	// Create expired session
+	expiredSession := &auth.Session{
+		ExpiresAt: time.Now().Add(-time.Hour),
+	}
+	if !expiredSession.IsExpired() {
+		t.Error("Session should be expired")
+	}
+
+	// Create valid session
+	validSession := &auth.Session{
+		ExpiresAt: time.Now().Add(time.Hour),
+	}
+	if validSession.IsExpired() {
+		t.Error("Session should not be expired")
+	}
+}
+
+func TestGetMySQLAuthHash(t *testing.T) {
+	m := auth.NewManager()
+	m.CreateUser("testuser", "password", auth.RoleUser)
+
+	hash, err := m.GetMySQLAuthHash("testuser")
+	if err != nil {
+		t.Fatalf("GetMySQLAuthHash failed: %v", err)
+	}
+	if len(hash) != 20 {
+		t.Errorf("Hash length = %d, want 20", len(hash))
+	}
+
+	// Non-existent user
+	_, err = m.GetMySQLAuthHash("nonexistent")
+	if err == nil {
+		t.Error("Expected error for non-existent user")
+	}
+}
+
+func TestUserRole_Unknown(t *testing.T) {
+	role := auth.UserRole(99)
+	if role.String() != "unknown" {
+		t.Errorf("Unknown role string = %s, want 'unknown'", role.String())
+	}
+}
+
+func TestGrantsPersistence(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "xxsql-grants-test-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	m1 := auth.NewManager(auth.WithDataDir(tmpDir))
+	m1.CreateUser("testuser", "password", auth.RoleUser)
+
+	// Grant permissions
+	m1.GrantGlobal("testuser", &auth.GlobalPrivilege{Select: true})
+	m1.GrantDatabase("testuser", "testdb", &auth.DatabasePrivilege{Insert: true})
+	m1.GrantTable("testuser", "testdb", "testtable", &auth.TablePrivilege{Update: true})
+
+	// Create new manager and load
+	m2 := auth.NewManager(auth.WithDataDir(tmpDir))
+	m2.Load()
+	m2.LoadGrants()
+
+	// Verify grants loaded
+	grants, _ := m2.GetGrants("testuser")
+	if len(grants) == 0 {
+		t.Error("Grants should persist after reload")
+	}
+}

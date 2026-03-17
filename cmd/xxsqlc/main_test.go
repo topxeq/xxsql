@@ -1,6 +1,7 @@
 package main
 
 import (
+	"strings"
 	"testing"
 )
 
@@ -10,13 +11,16 @@ func TestParseOutputFormat(t *testing.T) {
 		expected OutputFormat
 	}{
 		{"table", FormatTable},
+		{"TABLE", FormatTable},
 		{"vertical", FormatVertical},
 		{"v", FormatVertical},
+		{"V", FormatVertical},
 		{"json", FormatJSON},
 		{"j", FormatJSON},
 		{"tsv", FormatTSV},
 		{"t", FormatTSV},
-		{"unknown", FormatTable}, // default
+		{"unknown", FormatTable},
+		{"", FormatTable},
 	}
 
 	for _, tt := range tests {
@@ -38,6 +42,7 @@ func TestOutputFormatString(t *testing.T) {
 		{FormatVertical, "vertical"},
 		{FormatJSON, "json"},
 		{FormatTSV, "tsv"},
+		{OutputFormat(99), "unknown"},
 	}
 
 	for _, tt := range tests {
@@ -58,11 +63,18 @@ func TestFormatValue(t *testing.T) {
 	}{
 		{"nil", nil, "NULL"},
 		{"string", "hello", "hello"},
-		{"int", int64(123), "123"},
-		{"float", float64(3.14), "3.14"},
+		{"int", int(123), "123"},
+		{"int32", int32(456), "456"},
+		{"int64", int64(789), "789"},
+		{"uint", uint(100), "100"},
+		{"uint32", uint32(200), "200"},
+		{"uint64", uint64(300), "300"},
+		{"float32", float32(3.14), "3.14"},
+		{"float64", float64(2.718), "2.718"},
 		{"bool true", true, "1"},
 		{"bool false", false, "0"},
 		{"bytes", []byte("test"), "test"},
+		{"other", struct{}{}, "{}"},
 	}
 
 	for _, tt := range tests {
@@ -83,7 +95,9 @@ func TestPadRight(t *testing.T) {
 	}{
 		{"hello", 10, "hello     "},
 		{"hello", 5, "hello"},
-		{"hello", 3, "hello"}, // wider than width
+		{"hello", 3, "hello"},
+		{"", 5, "     "},
+		{"ab", 5, "ab   "},
 	}
 
 	for _, tt := range tests {
@@ -97,7 +111,6 @@ func TestPadRight(t *testing.T) {
 }
 
 func TestBuildDSN(t *testing.T) {
-	// Save original flag values
 	origHost := *flagHost
 	origPort := *flagPort
 	origUser := *flagUser
@@ -147,6 +160,24 @@ func TestBuildDSN(t *testing.T) {
 			database: "test",
 			expected: "tcp(localhost:3306)/test",
 		},
+		{
+			name:     "no database",
+			host:     "127.0.0.1",
+			port:     9527,
+			user:     "admin",
+			password: "pass",
+			database: "",
+			expected: "admin:pass@tcp(127.0.0.1:9527)/",
+		},
+		{
+			name:     "minimal DSN",
+			host:     "db.example.com",
+			port:     3306,
+			user:     "",
+			password: "",
+			database: "",
+			expected: "tcp(db.example.com:3306)/",
+		},
 	}
 
 	for _, tt := range tests {
@@ -166,7 +197,9 @@ func TestBuildDSN(t *testing.T) {
 }
 
 func TestGetPrompt(t *testing.T) {
-	// Test with no database
+	origDbName := dbName
+	defer func() { dbName = origDbName }()
+
 	dbName = ""
 	result := getPrompt()
 	expected := "xxsql> "
@@ -174,11 +207,456 @@ func TestGetPrompt(t *testing.T) {
 		t.Errorf("getPrompt() with no db = %q, want %q", result, expected)
 	}
 
-	// Test with database
 	dbName = "testdb"
 	result = getPrompt()
 	expected = "testdb> "
 	if result != expected {
 		t.Errorf("getPrompt() with db = %q, want %q", result, expected)
 	}
+}
+
+func TestGetFormatter(t *testing.T) {
+	tests := []struct {
+		format   OutputFormat
+		expected string
+	}{
+		{FormatTable, "*tableFormatter"},
+		{FormatVertical, "*verticalFormatter"},
+		{FormatJSON, "*jsonFormatter"},
+		{FormatTSV, "*tsvFormatter"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.expected, func(t *testing.T) {
+			f := getFormatter(tt.format)
+			if f == nil {
+				t.Error("getFormatter returned nil")
+			}
+		})
+	}
+}
+
+func TestTableFormatter(t *testing.T) {
+	columns := []string{"id", "name"}
+	rows := [][]interface{}{
+		{1, "Alice"},
+		{2, "Bob"},
+	}
+
+	f := &tableFormatter{}
+	f.Format(columns, rows)
+}
+
+func TestTableFormatter_Empty(t *testing.T) {
+	f := &tableFormatter{}
+	f.Format([]string{}, nil)
+	f.Format(nil, nil)
+}
+
+func TestTableFormatter_LongValue(t *testing.T) {
+	columns := []string{"description"}
+	rows := [][]interface{}{
+		{"This is a very long description that should be truncated because it exceeds the maximum column width limit"},
+	}
+
+	f := &tableFormatter{}
+	f.Format(columns, rows)
+}
+
+func TestVerticalFormatter(t *testing.T) {
+	columns := []string{"id", "name"}
+	rows := [][]interface{}{
+		{1, "Alice"},
+		{2, "Bob"},
+	}
+
+	f := &verticalFormatter{}
+	f.Format(columns, rows)
+}
+
+func TestVerticalFormatter_Empty(t *testing.T) {
+	f := &verticalFormatter{}
+	f.Format([]string{}, nil)
+}
+
+func TestVerticalFormatter_LongName(t *testing.T) {
+	columns := []string{"very_long_column_name", "short"}
+	rows := [][]interface{}{
+		{"value1", "value2"},
+	}
+
+	f := &verticalFormatter{}
+	f.Format(columns, rows)
+}
+
+func TestJSONFormatter(t *testing.T) {
+	columns := []string{"id", "name"}
+	rows := [][]interface{}{
+		{1, "Alice"},
+		{2, "Bob"},
+	}
+
+	f := &jsonFormatter{}
+	f.Format(columns, rows)
+}
+
+func TestJSONFormatter_Empty(t *testing.T) {
+	f := &jsonFormatter{}
+	f.Format([]string{}, nil)
+}
+
+func TestTSVFormatter(t *testing.T) {
+	columns := []string{"id", "name"}
+	rows := [][]interface{}{
+		{1, "Alice"},
+		{2, "Bob"},
+	}
+
+	f := &tsvFormatter{}
+	f.Format(columns, rows)
+}
+
+func TestTSVFormatter_Empty(t *testing.T) {
+	f := &tsvFormatter{}
+	f.Format([]string{}, nil)
+}
+
+func TestCompleter_FirstWord(t *testing.T) {
+	c := &completer{}
+
+	tests := []struct {
+		line     string
+		hasMatch bool
+	}{
+		{"SE", true},
+		{"IN", true},
+		{"UP", true},
+		{"DE", true},
+		{"CR", true},
+		{"DR", true},
+		{"SH", true},
+		{"\\d", true},
+		{"\\q", true},
+		{"he", true},
+		{"qu", true},
+		{"xyz", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.line, func(t *testing.T) {
+			newLine, _ := c.Do([]rune(tt.line), len(tt.line))
+			if tt.hasMatch && len(newLine) == 0 {
+				t.Errorf("Expected completions for %q, got none", tt.line)
+			}
+			if !tt.hasMatch && len(newLine) > 0 {
+				t.Errorf("Unexpected completions for %q: %v", tt.line, newLine)
+			}
+		})
+	}
+}
+
+func TestCompleter_Empty(t *testing.T) {
+	c := &completer{}
+
+	newLine, length := c.Do([]rune{}, 0)
+	if len(newLine) != 0 || length != 0 {
+		t.Error("Empty line should return no completions")
+	}
+}
+
+func TestCompleter_Context(t *testing.T) {
+	c := &completer{}
+
+	tests := []struct {
+		line     string
+		hasMatch bool
+	}{
+		{"SELECT * FROM users WHE", true},
+		{"SELECT * FROM users ORD", true},
+		{"SELECT * FROM users HAV", true},
+		{"SELECT * FROM users LIM", true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.line, func(t *testing.T) {
+			newLine, _ := c.Do([]rune(tt.line), len(tt.line))
+			if tt.hasMatch && len(newLine) == 0 {
+				t.Errorf("Expected completions for %q, got none", tt.line)
+			}
+		})
+	}
+}
+
+func TestVersionInfo(t *testing.T) {
+	if Version == "" {
+		t.Error("Version should not be empty")
+	}
+	if GitCommit == "" {
+		t.Error("GitCommit should not be empty")
+	}
+	if BuildTime == "" {
+		t.Error("BuildTime should not be empty")
+	}
+}
+
+func TestGetHistoryPath(t *testing.T) {
+	path := getHistoryPath()
+	if path == "" {
+		t.Skip("Could not get home directory")
+	}
+	if len(path) < 10 {
+		t.Errorf("History path seems too short: %s", path)
+	}
+}
+
+func TestClearScreen(t *testing.T) {
+	clearScreen()
+}
+
+func TestPrintHelp(t *testing.T) {
+	printHelp()
+}
+
+func TestPrintWelcome(t *testing.T) {
+	origHost := *flagHost
+	origPort := *flagPort
+	defer func() {
+		*flagHost = origHost
+		*flagPort = origPort
+	}()
+
+	*flagHost = "localhost"
+	*flagPort = 3306
+	dbName = "testdb"
+
+	printWelcome()
+}
+
+func TestHandleMetaCommand_Unknown(t *testing.T) {
+	err := handleMetaCommand("\\unknown")
+	if err == nil {
+		t.Error("Expected error for unknown command")
+	}
+}
+
+func TestHandleMetaCommand_Help(t *testing.T) {
+	err := handleMetaCommand("\\h")
+	if err != nil {
+		t.Errorf("Unexpected error: %v", err)
+	}
+
+	err = handleMetaCommand("\\?")
+	if err != nil {
+		t.Errorf("Unexpected error: %v", err)
+	}
+}
+
+func TestHandleMetaCommand_Format(t *testing.T) {
+	tests := []struct {
+		cmd      string
+		expected OutputFormat
+	}{
+		{"\\table", FormatTable},
+		{"\\g", FormatVertical},
+		{"\\vertical", FormatVertical},
+		{"\\j", FormatJSON},
+		{"\\json", FormatJSON},
+		{"\\t", FormatTSV},
+		{"\\tsv", FormatTSV},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.cmd, func(t *testing.T) {
+			err := handleMetaCommand(tt.cmd)
+			if err != nil {
+				t.Errorf("Unexpected error: %v", err)
+			}
+			if outFmt != tt.expected {
+				t.Errorf("Format: got %v, want %v", outFmt, tt.expected)
+			}
+		})
+	}
+}
+
+func TestHandleMetaCommand_Timing(t *testing.T) {
+	origTiming := timing
+	defer func() { timing = origTiming }()
+
+	timing = false
+	err := handleMetaCommand("\\timing")
+	if err != nil {
+		t.Errorf("Unexpected error: %v", err)
+	}
+	if !timing {
+		t.Error("Timing should be true after toggle")
+	}
+
+	err = handleMetaCommand("\\timing")
+	if err != nil {
+		t.Errorf("Unexpected error: %v", err)
+	}
+	if timing {
+		t.Error("Timing should be false after second toggle")
+	}
+}
+
+func TestHandleMetaCommand_ConnInfo(t *testing.T) {
+	origHost := *flagHost
+	origPort := *flagPort
+	origUser := *flagUser
+	defer func() {
+		*flagHost = origHost
+		*flagPort = origPort
+		*flagUser = origUser
+	}()
+
+	*flagHost = "localhost"
+	*flagPort = 3306
+	*flagUser = "testuser"
+	dbName = "testdb"
+
+	err := handleMetaCommand("\\conninfo")
+	if err != nil {
+		t.Errorf("Unexpected error: %v", err)
+	}
+}
+
+func TestHandleMetaCommand_UseDatabase_Error(t *testing.T) {
+	err := handleMetaCommand("\\u")
+	if err == nil {
+		t.Error("Expected error for \\u without database name")
+	}
+}
+
+func TestHandleMetaCommand_ListDatabases(t *testing.T) {
+	dbName = "testdb"
+	err := handleMetaCommand("\\l")
+	if err != nil {
+		t.Errorf("Unexpected error: %v", err)
+	}
+}
+
+func TestExecuteSQL_Empty(t *testing.T) {
+	err := executeSQL("")
+	if err != nil {
+		t.Errorf("Empty query should not error: %v", err)
+	}
+
+	err = executeSQL("   ")
+	if err != nil {
+		t.Errorf("Whitespace query should not error: %v", err)
+	}
+}
+
+func TestExecuteSQL_QueryType(t *testing.T) {
+	tests := []string{
+		"SELECT 1",
+		"SHOW TABLES",
+		"DESCRIBE users",
+		"DESC users",
+		"EXPLAIN SELECT * FROM users",
+	}
+
+	for _, query := range tests {
+		t.Run(query, func(t *testing.T) {
+			upperQuery := strings.ToUpper(query)
+			isQuery := strings.HasPrefix(upperQuery, "SELECT") ||
+				strings.HasPrefix(upperQuery, "SHOW") ||
+				strings.HasPrefix(upperQuery, "DESCRIBE") ||
+				strings.HasPrefix(upperQuery, "DESC") ||
+				strings.HasPrefix(upperQuery, "EXPLAIN")
+
+			if !isQuery {
+				t.Errorf("Query should be recognized as a SELECT/SHOW/DESCRIBE/EXPLAIN query")
+			}
+		})
+	}
+}
+
+func TestSetupSignals(t *testing.T) {
+	setupSignals()
+}
+
+func TestFormatValue_FloatPrecision(t *testing.T) {
+	tests := []struct {
+		name     string
+		value    interface{}
+		contains string
+	}{
+		{"float32", float32(3.14159), "3.14"},
+		{"float64", float64(2.71828), "2.71"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := formatValue(tt.value)
+			if !strings.Contains(result, tt.contains) {
+				t.Errorf("formatValue(%v) = %q, should contain %q", tt.value, result, tt.contains)
+			}
+		})
+	}
+}
+
+func TestCompleter_SecondWord(t *testing.T) {
+	c := &completer{}
+
+	tests := []struct {
+		line     string
+		hasMatch bool
+	}{
+		{"SELECT * FROM users WHE", true},
+		{"INSERT IN", true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.line, func(t *testing.T) {
+			newLine, _ := c.Do([]rune(tt.line), len(tt.line))
+			if tt.hasMatch && len(newLine) == 0 {
+				t.Errorf("Expected completions for %q, got none", tt.line)
+			}
+		})
+	}
+}
+
+func TestJSONFormatter_WithNil(t *testing.T) {
+	columns := []string{"id", "name", "value"}
+	rows := [][]interface{}{
+		{1, nil, "test"},
+		{2, "Alice", nil},
+	}
+
+	f := &jsonFormatter{}
+	f.Format(columns, rows)
+}
+
+func TestTSVFormatter_SpecialChars(t *testing.T) {
+	columns := []string{"id", "description"}
+	rows := [][]interface{}{
+		{1, "value\twith\ttabs"},
+		{2, "value\nwith\nnewlines"},
+	}
+
+	f := &tsvFormatter{}
+	f.Format(columns, rows)
+}
+
+func TestVerticalFormatter_WithNil(t *testing.T) {
+	columns := []string{"id", "name"}
+	rows := [][]interface{}{
+		{1, nil},
+	}
+
+	f := &verticalFormatter{}
+	f.Format(columns, rows)
+}
+
+func TestTableFormatter_Width(t *testing.T) {
+	columns := []string{"id", "name"}
+	rows := [][]interface{}{
+		{1, "Alice"},
+		{2, "Bob"},
+	}
+
+	f := &tableFormatter{}
+	f.Format(columns, rows)
 }

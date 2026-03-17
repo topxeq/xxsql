@@ -106,6 +106,22 @@ type ColumnInfo struct {
 	Comment    string
 }
 
+// CheckConstraintInfo represents a CHECK constraint.
+type CheckConstraintInfo struct {
+	Name       string `json:"name"`
+	Expression string `json:"expression"` // SQL expression as string
+}
+
+// ForeignKeyInfo represents a FOREIGN KEY constraint.
+type ForeignKeyInfo struct {
+	Name       string   `json:"name"`
+	Columns    []string `json:"columns"`
+	RefTable   string   `json:"ref_table"`
+	RefColumns []string `json:"ref_columns"`
+	OnDelete   string   `json:"on_delete"`
+	OnUpdate   string   `json:"on_update"`
+}
+
 // Value represents a typed value.
 type Value struct {
 	Type  TypeID

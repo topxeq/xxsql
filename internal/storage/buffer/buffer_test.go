@@ -58,7 +58,7 @@ func (m *MockDiskManager) DeallocatePage(id page.PageID) error {
 func TestBufferPoolBasic(t *testing.T) {
 	dm := NewMockDiskManager()
 	bp := buffer.NewBufferPool(buffer.BufferPoolConfig{
-		PoolSize:   10,
+		PoolSize:    10,
 		DiskManager: dm,
 	})
 
@@ -95,7 +95,7 @@ func TestBufferPoolBasic(t *testing.T) {
 func TestBufferPoolLRU(t *testing.T) {
 	dm := NewMockDiskManager()
 	bp := buffer.NewBufferPool(buffer.BufferPoolConfig{
-		PoolSize:   3,
+		PoolSize:    3,
 		DiskManager: dm,
 	})
 
@@ -137,7 +137,7 @@ func TestBufferPoolLRU(t *testing.T) {
 func TestBufferPoolDirty(t *testing.T) {
 	dm := NewMockDiskManager()
 	bp := buffer.NewBufferPool(buffer.BufferPoolConfig{
-		PoolSize:   10,
+		PoolSize:    10,
 		DiskManager: dm,
 	})
 
@@ -176,7 +176,7 @@ func TestBufferPoolDirty(t *testing.T) {
 func TestBufferPoolPin(t *testing.T) {
 	dm := NewMockDiskManager()
 	bp := buffer.NewBufferPool(buffer.BufferPoolConfig{
-		PoolSize:   2,
+		PoolSize:    2,
 		DiskManager: dm,
 	})
 
@@ -212,7 +212,7 @@ func TestBufferPoolPin(t *testing.T) {
 func TestBufferPoolStats(t *testing.T) {
 	dm := NewMockDiskManager()
 	bp := buffer.NewBufferPool(buffer.BufferPoolConfig{
-		PoolSize:   10,
+		PoolSize:    10,
 		DiskManager: dm,
 	})
 
@@ -239,7 +239,7 @@ func TestBufferPoolStats(t *testing.T) {
 func TestBufferPoolFlushAll(t *testing.T) {
 	dm := NewMockDiskManager()
 	bp := buffer.NewBufferPool(buffer.BufferPoolConfig{
-		PoolSize:   10,
+		PoolSize:    10,
 		DiskManager: dm,
 	})
 
@@ -267,7 +267,7 @@ func TestBufferPoolFlushAll(t *testing.T) {
 func TestBufferPoolClear(t *testing.T) {
 	dm := NewMockDiskManager()
 	bp := buffer.NewBufferPool(buffer.BufferPoolConfig{
-		PoolSize:   10,
+		PoolSize:    10,
 		DiskManager: dm,
 	})
 
@@ -288,5 +288,176 @@ func TestBufferPoolClear(t *testing.T) {
 	// Check size
 	if bp.Size() != 0 {
 		t.Errorf("Expected pool size 0, got %d", bp.Size())
+	}
+}
+
+func TestBufferPoolDeletePage(t *testing.T) {
+	dm := NewMockDiskManager()
+	bp := buffer.NewBufferPool(buffer.BufferPoolConfig{
+		PoolSize:    10,
+		DiskManager: dm,
+	})
+
+	// Create page
+	p, err := bp.NewPage()
+	if err != nil {
+		t.Fatalf("Failed to allocate page: %v", err)
+	}
+	bp.UnpinPage(p.ID, false)
+
+	// Delete page
+	err = bp.DeletePage(p.ID)
+	if err != nil {
+		t.Fatalf("Failed to delete page: %v", err)
+	}
+
+	// Page should not exist in pool
+	if bp.Size() != 0 {
+		t.Errorf("Expected pool size 0, got %d", bp.Size())
+	}
+}
+
+func TestBufferPoolPinPage(t *testing.T) {
+	dm := NewMockDiskManager()
+	bp := buffer.NewBufferPool(buffer.BufferPoolConfig{
+		PoolSize:    10,
+		DiskManager: dm,
+	})
+
+	// Create page
+	p, err := bp.NewPage()
+	if err != nil {
+		t.Fatalf("Failed to allocate page: %v", err)
+	}
+	bp.UnpinPage(p.ID, false)
+
+	// Pin page
+	err = bp.PinPage(p.ID)
+	if err != nil {
+		t.Fatalf("Failed to pin page: %v", err)
+	}
+
+	// Unpin page
+	err = bp.UnpinPage(p.ID, false)
+	if err != nil {
+		t.Fatalf("Failed to unpin page: %v", err)
+	}
+}
+
+func TestBufferPoolMarkDirty(t *testing.T) {
+	dm := NewMockDiskManager()
+	bp := buffer.NewBufferPool(buffer.BufferPoolConfig{
+		PoolSize:    10,
+		DiskManager: dm,
+	})
+
+	// Create page
+	p, err := bp.NewPage()
+	if err != nil {
+		t.Fatalf("Failed to allocate page: %v", err)
+	}
+	bp.UnpinPage(p.ID, false)
+
+	// Mark as dirty
+	bp.MarkDirty(p.ID)
+
+	// Check dirty
+	if !bp.IsDirty(p.ID) {
+		t.Error("Page should be dirty")
+	}
+}
+
+func TestBufferPoolSetDiskManager(t *testing.T) {
+	dm1 := NewMockDiskManager()
+	bp := buffer.NewBufferPool(buffer.BufferPoolConfig{
+		PoolSize:    10,
+		DiskManager: dm1,
+	})
+
+	// Create page with first disk manager
+	p, err := bp.NewPage()
+	if err != nil {
+		t.Fatalf("Failed to allocate page: %v", err)
+	}
+	bp.UnpinPage(p.ID, false)
+
+	// Set new disk manager
+	dm2 := NewMockDiskManager()
+	bp.SetDiskManager(dm2)
+
+	// Clear should work with new disk manager
+	bp.Clear()
+}
+
+func TestBufferPoolStatsHitRate(t *testing.T) {
+	dm := NewMockDiskManager()
+	bp := buffer.NewBufferPool(buffer.BufferPoolConfig{
+		PoolSize:    10,
+		DiskManager: dm,
+	})
+
+	// Create page
+	p, err := bp.NewPage()
+	if err != nil {
+		t.Fatalf("Failed to allocate page: %v", err)
+	}
+	bp.UnpinPage(p.ID, false)
+
+	// Get page multiple times (hits)
+	for i := 0; i < 5; i++ {
+		bp.GetPage(p.ID)
+	}
+
+	stats := bp.Stats()
+
+	// Calculate expected hit rate
+	hitRate := stats.HitRate()
+	if hitRate < 0 || hitRate > 1 {
+		t.Errorf("Hit rate should be between 0 and 1, got %f", hitRate)
+	}
+}
+
+func TestBufferPoolGetPageNonExistent(t *testing.T) {
+	dm := NewMockDiskManager()
+	bp := buffer.NewBufferPool(buffer.BufferPoolConfig{
+		PoolSize:    10,
+		DiskManager: dm,
+	})
+
+	// Try to get non-existent page (should create a new one)
+	p, err := bp.GetPage(999)
+	if err != nil {
+		t.Fatalf("GetPage error: %v", err)
+	}
+
+	if p == nil {
+		t.Error("Page should not be nil")
+	}
+}
+
+func TestBufferPoolUnpinNonExistent(t *testing.T) {
+	dm := NewMockDiskManager()
+	bp := buffer.NewBufferPool(buffer.BufferPoolConfig{
+		PoolSize:    10,
+		DiskManager: dm,
+	})
+
+	// Unpin non-existent page should error
+	err := bp.UnpinPage(999, false)
+	if err == nil {
+		t.Error("UnpinPage should error for non-existent page")
+	}
+}
+
+func TestBufferPoolIsDirtyNonExistent(t *testing.T) {
+	dm := NewMockDiskManager()
+	bp := buffer.NewBufferPool(buffer.BufferPoolConfig{
+		PoolSize:    10,
+		DiskManager: dm,
+	})
+
+	// IsDirty for non-existent page should return false
+	if bp.IsDirty(999) {
+		t.Error("IsDirty should return false for non-existent page")
 	}
 }

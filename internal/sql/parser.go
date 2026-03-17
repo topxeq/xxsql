@@ -135,12 +135,18 @@ func (p *Parser) parseStatement() Statement {
 		return p.parseUse()
 	case TokShow:
 		return p.parseShow()
+	case TokDescribe, TokDesc:
+		return p.parseDescribe()
 	case TokGrant:
 		return p.parseGrant()
 	case TokRevoke:
 		return p.parseRevoke()
 	case TokSet:
 		return p.parseSet()
+	case TokBackup:
+		return p.parseBackup()
+	case TokRestore:
+		return p.parseRestore()
 	case TokLParen:
 		// Could be a parenthesized SELECT
 		return p.parseSelect()
@@ -652,7 +658,7 @@ func (p *Parser) parseCreateTable() *CreateTableStmt {
 
 	for !p.curTokenIs(TokRParen) && p.err == nil {
 		// Check for constraint
-		if p.curTokenIs(TokPrimary) || p.curTokenIs(TokUnique) || p.curTokenIs(TokForeign) || p.curTokenIs(TokConstraint) {
+		if p.curTokenIs(TokPrimary) || p.curTokenIs(TokUnique) || p.curTokenIs(TokForeign) || p.curTokenIs(TokConstraint) || p.curTokenIs(TokCheck) {
 			c := p.parseTableConstraint()
 			if c != nil {
 				stmt.Constraints = append(stmt.Constraints, c)
@@ -806,9 +812,21 @@ func (p *Parser) parseTableConstraint() *TableConstraint {
 			return nil
 		}
 		tc.Type = ConstraintForeignKey
+	case TokCheck:
+		p.nextToken()
+		tc.Type = ConstraintCheck
+		// Parse CHECK (expression)
+		if !p.expect(TokLParen) {
+			return nil
+		}
+		tc.CheckExpr = p.parseExpression()
+		if !p.expect(TokRParen) {
+			return nil
+		}
+		return tc
 	}
 
-	// Columns
+	// Columns (for PRIMARY KEY, UNIQUE, FOREIGN KEY)
 	if !p.expect(TokLParen) {
 		return nil
 	}
@@ -830,9 +848,64 @@ func (p *Parser) parseTableConstraint() *TableConstraint {
 				return nil
 			}
 		}
+
+		// ON DELETE / ON UPDATE
+		if p.curTokenIs(TokOn) {
+			p.nextToken()
+			if p.curTokenIs(TokDelete) {
+				p.nextToken()
+				tc.OnDelete = p.parseFKAction()
+			} else if p.curTokenIs(TokUpdate) {
+				p.nextToken()
+				tc.OnUpdate = p.parseFKAction()
+			}
+		}
+
+		if p.curTokenIs(TokOn) {
+			p.nextToken()
+			if p.curTokenIs(TokDelete) {
+				p.nextToken()
+				tc.OnDelete = p.parseFKAction()
+			} else if p.curTokenIs(TokUpdate) {
+				p.nextToken()
+				tc.OnUpdate = p.parseFKAction()
+			}
+		}
 	}
 
 	return tc
+}
+
+// parseFKAction parses a foreign key action (CASCADE, SET NULL, RESTRICT, NO ACTION).
+func (p *Parser) parseFKAction() string {
+	if p.curTokenIs(TokCascade) {
+		p.nextToken()
+		return "CASCADE"
+	}
+	if p.curTokenIs(TokRestrict) {
+		p.nextToken()
+		return "RESTRICT"
+	}
+	if p.curTokenIs(TokIdent) && p.currTok.Value == "NO" {
+		p.nextToken()
+		if p.curTokenIs(TokAction) {
+			p.nextToken()
+			return "NO ACTION"
+		}
+		p.error("expected ACTION after NO")
+		return ""
+	}
+	if p.curTokenIs(TokSet) {
+		p.nextToken()
+		if p.curTokenIs(TokNull) {
+			p.nextToken()
+			return "SET NULL"
+		}
+		p.error("expected NULL after SET")
+		return ""
+	}
+	// Default is RESTRICT
+	return "RESTRICT"
 }
 
 // parseCreateIndex parses a CREATE INDEX statement.
@@ -962,6 +1035,17 @@ func (p *Parser) parseShow() Statement {
 		return p.parseShowGrants()
 	}
 
+	// Handle SHOW CREATE TABLE
+	if p.curTokenIs(TokCreate) {
+		p.nextToken() // consume CREATE
+		if !p.expect(TokTable) {
+			return nil
+		}
+		tableName := p.currTok.Value
+		p.nextToken()
+		return &ShowCreateTableStmt{TableName: tableName}
+	}
+
 	stmt := &ShowStmt{
 		Type: p.currTok.Value,
 	}
@@ -982,6 +1066,16 @@ func (p *Parser) parseShow() Statement {
 	}
 
 	return stmt
+}
+
+// parseDescribe parses a DESCRIBE/DESC statement.
+func (p *Parser) parseDescribe() Statement {
+	p.nextToken() // consume DESCRIBE/DESC
+
+	tableName := p.currTok.Value
+	p.nextToken()
+
+	return &DescribeStmt{TableName: tableName}
 }
 
 // parseAlter parses an ALTER statement.
@@ -1036,9 +1130,19 @@ func (p *Parser) parseAlter() Statement {
 	return stmt
 }
 
-// parseAlterAddColumn parses ADD COLUMN action.
-func (p *Parser) parseAlterAddColumn() *AddColumnAction {
+// parseAlterAddColumn parses ADD COLUMN or ADD CONSTRAINT action.
+func (p *Parser) parseAlterAddColumn() AlterAction {
 	p.nextToken() // consume ADD
+
+	// Handle ADD CONSTRAINT, ADD PRIMARY KEY, ADD UNIQUE, ADD FOREIGN KEY, ADD CHECK
+	if p.curTokenIs(TokConstraint) || p.curTokenIs(TokPrimary) || p.curTokenIs(TokUnique) ||
+		p.curTokenIs(TokForeign) || p.curTokenIs(TokCheck) {
+		constraint := p.parseTableConstraint()
+		if constraint == nil {
+			return nil
+		}
+		return &AddConstraintAction{Constraint: constraint}
+	}
 
 	// Optional COLUMN keyword
 	if p.curTokenIs(TokColumn) {
@@ -1053,9 +1157,30 @@ func (p *Parser) parseAlterAddColumn() *AddColumnAction {
 	return &AddColumnAction{Column: col}
 }
 
-// parseAlterDropColumn parses DROP COLUMN action.
-func (p *Parser) parseAlterDropColumn() *DropColumnAction {
+// parseAlterDropColumn parses DROP COLUMN or DROP CONSTRAINT action.
+func (p *Parser) parseAlterDropColumn() AlterAction {
 	p.nextToken() // consume DROP
+
+	// Handle DROP CONSTRAINT
+	if p.curTokenIs(TokConstraint) {
+		p.nextToken()
+		if !p.curTokenIs(TokIdent) {
+			p.error("expected constraint name")
+			return nil
+		}
+		constraintName := p.currTok.Value
+		p.nextToken()
+		return &DropConstraintAction{ConstraintName: constraintName}
+	}
+
+	// Handle DROP PRIMARY KEY
+	if p.curTokenIs(TokPrimary) {
+		p.nextToken()
+		if !p.expect(TokKey) {
+			return nil
+		}
+		return &DropConstraintAction{ConstraintName: "PRIMARY"}
+	}
 
 	// Optional COLUMN keyword
 	if p.curTokenIs(TokColumn) {
@@ -1778,6 +1903,78 @@ func (p *Parser) parseSetPassword() *SetPasswordStmt {
 		return nil
 	}
 	stmt.Password = p.currTok.Value
+	p.nextToken()
+
+	return stmt
+}
+
+// parseBackup parses a BACKUP DATABASE statement.
+func (p *Parser) parseBackup() *BackupStmt {
+	p.nextToken() // consume BACKUP
+
+	// Expect DATABASE
+	if !p.expect(TokDatabase) && !p.curTokenIs(TokTo) {
+		p.error("expected DATABASE or TO")
+		return nil
+	}
+
+	// Skip DATABASE if present
+	if p.curTokenIs(TokDatabase) {
+		p.nextToken()
+	}
+
+	// Expect TO
+	if !p.expect(TokTo) {
+		return nil
+	}
+
+	// Path string
+	if !p.curTokenIs(TokString) {
+		p.error("expected backup path string")
+		return nil
+	}
+
+	stmt := &BackupStmt{
+		Path: p.currTok.Value,
+	}
+	p.nextToken()
+
+	// Optional WITH COMPRESS
+	if p.curTokenIs(TokWith) {
+		p.nextToken()
+		// Check for COMPRESS (we treat it as an identifier since it's not a keyword)
+		if p.curTokenIs(TokIdent) && p.currTok.Value == "COMPRESS" {
+			stmt.Compress = true
+			p.nextToken()
+		}
+	}
+
+	return stmt
+}
+
+// parseRestore parses a RESTORE DATABASE statement.
+func (p *Parser) parseRestore() *RestoreStmt {
+	p.nextToken() // consume RESTORE
+
+	// Expect DATABASE (optional)
+	if p.curTokenIs(TokDatabase) {
+		p.nextToken()
+	}
+
+	// Expect FROM
+	if !p.expect(TokFrom) {
+		return nil
+	}
+
+	// Path string
+	if !p.curTokenIs(TokString) {
+		p.error("expected backup path string")
+		return nil
+	}
+
+	stmt := &RestoreStmt{
+		Path: p.currTok.Value,
+	}
 	p.nextToken()
 
 	return stmt

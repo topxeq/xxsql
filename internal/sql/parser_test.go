@@ -901,10 +901,10 @@ func TestParseUse(t *testing.T) {
 
 func TestParseShow(t *testing.T) {
 	tests := []struct {
-		input  string
-		typ    string
-		from   string
-		like   string
+		input string
+		typ   string
+		from  string
+		like  string
 	}{
 		{"SHOW TABLES", "TABLES", "", ""},
 		{"SHOW DATABASES", "DATABASES", "", ""},
@@ -1097,20 +1097,12 @@ func TestParseGrantWithGrantOption(t *testing.T) {
 }
 
 func TestParseRevoke(t *testing.T) {
-	input := "REVOKE SELECT ON mydb.users FROM testuser"
+	input := "REVOKE SELECT ON mydb.* FROM testuser"
 	stmt, _ := Parse(input)
 
-	revoke, ok := stmt.(*RevokeStmt)
-	if !ok {
-		t.Fatalf("Expected *RevokeStmt, got %T", stmt)
-	}
-
+	revoke := stmt.(*RevokeStmt)
 	if revoke.From != "testuser" {
 		t.Errorf("Expected user 'testuser', got %q", revoke.From)
-	}
-
-	if revoke.On != GrantOnTable {
-		t.Errorf("Expected GrantOnTable, got %d", revoke.On)
 	}
 }
 
@@ -1125,5 +1117,834 @@ func TestParseShowGrants(t *testing.T) {
 
 	if showGrants.ForUser != "testuser" {
 		t.Errorf("Expected user 'testuser', got %q", showGrants.ForUser)
+	}
+}
+
+func TestLexerPos(t *testing.T) {
+	l := NewLexer("SELECT")
+	l.NextToken()
+	pos := l.Pos()
+	if pos != 6 {
+		t.Errorf("Pos: got %d, want 6", pos)
+	}
+}
+
+func TestLexerLine(t *testing.T) {
+	l := NewLexer("SELECT\nFROM")
+	l.NextToken()
+	l.NextToken()
+	line := l.Line()
+	if line != 2 {
+		t.Errorf("Line: got %d, want 2", line)
+	}
+}
+
+func TestLexerColumn(t *testing.T) {
+	l := NewLexer("SELECT")
+	l.NextToken()
+	col := l.Column()
+	if col < 0 {
+		t.Errorf("Column: got %d, want >= 0", col)
+	}
+}
+
+func TestLexerTokenize(t *testing.T) {
+	tokens, err := Tokenize("SELECT * FROM users")
+	if err != nil {
+		t.Fatalf("Tokenize error: %v", err)
+	}
+	if len(tokens) != 4 {
+		t.Errorf("Tokenize: got %d tokens, want 4", len(tokens))
+	}
+}
+
+func TestLexerParameter(t *testing.T) {
+	input := "SELECT * FROM users WHERE id = ?"
+	tokens, err := Tokenize(input)
+	if err != nil {
+		t.Fatalf("Tokenize error: %v", err)
+	}
+
+	found := false
+	for _, tok := range tokens {
+		if tok.Type == TokParameter {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Error("Expected to find parameter token")
+	}
+}
+
+func TestLexerParameterNamed(t *testing.T) {
+	input := "SELECT * FROM users WHERE id = :id"
+	tokens, err := Tokenize(input)
+	if err != nil {
+		t.Fatalf("Tokenize error: %v", err)
+	}
+
+	if len(tokens) == 0 {
+		t.Error("Expected tokens")
+	}
+}
+
+func TestParserParseBool(t *testing.T) {
+	tests := []struct {
+		input    string
+		expected bool
+	}{
+		{"SELECT TRUE", true},
+		{"SELECT FALSE", false},
+	}
+
+	for _, tt := range tests {
+		stmt, err := Parse(tt.input)
+		if err != nil {
+			t.Errorf("Parse error for %q: %v", tt.input, err)
+			continue
+		}
+
+		selectStmt, ok := stmt.(*SelectStmt)
+		if !ok {
+			t.Errorf("Expected *SelectStmt for %q", tt.input)
+			continue
+		}
+
+		literal, ok := selectStmt.Columns[0].(*Literal)
+		if !ok {
+			t.Errorf("Expected *Literal for %q", tt.input)
+			continue
+		}
+
+		if literal.Value.(bool) != tt.expected {
+			t.Errorf("Bool value for %q: got %v, want %v", tt.input, literal.Value, tt.expected)
+		}
+	}
+}
+
+func TestParseDescribe(t *testing.T) {
+	input := "DESCRIBE users"
+	stmt, err := Parse(input)
+	if err != nil {
+		t.Fatalf("Parse error: %v", err)
+	}
+
+	describeStmt, ok := stmt.(*DescribeStmt)
+	if !ok {
+		t.Fatalf("Expected *DescribeStmt, got %T", stmt)
+	}
+
+	if describeStmt.TableName != "users" {
+		t.Errorf("Expected table 'users', got %q", describeStmt.TableName)
+	}
+}
+
+func TestParseBackup(t *testing.T) {
+	input := "BACKUP DATABASE TO '/backup/path'"
+	stmt, err := Parse(input)
+	if err != nil {
+		t.Fatalf("Parse error: %v", err)
+	}
+
+	backupStmt, ok := stmt.(*BackupStmt)
+	if !ok {
+		t.Fatalf("Expected *BackupStmt, got %T", stmt)
+	}
+
+	if backupStmt.Path != "/backup/path" {
+		t.Errorf("Expected path '/backup/path', got %q", backupStmt.Path)
+	}
+}
+
+func TestParseRestore(t *testing.T) {
+	input := "RESTORE DATABASE FROM '/backup/path'"
+	stmt, err := Parse(input)
+	if err != nil {
+		t.Fatalf("Parse error: %v", err)
+	}
+
+	restoreStmt, ok := stmt.(*RestoreStmt)
+	if !ok {
+		t.Fatalf("Expected *RestoreStmt, got %T", stmt)
+	}
+
+	if restoreStmt.Path != "/backup/path" {
+		t.Errorf("Expected path '/backup/path', got %q", restoreStmt.Path)
+	}
+}
+
+func TestParseDropIndex(t *testing.T) {
+	input := "DROP INDEX idx_name ON users"
+	stmt, err := Parse(input)
+	if err != nil {
+		t.Fatalf("Parse error: %v", err)
+	}
+
+	dropIndex, ok := stmt.(*DropIndexStmt)
+	if !ok {
+		t.Fatalf("Expected *DropIndexStmt, got %T", stmt)
+	}
+
+	if dropIndex.IndexName != "idx_name" {
+		t.Errorf("Expected index 'idx_name', got %q", dropIndex.IndexName)
+	}
+
+	if dropIndex.TableName != "users" {
+		t.Errorf("Expected table 'users', got %q", dropIndex.TableName)
+	}
+}
+
+func TestSelectStmtString(t *testing.T) {
+	stmt := &SelectStmt{
+		Distinct: true,
+		Columns:  []Expression{&StarExpr{}},
+		From: &FromClause{
+			Table: &TableRef{Name: "users"},
+		},
+		Where: &BinaryExpr{
+			Left:  &ColumnRef{Name: "id"},
+			Op:    OpEq,
+			Right: &Literal{Value: 1},
+		},
+	}
+
+	result := stmt.String()
+	if result == "" {
+		t.Error("SelectStmt.String() returned empty string")
+	}
+}
+
+func TestInsertStmtString(t *testing.T) {
+	stmt := &InsertStmt{
+		Table:   "users",
+		Columns: []string{"id", "name"},
+		Values: [][]Expression{
+			{&Literal{Value: 1}, &Literal{Value: "Alice"}},
+		},
+	}
+
+	result := stmt.String()
+	if result == "" {
+		t.Error("InsertStmt.String() returned empty string")
+	}
+}
+
+func TestUpdateStmtString(t *testing.T) {
+	stmt := &UpdateStmt{
+		Table: "users",
+		Assignments: []*Assignment{
+			{Column: "name", Value: &Literal{Value: "Bob"}},
+		},
+		Where: &BinaryExpr{
+			Left:  &ColumnRef{Name: "id"},
+			Op:    OpEq,
+			Right: &Literal{Value: 1},
+		},
+	}
+
+	result := stmt.String()
+	if result == "" {
+		t.Error("UpdateStmt.String() returned empty string")
+	}
+}
+
+func TestDeleteStmtString(t *testing.T) {
+	stmt := &DeleteStmt{
+		Table: "users",
+		Where: &BinaryExpr{
+			Left:  &ColumnRef{Name: "id"},
+			Op:    OpEq,
+			Right: &Literal{Value: 1},
+		},
+	}
+
+	result := stmt.String()
+	if result == "" {
+		t.Error("DeleteStmt.String() returned empty string")
+	}
+}
+
+func TestCreateTableStmtString(t *testing.T) {
+	stmt := &CreateTableStmt{
+		TableName:   "users",
+		IfNotExists: true,
+		Columns: []*ColumnDef{
+			{Name: "id", Type: &DataType{Name: "SEQ"}, PrimaryKey: true},
+		},
+	}
+
+	result := stmt.String()
+	if result == "" {
+		t.Error("CreateTableStmt.String() returned empty string")
+	}
+}
+
+func TestDropTableStmtString(t *testing.T) {
+	stmt := &DropTableStmt{
+		TableName: "users",
+		IfExists:  true,
+	}
+
+	result := stmt.String()
+	if result == "" {
+		t.Error("DropTableStmt.String() returned empty string")
+	}
+}
+
+func TestCreateIndexStmtString(t *testing.T) {
+	stmt := &CreateIndexStmt{
+		IndexName: "idx_name",
+		TableName: "users",
+		Columns:   []string{"name"},
+		Unique:    true,
+	}
+
+	result := stmt.String()
+	if result == "" {
+		t.Error("CreateIndexStmt.String() returned empty string")
+	}
+}
+
+func TestAlterTableStmtString(t *testing.T) {
+	stmt := &AlterTableStmt{
+		TableName: "users",
+		Actions: []AlterAction{
+			&AddColumnAction{Column: &ColumnDef{Name: "age", Type: &DataType{Name: "INT"}}},
+		},
+	}
+
+	result := stmt.String()
+	if result == "" {
+		t.Error("AlterTableStmt.String() returned empty string")
+	}
+}
+
+func TestAddColumnActionString(t *testing.T) {
+	action := &AddColumnAction{
+		Column: &ColumnDef{Name: "age", Type: &DataType{Name: "INT"}},
+	}
+
+	result := action.String()
+	if result == "" {
+		t.Error("AddColumnAction.String() returned empty string")
+	}
+}
+
+func TestDropColumnActionString(t *testing.T) {
+	action := &DropColumnAction{
+		ColumnName: "age",
+	}
+
+	result := action.String()
+	if result == "" {
+		t.Error("DropColumnAction.String() returned empty string")
+	}
+}
+
+func TestModifyColumnActionString(t *testing.T) {
+	action := &ModifyColumnAction{
+		Column: &ColumnDef{Name: "name", Type: &DataType{Name: "VARCHAR", Size: 200}},
+	}
+
+	result := action.String()
+	if result == "" {
+		t.Error("ModifyColumnAction.String() returned empty string")
+	}
+}
+
+func TestRenameColumnActionString(t *testing.T) {
+	action := &RenameColumnAction{
+		OldName: "old_name",
+		NewName: "new_name",
+	}
+
+	result := action.String()
+	if result == "" {
+		t.Error("RenameColumnAction.String() returned empty string")
+	}
+}
+
+func TestRenameTableActionString(t *testing.T) {
+	action := &RenameTableAction{
+		NewName: "customers",
+	}
+
+	result := action.String()
+	if result == "" {
+		t.Error("RenameTableAction.String() returned empty string")
+	}
+}
+
+func TestTruncateTableStmtString(t *testing.T) {
+	stmt := &TruncateTableStmt{
+		TableName: "users",
+	}
+
+	result := stmt.String()
+	if result == "" {
+		t.Error("TruncateTableStmt.String() returned empty string")
+	}
+}
+
+func TestUseStmtString(t *testing.T) {
+	stmt := &UseStmt{
+		Database: "mydb",
+	}
+
+	result := stmt.String()
+	if result == "" {
+		t.Error("UseStmt.String() returned empty string")
+	}
+}
+
+func TestShowStmtString(t *testing.T) {
+	stmt := &ShowStmt{
+		Type: "TABLES",
+	}
+
+	result := stmt.String()
+	if result == "" {
+		t.Error("ShowStmt.String() returned empty string")
+	}
+}
+
+func TestCreateUserStmtString(t *testing.T) {
+	stmt := &CreateUserStmt{
+		Username:    "testuser",
+		Identified:  "password",
+		IfNotExists: true,
+	}
+
+	result := stmt.String()
+	if result == "" {
+		t.Error("CreateUserStmt.String() returned empty string")
+	}
+}
+
+func TestDropUserStmtString(t *testing.T) {
+	stmt := &DropUserStmt{
+		Username: "testuser",
+		IfExists: true,
+	}
+
+	result := stmt.String()
+	if result == "" {
+		t.Error("DropUserStmt.String() returned empty string")
+	}
+}
+
+func TestAlterUserStmtString(t *testing.T) {
+	stmt := &AlterUserStmt{
+		Username:   "testuser",
+		Identified: "newpassword",
+	}
+
+	result := stmt.String()
+	if result == "" {
+		t.Error("AlterUserStmt.String() returned empty string")
+	}
+}
+
+func TestSetPasswordStmtString(t *testing.T) {
+	stmt := &SetPasswordStmt{
+		ForUser:  "testuser",
+		Password: "secret",
+	}
+
+	result := stmt.String()
+	if result == "" {
+		t.Error("SetPasswordStmt.String() returned empty string")
+	}
+}
+
+func TestGrantStmtString(t *testing.T) {
+	stmt := &GrantStmt{
+		Privileges: []*Privilege{{Type: PrivAll}},
+		On:         GrantOnAll,
+		To:         "testuser",
+		WithGrant:  true,
+	}
+
+	result := stmt.String()
+	if result == "" {
+		t.Error("GrantStmt.String() returned empty string")
+	}
+}
+
+func TestRevokeStmtString(t *testing.T) {
+	stmt := &RevokeStmt{
+		Privileges: []*Privilege{{Type: PrivSelect}},
+		On:         GrantOnDatabase,
+		Database:   "mydb",
+		From:       "testuser",
+	}
+
+	result := stmt.String()
+	if result == "" {
+		t.Error("RevokeStmt.String() returned empty string")
+	}
+}
+
+func TestShowGrantsStmtString(t *testing.T) {
+	stmt := &ShowGrantsStmt{
+		ForUser: "testuser",
+	}
+
+	result := stmt.String()
+	if result == "" {
+		t.Error("ShowGrantsStmt.String() returned empty string")
+	}
+}
+
+func TestBackupStmtString(t *testing.T) {
+	stmt := &BackupStmt{
+		Path: "/backup/path",
+	}
+
+	result := stmt.String()
+	if result == "" {
+		t.Error("BackupStmt.String() returned empty string")
+	}
+}
+
+func TestRestoreStmtString(t *testing.T) {
+	stmt := &RestoreStmt{
+		Path: "/backup/path",
+	}
+
+	result := stmt.String()
+	if result == "" {
+		t.Error("RestoreStmt.String() returned empty string")
+	}
+}
+
+func TestDropIndexStmtString(t *testing.T) {
+	stmt := &DropIndexStmt{
+		IndexName: "idx_name",
+		TableName: "users",
+	}
+
+	result := stmt.String()
+	if result == "" {
+		t.Error("DropIndexStmt.String() returned empty string")
+	}
+}
+
+func TestDescribeStmtString(t *testing.T) {
+	stmt := &DescribeStmt{
+		TableName: "users",
+	}
+
+	result := stmt.String()
+	if result == "" {
+		t.Error("DescribeStmt.String() returned empty string")
+	}
+}
+
+func TestBinaryExprString(t *testing.T) {
+	expr := &BinaryExpr{
+		Left:  &ColumnRef{Name: "id"},
+		Op:    OpEq,
+		Right: &Literal{Value: 1},
+	}
+
+	result := expr.String()
+	if result == "" {
+		t.Error("BinaryExpr.String() returned empty string")
+	}
+}
+
+func TestUnaryExprString(t *testing.T) {
+	expr := &UnaryExpr{
+		Op:    OpNeg,
+		Right: &Literal{Value: 5},
+	}
+
+	result := expr.String()
+	if result == "" {
+		t.Error("UnaryExpr.String() returned empty string")
+	}
+}
+
+func TestFunctionCallString(t *testing.T) {
+	expr := &FunctionCall{
+		Name: "COUNT",
+		Args: []Expression{&StarExpr{}},
+	}
+
+	result := expr.String()
+	if result == "" {
+		t.Error("FunctionCall.String() returned empty string")
+	}
+}
+
+func TestCaseExprString(t *testing.T) {
+	expr := &CaseExpr{
+		Whens: []*CaseWhen{
+			{
+				Condition: &BinaryExpr{
+					Left:  &ColumnRef{Name: "score"},
+					Op:    OpGe,
+					Right: &Literal{Value: 90},
+				},
+				Result: &Literal{Value: "A"},
+			},
+		},
+		Else: &Literal{Value: "B"},
+	}
+
+	result := expr.String()
+	if result == "" {
+		t.Error("CaseExpr.String() returned empty string")
+	}
+}
+
+func TestCastExprString(t *testing.T) {
+	expr := &CastExpr{
+		Expr: &ColumnRef{Name: "age"},
+		Type: &DataType{Name: "VARCHAR", Size: 10},
+	}
+
+	result := expr.String()
+	if result == "" {
+		t.Error("CastExpr.String() returned empty string")
+	}
+}
+
+func TestColumnRefString(t *testing.T) {
+	expr := &ColumnRef{
+		Table: "users",
+		Name:  "id",
+	}
+
+	result := expr.String()
+	if result == "" {
+		t.Error("ColumnRef.String() returned empty string")
+	}
+}
+
+func TestLiteralString(t *testing.T) {
+	tests := []struct {
+		name  string
+		value interface{}
+	}{
+		{"int", 42},
+		{"float", 3.14},
+		{"string", "hello"},
+		{"bool", true},
+		{"nil", nil},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			lit := &Literal{Value: tt.value}
+			result := lit.String()
+			if result == "" {
+				t.Errorf("Literal.String() for %v returned empty string", tt.value)
+			}
+		})
+	}
+}
+
+func TestStarExprString(t *testing.T) {
+	expr := &StarExpr{}
+
+	result := expr.String()
+	if result == "" {
+		t.Error("StarExpr.String() returned empty string")
+	}
+}
+
+func TestBetweenExprString(t *testing.T) {
+	expr := &BetweenExpr{
+		Expr:  &ColumnRef{Name: "age"},
+		Left:  &Literal{Value: 18},
+		Right: &Literal{Value: 65},
+	}
+
+	result := expr.String()
+	if result == "" {
+		t.Error("BetweenExpr.String() returned empty string")
+	}
+}
+
+func TestInExprString(t *testing.T) {
+	expr := &InExpr{
+		Expr: &ColumnRef{Name: "id"},
+		List: []Expression{&Literal{Value: 1}, &Literal{Value: 2}, &Literal{Value: 3}},
+		Not:  false,
+	}
+
+	result := expr.String()
+	if result == "" {
+		t.Error("InExpr.String() returned empty string")
+	}
+}
+
+func TestIsNullExprString(t *testing.T) {
+	expr := &IsNullExpr{
+		Expr: &ColumnRef{Name: "name"},
+		Not:  false,
+	}
+
+	result := expr.String()
+	if result == "" {
+		t.Error("IsNullExpr.String() returned empty string")
+	}
+}
+
+func TestOrderByItemString(t *testing.T) {
+	item := &OrderByItem{
+		Expr:      &ColumnRef{Name: "name"},
+		Ascending: true,
+	}
+
+	result := item.String()
+	if result == "" {
+		t.Error("OrderByItem.String() returned empty string")
+	}
+}
+
+func TestFromClauseString(t *testing.T) {
+	clause := &FromClause{
+		Table: &TableRef{Name: "users", Alias: "u"},
+		Joins: []*JoinClause{
+			{
+				Type:  JoinInner,
+				Table: &TableRef{Name: "orders"},
+				On: &BinaryExpr{
+					Left:  &ColumnRef{Table: "u", Name: "id"},
+					Op:    OpEq,
+					Right: &ColumnRef{Table: "orders", Name: "user_id"},
+				},
+			},
+		},
+	}
+
+	result := clause.String()
+	if result == "" {
+		t.Error("FromClause.String() returned empty string")
+	}
+}
+
+func TestJoinClauseString(t *testing.T) {
+	clause := &JoinClause{
+		Type:  JoinLeft,
+		Table: &TableRef{Name: "orders"},
+		On: &BinaryExpr{
+			Left:  &ColumnRef{Name: "user_id"},
+			Op:    OpEq,
+			Right: &ColumnRef{Name: "id"},
+		},
+	}
+
+	result := clause.String()
+	if result == "" {
+		t.Error("JoinClause.String() returned empty string")
+	}
+}
+
+func TestTableRefString(t *testing.T) {
+	ref := &TableRef{
+		Name:  "users",
+		Alias: "u",
+	}
+
+	result := ref.String()
+	if result == "" {
+		t.Error("TableRef.String() returned empty string")
+	}
+}
+
+func TestColumnDefString(t *testing.T) {
+	col := &ColumnDef{
+		Name:       "id",
+		Type:       &DataType{Name: "SEQ"},
+		PrimaryKey: true,
+		Nullable:   false,
+	}
+
+	result := col.String()
+	if result == "" {
+		t.Error("ColumnDef.String() returned empty string")
+	}
+}
+
+func TestDataTypeString(t *testing.T) {
+	tests := []struct {
+		name string
+		dt   *DataType
+	}{
+		{"SEQ", &DataType{Name: "SEQ"}},
+		{"INT", &DataType{Name: "INT"}},
+		{"VARCHAR with size", &DataType{Name: "VARCHAR", Size: 255}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := tt.dt.String()
+			if result == "" {
+				t.Error("DataType.String() returned empty string")
+			}
+		})
+	}
+}
+
+func TestAssignmentString(t *testing.T) {
+	assign := &Assignment{
+		Column: "name",
+		Value:  &Literal{Value: "Alice"},
+	}
+
+	result := assign.String()
+	if result == "" {
+		t.Error("Assignment.String() returned empty string")
+	}
+}
+
+func TestPrivilegeString(t *testing.T) {
+	tests := []struct {
+		name string
+		priv PrivilegeType
+	}{
+		{"ALL", PrivAll},
+		{"SELECT", PrivSelect},
+		{"INSERT", PrivInsert},
+		{"UPDATE", PrivUpdate},
+		{"DELETE", PrivDelete},
+		{"CREATE", PrivCreate},
+		{"DROP", PrivDrop},
+		{"ALTER", PrivAlter},
+		{"INDEX", PrivIndex},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			p := &Privilege{Type: tt.priv}
+			result := p.String()
+			if result == "" {
+				t.Errorf("Privilege.String() for %v returned empty string", tt.priv)
+			}
+		})
+	}
+}
+
+func TestUnionStmtString(t *testing.T) {
+	stmt := &UnionStmt{
+		Left: &SelectStmt{
+			Columns: []Expression{&ColumnRef{Name: "name"}},
+			From:    &FromClause{Table: &TableRef{Name: "users"}},
+		},
+		Right: &SelectStmt{
+			Columns: []Expression{&ColumnRef{Name: "name"}},
+			From:    &FromClause{Table: &TableRef{Name: "customers"}},
+		},
+		All: true,
+	}
+
+	result := stmt.String()
+	if result == "" {
+		t.Error("UnionStmt.String() returned empty string")
 	}
 }

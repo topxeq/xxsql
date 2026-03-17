@@ -665,9 +665,9 @@ func (p *PermissionChecker) Require(perm Permission) error {
 // GrantGlobal grants global privileges to a user.
 func (m *Manager) GrantGlobal(username string, priv *GlobalPrivilege) error {
 	m.mu.Lock()
-	defer m.mu.Unlock()
 
 	if _, exists := m.users[username]; !exists {
+		m.mu.Unlock()
 		return fmt.Errorf("user %q not found", username)
 	}
 
@@ -712,9 +712,9 @@ func (m *Manager) GrantGlobal(username string, priv *GlobalPrivilege) error {
 // GrantDatabase grants database-level privileges to a user.
 func (m *Manager) GrantDatabase(username, database string, priv *DatabasePrivilege) error {
 	m.mu.Lock()
-	defer m.mu.Unlock()
 
 	if _, exists := m.users[username]; !exists {
+		m.mu.Unlock()
 		return fmt.Errorf("user %q not found", username)
 	}
 
@@ -761,9 +761,9 @@ func (m *Manager) GrantDatabase(username, database string, priv *DatabasePrivile
 // GrantTable grants table-level privileges to a user.
 func (m *Manager) GrantTable(username, database, table string, priv *TablePrivilege) error {
 	m.mu.Lock()
-	defer m.mu.Unlock()
 
 	if _, exists := m.users[username]; !exists {
+		m.mu.Unlock()
 		return fmt.Errorf("user %q not found", username)
 	}
 
@@ -814,9 +814,9 @@ func (m *Manager) GrantTable(username, database, table string, priv *TablePrivil
 // RevokeGlobal revokes global privileges from a user.
 func (m *Manager) RevokeGlobal(username string, priv *GlobalPrivilege) error {
 	m.mu.Lock()
-	defer m.mu.Unlock()
 
 	if _, exists := m.users[username]; !exists {
+		m.mu.Unlock()
 		return fmt.Errorf("user %q not found", username)
 	}
 
@@ -858,9 +858,9 @@ func (m *Manager) RevokeGlobal(username string, priv *GlobalPrivilege) error {
 // RevokeDatabase revokes database-level privileges from a user.
 func (m *Manager) RevokeDatabase(username, database string, priv *DatabasePrivilege) error {
 	m.mu.Lock()
-	defer m.mu.Unlock()
 
 	if _, exists := m.users[username]; !exists {
+		m.mu.Unlock()
 		return fmt.Errorf("user %q not found", username)
 	}
 
@@ -900,9 +900,9 @@ func (m *Manager) RevokeDatabase(username, database string, priv *DatabasePrivil
 // RevokeTable revokes table-level privileges from a user.
 func (m *Manager) RevokeTable(username, database, table string, priv *TablePrivilege) error {
 	m.mu.Lock()
-	defer m.mu.Unlock()
 
 	if _, exists := m.users[username]; !exists {
+		m.mu.Unlock()
 		return fmt.Errorf("user %q not found", username)
 	}
 
