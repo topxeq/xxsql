@@ -165,9 +165,10 @@ type MySQLHandler struct {
 	database  string
 
 	// Callbacks
-	onAuth  func(h *MySQLHandler, username, database string, authResponse []byte) (bool, error)
-	onQuery func(h *MySQLHandler, sql string) ([]*ColumnDefinition, [][]interface{}, error)
-	onClose func(h *MySQLHandler)
+	onAuth      func(h *MySQLHandler, username, database string, authResponse []byte) (bool, error)
+	onQuery     func(h *MySQLHandler, sql string) ([]*ColumnDefinition, [][]interface{}, error)
+	onFieldList func(h *MySQLHandler, table string) ([]*ColumnDefinition, error)
+	onClose     func(h *MySQLHandler)
 
 	mu sync.Mutex
 }
@@ -186,6 +187,13 @@ func WithMySQLAuthHandler(fn func(h *MySQLHandler, username, database string, au
 func WithMySQLQueryHandler(fn func(h *MySQLHandler, sql string) ([]*ColumnDefinition, [][]interface{}, error)) MySQLHandlerOption {
 	return func(h *MySQLHandler) {
 		h.onQuery = fn
+	}
+}
+
+// WithMySQLFieldListHandler sets the field list handler.
+func WithMySQLFieldListHandler(fn func(h *MySQLHandler, table string) ([]*ColumnDefinition, error)) MySQLHandlerOption {
+	return func(h *MySQLHandler) {
+		h.onFieldList = fn
 	}
 }
 
@@ -659,8 +667,27 @@ func (h *MySQLHandler) encodeRowData(row []interface{}) []byte {
 
 // handleFieldList handles COM_FIELD_LIST.
 func (h *MySQLHandler) handleFieldList(table string) error {
-	// TODO: Implement field list
-	return h.sendERR(1046, "42000", "COM_FIELD_LIST not implemented")
+	// Check if field list handler is set
+	if h.onFieldList == nil {
+		return h.sendERR(1046, "42000", "COM_FIELD_LIST not supported")
+	}
+
+	// Get column definitions
+	columns, err := h.onFieldList(h, table)
+	if err != nil {
+		return h.sendERR(1146, "42S02", fmt.Sprintf("Table '%s' doesn't exist", table))
+	}
+
+	// Send column definitions
+	for _, col := range columns {
+		data := h.encodeColumnDefinition(col)
+		if err := h.writePacket(data); err != nil {
+			return err
+		}
+	}
+
+	// Send EOF packet
+	return h.writePacket([]byte{EOF_PACKET, 0, 0, 0, 0})
 }
 
 // handleStatistics handles COM_STATISTICS.

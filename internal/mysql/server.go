@@ -48,9 +48,10 @@ type Server struct {
 	connIDCounter uint32
 
 	// Callbacks
-	onAuth  func(h *MySQLHandler, username, database string, authResponse []byte) (bool, error)
-	onQuery func(h *MySQLHandler, sql string) ([]*ColumnDefinition, [][]interface{}, error)
-	onClose func(h *MySQLHandler)
+	onAuth      func(h *MySQLHandler, username, database string, authResponse []byte) (bool, error)
+	onQuery     func(h *MySQLHandler, sql string) ([]*ColumnDefinition, [][]interface{}, error)
+	onFieldList func(h *MySQLHandler, table string) ([]*ColumnDefinition, error)
+	onClose     func(h *MySQLHandler)
 }
 
 // NewServer creates a new MySQL server.
@@ -76,6 +77,11 @@ func (s *Server) SetAuthHandler(fn func(h *MySQLHandler, username, database stri
 // SetQueryHandler sets the query handler.
 func (s *Server) SetQueryHandler(fn func(h *MySQLHandler, sql string) ([]*ColumnDefinition, [][]interface{}, error)) {
 	s.onQuery = fn
+}
+
+// SetFieldListHandler sets the field list handler.
+func (s *Server) SetFieldListHandler(fn func(h *MySQLHandler, table string) ([]*ColumnDefinition, error)) {
+	s.onFieldList = fn
 }
 
 // SetCloseHandler sets the close handler.

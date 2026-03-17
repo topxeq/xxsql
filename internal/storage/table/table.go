@@ -81,6 +81,10 @@ type Table struct {
 
 	// Column name to index map
 	columnMap map[string]int
+
+	// Row ID to page mapping for efficient lookup
+	rowToPage map[row.RowID]page.PageID
+	rowPageMu sync.RWMutex
 }
 
 // OpenTable opens or creates a table.
@@ -95,10 +99,11 @@ func OpenTable(dataDir, name string, columns []*types.ColumnInfo) (*Table, error
 			NextPageID: 1,
 			State:      TableStateActive,
 		},
-		dataDir:   dataDir,
-		pages:     make(map[page.PageID]*page.Page),
-		indexMgr:  btree.NewIndexManager(name, nil),
-		columnMap: make(map[string]int),
+		dataDir:    dataDir,
+		pages:      make(map[page.PageID]*page.Page),
+		indexMgr:   btree.NewIndexManager(name, nil),
+		columnMap:  make(map[string]int),
+		rowToPage:  make(map[row.RowID]page.PageID),
 	}
 
 	// Build column map
@@ -426,6 +431,11 @@ func (t *Table) Insert(values []types.Value) (row.RowID, error) {
 		return row.InvalidRowID, err
 	}
 
+	// Record row ID to page mapping
+	t.rowPageMu.Lock()
+	t.rowToPage[rowID] = targetPage.ID
+	t.rowPageMu.Unlock()
+
 	// Update indexes
 	if err := t.indexMgr.InsertIntoIndexes(values, rowID, t.columnMap); err != nil {
 		return row.InvalidRowID, err
@@ -519,8 +529,36 @@ func (t *Table) FindByKey(key types.Value) (*row.Row, error) {
 		return nil, fmt.Errorf("key not found")
 	}
 
-	// Scan to find the row with this ID
-	// TODO: Implement more efficient lookup using row ID to page mapping
+	// Use row ID to page mapping for efficient lookup
+	t.rowPageMu.RLock()
+	pageID, hasMapping := t.rowToPage[rowID]
+	t.rowPageMu.RUnlock()
+
+	if hasMapping {
+		// Direct page lookup
+		p, err := t.getPage(pageID)
+		if err != nil {
+			return nil, err
+		}
+
+		// Find the row in the page
+		rowCount := p.RowCount()
+		for i := 0; i < rowCount; i++ {
+			rowData, err := p.GetRow(i)
+			if err != nil {
+				continue
+			}
+			r, err := row.DeserializeRow(rowData, t.info.Columns)
+			if err != nil {
+				continue
+			}
+			if r.ID == rowID {
+				return r, nil
+			}
+		}
+	}
+
+	// Fallback: scan all rows if mapping not found
 	rows, err := t.Scan()
 	if err != nil {
 		return nil, err
