@@ -713,3 +713,325 @@ func TestJoinWithLimit(t *testing.T) {
 		t.Errorf("Expected 2 rows with LIMIT 2, got %d", result.RowCount)
 	}
 }
+
+func TestJoinWithOffset(t *testing.T) {
+	exec, cleanup := setupJoinTest(t)
+	defer cleanup()
+
+	createCustomersTable(t, exec)
+	createOrdersTable(t, exec)
+
+	result, err := exec.Execute(`
+		SELECT c.name, o.amount
+		FROM customers c
+		INNER JOIN orders o ON c.id = o.customer_id
+		LIMIT 10 OFFSET 1
+	`)
+	if err != nil {
+		t.Fatalf("Query failed: %v", err)
+	}
+
+	if result.RowCount != 2 {
+		t.Errorf("Expected 2 rows after OFFSET 1, got %d", result.RowCount)
+	}
+}
+
+func TestJoinWithAlias(t *testing.T) {
+	exec, cleanup := setupJoinTest(t)
+	defer cleanup()
+
+	createCustomersTable(t, exec)
+	createOrdersTable(t, exec)
+
+	result, err := exec.Execute(`
+		SELECT c.name AS customer_name, o.amount AS order_amount
+		FROM customers c
+		INNER JOIN orders o ON c.id = o.customer_id
+		WHERE c.id = 1
+	`)
+	if err != nil {
+		t.Fatalf("Query failed: %v", err)
+	}
+
+	if result.RowCount != 2 {
+		t.Errorf("Expected 2 rows, got %d", result.RowCount)
+	}
+
+	// Check column names
+	if len(result.Columns) != 2 {
+		t.Fatalf("Expected 2 columns, got %d", len(result.Columns))
+	}
+	if result.Columns[0].Name != "customer_name" {
+		t.Errorf("Expected first column 'customer_name', got '%s'", result.Columns[0].Name)
+	}
+	if result.Columns[1].Name != "order_amount" {
+		t.Errorf("Expected second column 'order_amount', got '%s'", result.Columns[1].Name)
+	}
+}
+
+func TestJoinUnknownTable(t *testing.T) {
+	exec, cleanup := setupJoinTest(t)
+	defer cleanup()
+
+	createCustomersTable(t, exec)
+
+	_, err := exec.Execute(`
+		SELECT * FROM customers c
+		INNER JOIN nonexistent n ON c.id = n.id
+	`)
+	if err == nil {
+		t.Error("Expected error for non-existent table")
+	}
+}
+
+func TestJoinUnknownColumn(t *testing.T) {
+	exec, cleanup := setupJoinTest(t)
+	defer cleanup()
+
+	createCustomersTable(t, exec)
+	createOrdersTable(t, exec)
+
+	_, err := exec.Execute(`
+		SELECT c.nonexistent_column FROM customers c
+		INNER JOIN orders o ON c.id = o.customer_id
+	`)
+	if err == nil {
+		t.Error("Expected error for unknown column")
+	}
+}
+
+func TestJoinWithUnknownTableAlias(t *testing.T) {
+	exec, cleanup := setupJoinTest(t)
+	defer cleanup()
+
+	createCustomersTable(t, exec)
+	createOrdersTable(t, exec)
+
+	_, err := exec.Execute(`
+		SELECT x.name FROM customers c
+		INNER JOIN orders o ON c.id = o.customer_id
+	`)
+	if err == nil {
+		t.Error("Expected error for unknown table alias")
+	}
+}
+
+func TestJoinQualifiedStarUnknownTable(t *testing.T) {
+	exec, cleanup := setupJoinTest(t)
+	defer cleanup()
+
+	createCustomersTable(t, exec)
+	createOrdersTable(t, exec)
+
+	_, err := exec.Execute(`
+		SELECT x.* FROM customers c
+		INNER JOIN orders o ON c.id = o.customer_id
+	`)
+	if err == nil {
+		t.Error("Expected error for unknown table in star expansion")
+	}
+}
+
+func TestEngine(t *testing.T) {
+	exec, cleanup := setupJoinTest(t)
+	defer cleanup()
+
+	engine := exec.Engine()
+	if engine == nil {
+		t.Error("Engine() returned nil")
+	}
+}
+
+func TestJoinWithComplexOnClause(t *testing.T) {
+	t.Skip("Alias resolution in complex ON clauses not yet implemented")
+	exec, cleanup := setupJoinTest(t)
+	defer cleanup()
+
+	createCustomersTable(t, exec)
+	createOrdersTable(t, exec)
+
+	// Test with AND in ON clause
+	result, err := exec.Execute(`
+		SELECT c.name, o.amount
+		FROM customers c
+		INNER JOIN orders o ON c.id = o.customer_id AND o.amount > 100
+	`)
+	if err != nil {
+		t.Fatalf("Query failed: %v", err)
+	}
+
+	// Only orders with amount > 100
+	if result.RowCount != 2 {
+		t.Errorf("Expected 2 rows, got %d", result.RowCount)
+	}
+}
+
+func TestJoinWithNotInOnClause(t *testing.T) {
+	exec, cleanup := setupJoinTest(t)
+	defer cleanup()
+
+	_, err := exec.Execute(`
+		CREATE TABLE users (id SEQ PRIMARY KEY, name VARCHAR(50), active INT)
+	`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = exec.Execute(`INSERT INTO users (id, name, active) VALUES (1, 'Alice', 1)`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = exec.Execute(`INSERT INTO users (id, name, active) VALUES (2, 'Bob', 0)`)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = exec.Execute(`
+		CREATE TABLE profiles (id SEQ PRIMARY KEY, user_id INT, bio VARCHAR(100))
+	`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = exec.Execute(`INSERT INTO profiles (id, user_id, bio) VALUES (1, 1, 'Hello')`)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Test with NOT in ON clause
+	result, err := exec.Execute(`
+		SELECT u.name, p.bio
+		FROM users u
+		LEFT JOIN profiles p ON u.id = p.user_id AND NOT (u.active = 0)
+	`)
+	if err != nil {
+		t.Fatalf("Query failed: %v", err)
+	}
+
+	if result.RowCount != 2 {
+		t.Errorf("Expected 2 rows, got %d", result.RowCount)
+	}
+}
+
+func TestJoinWithParenExpr(t *testing.T) {
+	exec, cleanup := setupJoinTest(t)
+	defer cleanup()
+
+	createCustomersTable(t, exec)
+	createOrdersTable(t, exec)
+
+	result, err := exec.Execute(`
+		SELECT c.name, o.amount
+		FROM customers c
+		INNER JOIN orders o ON (c.id = o.customer_id)
+		WHERE c.id = 1
+	`)
+	if err != nil {
+		t.Fatalf("Query failed: %v", err)
+	}
+
+	if result.RowCount != 2 {
+		t.Errorf("Expected 2 rows, got %d", result.RowCount)
+	}
+}
+
+func TestJoinWithStringComparison(t *testing.T) {
+	exec, cleanup := setupJoinTest(t)
+	defer cleanup()
+
+	_, err := exec.Execute(`
+		CREATE TABLE t1 (id SEQ PRIMARY KEY, code VARCHAR(10))
+	`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = exec.Execute(`INSERT INTO t1 (id, code) VALUES (1, 'A')`)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = exec.Execute(`
+		CREATE TABLE t2 (id SEQ PRIMARY KEY, code VARCHAR(10), value VARCHAR(50))
+	`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = exec.Execute(`INSERT INTO t2 (id, code, value) VALUES (1, 'A', 'Match')`)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := exec.Execute(`
+		SELECT t1.code, t2.value
+		FROM t1
+		INNER JOIN t2 ON t1.code = t2.code
+	`)
+	if err != nil {
+		t.Fatalf("Query failed: %v", err)
+	}
+
+	if result.RowCount != 1 {
+		t.Errorf("Expected 1 row, got %d", result.RowCount)
+	}
+}
+
+func TestJoinWithLike(t *testing.T) {
+	t.Skip("Alias resolution in complex ON clauses not yet implemented")
+	exec, cleanup := setupJoinTest(t)
+	defer cleanup()
+
+	_, err := exec.Execute(`
+		CREATE TABLE users (id SEQ PRIMARY KEY, name VARCHAR(50))
+	`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = exec.Execute(`INSERT INTO users (id, name) VALUES (1, 'Alice')`)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = exec.Execute(`
+		CREATE TABLE logs (id SEQ PRIMARY KEY, user_id INT, message VARCHAR(100))
+	`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = exec.Execute(`INSERT INTO logs (id, user_id, message) VALUES (1, 1, 'User logged in')`)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := exec.Execute(`
+		SELECT u.name, l.message
+		FROM users u
+		INNER JOIN logs l ON u.id = l.user_id AND l.message LIKE '%logged%'
+	`)
+	if err != nil {
+		t.Fatalf("Query failed: %v", err)
+	}
+
+	if result.RowCount != 1 {
+		t.Errorf("Expected 1 row, got %d", result.RowCount)
+	}
+}
+
+func TestJoinOrderByNumericColumn(t *testing.T) {
+	exec, cleanup := setupJoinTest(t)
+	defer cleanup()
+
+	createCustomersTable(t, exec)
+	createOrdersTable(t, exec)
+
+	result, err := exec.Execute(`
+		SELECT c.name, o.amount
+		FROM customers c
+		INNER JOIN orders o ON c.id = o.customer_id
+		ORDER BY 2 DESC
+	`)
+	if err != nil {
+		t.Fatalf("Query failed: %v", err)
+	}
+
+	if result.RowCount != 3 {
+		t.Errorf("Expected 3 rows, got %d", result.RowCount)
+	}
+}
