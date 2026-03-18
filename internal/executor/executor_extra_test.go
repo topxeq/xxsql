@@ -900,3 +900,434 @@ func TestValueToInterface(t *testing.T) {
 		})
 	}
 }
+
+// TestEvaluateWhere tests evaluateWhere function
+func TestEvaluateWhere(t *testing.T) {
+	exec := &Executor{}
+
+	columnMap := map[string]*types.ColumnInfo{
+		"id":   {Name: "id", Type: types.TypeInt},
+		"name": {Name: "name", Type: types.TypeVarchar},
+	}
+	columnOrder := []*types.ColumnInfo{
+		columnMap["id"],
+		columnMap["name"],
+	}
+
+	tests := []struct {
+		name     string
+		expr     sql.Expression
+		row      *row.Row
+		expected bool
+	}{
+		{
+			name: "binary equals",
+			expr: &sql.BinaryExpr{
+				Left:  &sql.ColumnRef{Name: "id"},
+				Op:    sql.OpEq,
+				Right: &sql.Literal{Value: int64(1), Type: sql.LiteralNumber},
+			},
+			row:      &row.Row{Values: []types.Value{types.NewIntValue(1), types.NewStringValue("test", types.TypeVarchar)}},
+			expected: true,
+		},
+		{
+			name: "is null",
+			expr: &sql.IsNullExpr{
+				Expr: &sql.ColumnRef{Name: "name"},
+				Not:  false,
+			},
+			row:      &row.Row{Values: []types.Value{types.NewIntValue(1), types.NewNullValue()}},
+			expected: true,
+		},
+		{
+			name: "is not null",
+			expr: &sql.IsNullExpr{
+				Expr: &sql.ColumnRef{Name: "name"},
+				Not:  true,
+			},
+			row:      &row.Row{Values: []types.Value{types.NewIntValue(1), types.NewStringValue("test", types.TypeVarchar)}},
+			expected: true,
+		},
+		{
+			name: "not expression",
+			expr: &sql.UnaryExpr{
+				Op:    sql.OpNot,
+				Right: &sql.Literal{Value: true, Type: sql.LiteralBool},
+			},
+			row:      &row.Row{Values: []types.Value{}},
+			expected: false,
+		},
+		{
+			name: "literal bool true",
+			expr: &sql.Literal{
+				Value: true,
+				Type:  sql.LiteralBool,
+			},
+			row:      &row.Row{Values: []types.Value{}},
+			expected: true,
+		},
+		{
+			name: "literal bool false",
+			expr: &sql.Literal{
+				Value: false,
+				Type:  sql.LiteralBool,
+			},
+			row:      &row.Row{Values: []types.Value{}},
+			expected: false,
+		},
+		{
+			name: "unknown expression type",
+			expr:  &sql.FunctionCall{Name: "UNKNOWN"},
+			row:   &row.Row{Values: []types.Value{}},
+			expected: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result, err := exec.evaluateWhere(tt.expr, tt.row, columnMap, columnOrder)
+			if err != nil {
+				t.Errorf("evaluateWhere failed: %v", err)
+				return
+			}
+			if result != tt.expected {
+				t.Errorf("Expected %v, got %v", tt.expected, result)
+			}
+		})
+	}
+}
+
+// TestCompareValues_AllOperators tests all comparison operators
+func TestCompareValues_AllOperators(t *testing.T) {
+	exec := &Executor{}
+
+	tests := []struct {
+		name     string
+		left     interface{}
+		op       sql.BinaryOp
+		right    interface{}
+		expected bool
+	}{
+		// Int comparisons
+		{"int eq true", int64(1), sql.OpEq, int64(1), true},
+		{"int eq false", int64(1), sql.OpEq, int64(2), false},
+		{"int ne true", int64(1), sql.OpNe, int64(2), true},
+		{"int ne false", int64(1), sql.OpNe, int64(1), false},
+		{"int lt true", int64(1), sql.OpLt, int64(2), true},
+		{"int lt false", int64(2), sql.OpLt, int64(1), false},
+		{"int le true", int64(1), sql.OpLe, int64(1), true},
+		{"int le false", int64(2), sql.OpLe, int64(1), false},
+		{"int gt true", int64(2), sql.OpGt, int64(1), true},
+		{"int gt false", int64(1), sql.OpGt, int64(2), false},
+		{"int ge true", int64(1), sql.OpGe, int64(1), true},
+		{"int ge false", int64(1), sql.OpGe, int64(2), false},
+
+		// String comparisons
+		{"string eq", "a", sql.OpEq, "a", true},
+		{"string lt", "a", sql.OpLt, "b", true},
+		{"string gt", "b", sql.OpGt, "a", true},
+
+		// Float comparisons
+		{"float eq", 1.5, sql.OpEq, 1.5, true},
+		{"float lt", 1.0, sql.OpLt, 2.0, true},
+
+		// NULL comparisons
+		{"null eq null", nil, sql.OpEq, nil, true},
+		{"null eq value", nil, sql.OpEq, int64(1), false},
+		{"value eq null", int64(1), sql.OpEq, nil, false},
+		{"null ne null", nil, sql.OpNe, nil, false},
+		{"null ne value", nil, sql.OpNe, int64(1), true},
+		{"null lt value", nil, sql.OpLt, int64(1), false},
+		{"null gt value", nil, sql.OpGt, int64(1), false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result, err := exec.compareValues(tt.left, tt.op, tt.right)
+			if err != nil {
+				t.Errorf("compareValues failed: %v", err)
+				return
+			}
+			if result != tt.expected {
+				t.Errorf("compareValues(%v, %v, %v) = %v, want %v", tt.left, tt.op, tt.right, result, tt.expected)
+			}
+		})
+	}
+}
+
+// TestCompareCheckValues_AllOperators tests check constraint comparisons
+func TestCompareCheckValues_AllOperators(t *testing.T) {
+	exec := &Executor{}
+
+	colMap := map[string]int{"a": 0, "b": 1}
+	values := []types.Value{types.NewIntValue(10), types.NewIntValue(20)}
+
+	tests := []struct {
+		name     string
+		left     sql.Expression
+		right    sql.Expression
+		op       sql.BinaryOp
+		expected bool
+	}{
+		{
+			name:     "literal lt",
+			left:     &sql.Literal{Value: int64(10), Type: sql.LiteralNumber},
+			right:    &sql.Literal{Value: int64(20), Type: sql.LiteralNumber},
+			op:       sql.OpLt,
+			expected: true,
+		},
+		{
+			name:     "literal gt",
+			left:     &sql.Literal{Value: int64(20), Type: sql.LiteralNumber},
+			right:    &sql.Literal{Value: int64(10), Type: sql.LiteralNumber},
+			op:       sql.OpGt,
+			expected: true,
+		},
+		{
+			name:     "literal le",
+			left:     &sql.Literal{Value: int64(10), Type: sql.LiteralNumber},
+			right:    &sql.Literal{Value: int64(10), Type: sql.LiteralNumber},
+			op:       sql.OpLe,
+			expected: true,
+		},
+		{
+			name:     "literal ge",
+			left:     &sql.Literal{Value: int64(10), Type: sql.LiteralNumber},
+			right:    &sql.Literal{Value: int64(10), Type: sql.LiteralNumber},
+			op:       sql.OpGe,
+			expected: true,
+		},
+		{
+			name:     "column lt literal",
+			left:     &sql.ColumnRef{Name: "a"},
+			right:    &sql.Literal{Value: int64(15), Type: sql.LiteralNumber},
+			op:       sql.OpLt,
+			expected: true,
+		},
+		{
+			name:     "column gt literal",
+			left:     &sql.ColumnRef{Name: "a"},
+			right:    &sql.Literal{Value: int64(5), Type: sql.LiteralNumber},
+			op:       sql.OpGt,
+			expected: true,
+		},
+		{
+			name:     "column lt column",
+			left:     &sql.ColumnRef{Name: "a"},
+			right:    &sql.ColumnRef{Name: "b"},
+			op:       sql.OpLt,
+			expected: true,
+		},
+		{
+			name:     "float comparison",
+			left:     &sql.Literal{Value: 1.5, Type: sql.LiteralNumber},
+			right:    &sql.Literal{Value: 2.5, Type: sql.LiteralNumber},
+			op:       sql.OpLt,
+			expected: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result, err := exec.compareCheckValues(tt.left, tt.right, values, colMap, tt.op)
+			if err != nil {
+				t.Errorf("compareCheckValues failed: %v", err)
+				return
+			}
+			if result != tt.expected {
+				t.Errorf("Expected %v, got %v", tt.expected, result)
+			}
+		})
+	}
+}
+
+// TestGetCheckValue_AllTypes tests getCheckValue with various types
+func TestGetCheckValue_AllTypes(t *testing.T) {
+	exec := &Executor{}
+	colMap := map[string]int{"age": 0, "name": 1}
+
+	tests := []struct {
+		name     string
+		expr     sql.Expression
+		values   []types.Value
+		expected interface{}
+	}{
+		{
+			name:     "int literal",
+			expr:     &sql.Literal{Value: int64(42), Type: sql.LiteralNumber},
+			values:   nil,
+			expected: int64(42),
+		},
+		{
+			name:     "float literal",
+			expr:     &sql.Literal{Value: 3.14, Type: sql.LiteralNumber},
+			values:   nil,
+			expected: float64(3.14),
+		},
+		{
+			name:     "string literal",
+			expr:     &sql.Literal{Value: "test", Type: sql.LiteralString},
+			values:   nil,
+			expected: "test",
+		},
+		{
+			name:     "column ref int",
+			expr:     &sql.ColumnRef{Name: "age"},
+			values:   []types.Value{types.NewIntValue(25), types.NewStringValue("test", types.TypeVarchar)},
+			expected: int64(25),
+		},
+		{
+			name:     "column ref null",
+			expr:     &sql.ColumnRef{Name: "age"},
+			values:   []types.Value{types.NewNullValue(), types.NewNullValue()},
+			expected: nil,
+		},
+		{
+			name:     "bool literal true",
+			expr:     &sql.Literal{Value: true, Type: sql.LiteralBool},
+			values:   nil,
+			expected: true,
+		},
+		{
+			name:     "bool literal false",
+			expr:     &sql.Literal{Value: false, Type: sql.LiteralBool},
+			values:   nil,
+			expected: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result, err := exec.getCheckValue(tt.expr, tt.values, colMap)
+			if err != nil {
+				t.Errorf("getCheckValue failed: %v", err)
+				return
+			}
+			if result != tt.expected {
+				t.Errorf("Expected %v, got %v", tt.expected, result)
+			}
+		})
+	}
+}
+
+// TestEvaluateExpression tests evaluateExpression function
+func TestEvaluateExpression(t *testing.T) {
+	exec := &Executor{}
+
+	columnMap := map[string]*types.ColumnInfo{
+		"id":   {Name: "id", Type: types.TypeInt},
+		"name": {Name: "name", Type: types.TypeVarchar},
+	}
+	columnOrder := []*types.ColumnInfo{
+		columnMap["id"],
+		columnMap["name"],
+	}
+
+	tests := []struct {
+		name     string
+		expr     sql.Expression
+		row      *row.Row
+		expected interface{}
+	}{
+		{
+			name:     "literal int",
+			expr:     &sql.Literal{Value: int64(42), Type: sql.LiteralNumber},
+			row:      &row.Row{Values: []types.Value{}},
+			expected: int64(42),
+		},
+		{
+			name:     "literal string",
+			expr:     &sql.Literal{Value: "hello", Type: sql.LiteralString},
+			row:      &row.Row{Values: []types.Value{}},
+			expected: "hello",
+		},
+		{
+			name:     "column ref",
+			expr:     &sql.ColumnRef{Name: "id"},
+			row:      &row.Row{Values: []types.Value{types.NewIntValue(123), types.NewStringValue("test", types.TypeVarchar)}},
+			expected: int64(123),
+		},
+		{
+			name:     "unknown column",
+			expr:     &sql.ColumnRef{Name: "unknown"},
+			row:      &row.Row{Values: []types.Value{}},
+			expected: nil, // Will have error
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result, err := exec.evaluateExpression(tt.expr, tt.row, columnMap, columnOrder)
+			if tt.name == "unknown column" {
+				if err == nil {
+					t.Error("Expected error for unknown column")
+				}
+				return
+			}
+			if err != nil {
+				t.Errorf("evaluateExpression failed: %v", err)
+				return
+			}
+			if result != tt.expected {
+				t.Errorf("Expected %v, got %v", tt.expected, result)
+			}
+		})
+	}
+}
+
+// TestExpressionToValue tests expressionToValue function
+func TestExpressionToValue(t *testing.T) {
+	exec := &Executor{}
+
+	tests := []struct {
+		name     string
+		expr     sql.Expression
+		col      *types.ColumnInfo
+		expected types.Value
+	}{
+		{
+			name:     "int literal",
+			expr:     &sql.Literal{Value: int64(42), Type: sql.LiteralNumber},
+			col:      nil,
+			expected: types.NewIntValue(42),
+		},
+		{
+			name:     "float literal",
+			expr:     &sql.Literal{Value: 3.14, Type: sql.LiteralNumber},
+			col:      nil,
+			expected: types.NewFloatValue(3.14),
+		},
+		{
+			name:     "string literal with varchar column",
+			expr:     &sql.Literal{Value: "hello", Type: sql.LiteralString},
+			col:      &types.ColumnInfo{Type: types.TypeVarchar},
+			expected: types.NewStringValue("hello", types.TypeVarchar),
+		},
+		{
+			name:     "bool literal true",
+			expr:     &sql.Literal{Value: true, Type: sql.LiteralBool},
+			col:      nil,
+			expected: types.NewBoolValue(true),
+		},
+		{
+			name:     "null literal",
+			expr:     &sql.Literal{Value: nil, Type: sql.LiteralNull},
+			col:      nil,
+			expected: types.NewNullValue(),
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result, err := exec.expressionToValue(tt.expr, tt.col)
+			if err != nil {
+				t.Errorf("expressionToValue failed: %v", err)
+				return
+			}
+			// Compare string representations for simplicity
+			if result.String() != tt.expected.String() {
+				t.Errorf("Expected %v, got %v", tt.expected, result)
+			}
+		})
+	}
+}
