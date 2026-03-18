@@ -1096,3 +1096,354 @@ func TestTokenType_String_Extra(t *testing.T) {
 		}
 	}
 }
+
+// ============================================================================
+// Parser Tests - ALTER TABLE DROP COLUMN
+// ============================================================================
+
+func TestParseAlterTable_DropColumn(t *testing.T) {
+	input := "ALTER TABLE users DROP COLUMN name"
+	stmt, err := Parse(input)
+	if err != nil {
+		t.Fatalf("Parse failed: %v", err)
+	}
+
+	alterStmt, ok := stmt.(*AlterTableStmt)
+	if !ok {
+		t.Fatalf("Expected *AlterTableStmt, got %T", stmt)
+	}
+	if alterStmt.TableName != "users" {
+		t.Errorf("Table name: got %q, want users", alterStmt.TableName)
+	}
+
+	if len(alterStmt.Actions) == 0 {
+		t.Fatal("Expected at least one action")
+	}
+	dropCol, ok := alterStmt.Actions[0].(*DropColumnAction)
+	if !ok {
+		t.Fatalf("Expected *DropColumnAction, got %T", alterStmt.Actions[0])
+	}
+	if dropCol.ColumnName != "name" {
+		t.Errorf("Column name: got %q, want name", dropCol.ColumnName)
+	}
+}
+
+func TestParseAlterTable_DropConstraint(t *testing.T) {
+	input := "ALTER TABLE users DROP CONSTRAINT uq_email"
+	stmt, err := Parse(input)
+	if err != nil {
+		t.Fatalf("Parse failed: %v", err)
+	}
+
+	alterStmt, ok := stmt.(*AlterTableStmt)
+	if !ok {
+		t.Fatalf("Expected *AlterTableStmt, got %T", stmt)
+	}
+
+	if len(alterStmt.Actions) == 0 {
+		t.Fatal("Expected at least one action")
+	}
+	dropCon, ok := alterStmt.Actions[0].(*DropConstraintAction)
+	if !ok {
+		t.Fatalf("Expected *DropConstraintAction, got %T", alterStmt.Actions[0])
+	}
+	if dropCon.ConstraintName != "uq_email" {
+		t.Errorf("Constraint name: got %q, want uq_email", dropCon.ConstraintName)
+	}
+}
+
+func TestParseAlterTable_DropPrimaryKey(t *testing.T) {
+	input := "ALTER TABLE users DROP PRIMARY KEY"
+	stmt, err := Parse(input)
+	if err != nil {
+		t.Fatalf("Parse failed: %v", err)
+	}
+
+	alterStmt, ok := stmt.(*AlterTableStmt)
+	if !ok {
+		t.Fatalf("Expected *AlterTableStmt, got %T", stmt)
+	}
+
+	if len(alterStmt.Actions) == 0 {
+		t.Fatal("Expected at least one action")
+	}
+	// DROP PRIMARY KEY is handled as DropConstraintAction
+	dropCon, ok := alterStmt.Actions[0].(*DropConstraintAction)
+	if !ok {
+		t.Fatalf("Expected *DropConstraintAction, got %T", alterStmt.Actions[0])
+	}
+	if dropCon.ConstraintName != "PRIMARY" {
+		t.Errorf("Constraint name: got %q, want PRIMARY", dropCon.ConstraintName)
+	}
+}
+
+// ============================================================================
+// Parser Tests - ALTER TABLE ADD COLUMN
+// ============================================================================
+
+func TestParseAlterTable_AddColumn(t *testing.T) {
+	input := "ALTER TABLE users ADD COLUMN age INT"
+	stmt, err := Parse(input)
+	if err != nil {
+		t.Fatalf("Parse failed: %v", err)
+	}
+
+	alterStmt, ok := stmt.(*AlterTableStmt)
+	if !ok {
+		t.Fatalf("Expected *AlterTableStmt, got %T", stmt)
+	}
+
+	if len(alterStmt.Actions) == 0 {
+		t.Fatal("Expected at least one action")
+	}
+	addCol, ok := alterStmt.Actions[0].(*AddColumnAction)
+	if !ok {
+		t.Fatalf("Expected *AddColumnAction, got %T", alterStmt.Actions[0])
+	}
+	if addCol.Column == nil {
+		t.Fatal("Expected column definition")
+	}
+	if addCol.Column.Name != "age" {
+		t.Errorf("Column name: got %q, want age", addCol.Column.Name)
+	}
+}
+
+func TestParseAlterTable_AddColumnWithConstraints(t *testing.T) {
+	input := "ALTER TABLE users ADD COLUMN email VARCHAR(255) NOT NULL UNIQUE"
+	stmt, err := Parse(input)
+	if err != nil {
+		t.Fatalf("Parse failed: %v", err)
+	}
+
+	alterStmt, ok := stmt.(*AlterTableStmt)
+	if !ok {
+		t.Fatalf("Expected *AlterTableStmt, got %T", stmt)
+	}
+
+	if len(alterStmt.Actions) == 0 {
+		t.Fatal("Expected at least one action")
+	}
+	addCol, ok := alterStmt.Actions[0].(*AddColumnAction)
+	if !ok {
+		t.Fatalf("Expected *AddColumnAction, got %T", alterStmt.Actions[0])
+	}
+	if addCol.Column.Nullable {
+		t.Error("Expected Nullable to be false")
+	}
+	if !addCol.Column.Unique {
+		t.Error("Expected Unique to be true")
+	}
+}
+
+func TestParseAlterTable_AddColumnWithoutKeyword(t *testing.T) {
+	input := "ALTER TABLE users ADD age INT"
+	stmt, err := Parse(input)
+	if err != nil {
+		t.Fatalf("Parse failed: %v", err)
+	}
+
+	alterStmt, ok := stmt.(*AlterTableStmt)
+	if !ok {
+		t.Fatalf("Expected *AlterTableStmt, got %T", stmt)
+	}
+
+	if len(alterStmt.Actions) == 0 {
+		t.Fatal("Expected at least one action")
+	}
+	addCol, ok := alterStmt.Actions[0].(*AddColumnAction)
+	if !ok {
+		t.Fatalf("Expected *AddColumnAction, got %T", alterStmt.Actions[0])
+	}
+	if addCol.Column.Name != "age" {
+		t.Errorf("Column name: got %q, want age", addCol.Column.Name)
+	}
+}
+
+// ============================================================================
+// Parser Tests - ALTER TABLE MODIFY COLUMN
+// ============================================================================
+
+func TestParseAlterTable_ModifyColumn(t *testing.T) {
+	input := "ALTER TABLE users MODIFY COLUMN name VARCHAR(100)"
+	stmt, err := Parse(input)
+	if err != nil {
+		t.Fatalf("Parse failed: %v", err)
+	}
+
+	alterStmt, ok := stmt.(*AlterTableStmt)
+	if !ok {
+		t.Fatalf("Expected *AlterTableStmt, got %T", stmt)
+	}
+
+	if len(alterStmt.Actions) == 0 {
+		t.Fatal("Expected at least one action")
+	}
+	modCol, ok := alterStmt.Actions[0].(*ModifyColumnAction)
+	if !ok {
+		t.Fatalf("Expected *ModifyColumnAction, got %T", alterStmt.Actions[0])
+	}
+	if modCol.Column.Name != "name" {
+		t.Errorf("Column name: got %q, want name", modCol.Column.Name)
+	}
+}
+
+// ============================================================================
+// Parser Tests - ALTER TABLE RENAME
+// ============================================================================
+
+func TestParseAlterTable_RenameColumn(t *testing.T) {
+	input := "ALTER TABLE users RENAME COLUMN name TO username"
+	stmt, err := Parse(input)
+	if err != nil {
+		t.Fatalf("Parse failed: %v", err)
+	}
+
+	alterStmt, ok := stmt.(*AlterTableStmt)
+	if !ok {
+		t.Fatalf("Expected *AlterTableStmt, got %T", stmt)
+	}
+
+	if len(alterStmt.Actions) == 0 {
+		t.Fatal("Expected at least one action")
+	}
+	renameCol, ok := alterStmt.Actions[0].(*RenameColumnAction)
+	if !ok {
+		t.Fatalf("Expected *RenameColumnAction, got %T", alterStmt.Actions[0])
+	}
+	if renameCol.OldName != "name" {
+		t.Errorf("Old name: got %q, want name", renameCol.OldName)
+	}
+	if renameCol.NewName != "username" {
+		t.Errorf("New name: got %q, want username", renameCol.NewName)
+	}
+}
+
+func TestParseAlterTable_RenameTable(t *testing.T) {
+	input := "ALTER TABLE users RENAME TO customers"
+	stmt, err := Parse(input)
+	if err != nil {
+		t.Fatalf("Parse failed: %v", err)
+	}
+
+	alterStmt, ok := stmt.(*AlterTableStmt)
+	if !ok {
+		t.Fatalf("Expected *AlterTableStmt, got %T", stmt)
+	}
+
+	if len(alterStmt.Actions) == 0 {
+		t.Fatal("Expected at least one action")
+	}
+	renameTbl, ok := alterStmt.Actions[0].(*RenameTableAction)
+	if !ok {
+		t.Fatalf("Expected *RenameTableAction, got %T", alterStmt.Actions[0])
+	}
+	if renameTbl.NewName != "customers" {
+		t.Errorf("New name: got %q, want customers", renameTbl.NewName)
+	}
+}
+
+// ============================================================================
+// Parser Tests - ALTER TABLE ADD CONSTRAINT
+// ============================================================================
+
+func TestParseAlterTable_AddConstraintPrimaryKey(t *testing.T) {
+	input := "ALTER TABLE users ADD CONSTRAINT pk_user PRIMARY KEY (id)"
+	stmt, err := Parse(input)
+	if err != nil {
+		t.Fatalf("Parse failed: %v", err)
+	}
+
+	alterStmt, ok := stmt.(*AlterTableStmt)
+	if !ok {
+		t.Fatalf("Expected *AlterTableStmt, got %T", stmt)
+	}
+
+	if len(alterStmt.Actions) == 0 {
+		t.Fatal("Expected at least one action")
+	}
+	addCon, ok := alterStmt.Actions[0].(*AddConstraintAction)
+	if !ok {
+		t.Fatalf("Expected *AddConstraintAction, got %T", alterStmt.Actions[0])
+	}
+	if addCon.Constraint.Name != "pk_user" {
+		t.Errorf("Constraint name: got %q, want pk_user", addCon.Constraint.Name)
+	}
+	if addCon.Constraint.Type != ConstraintPrimaryKey {
+		t.Errorf("Constraint type: got %v, want ConstraintPrimaryKey", addCon.Constraint.Type)
+	}
+}
+
+func TestParseAlterTable_AddConstraintUnique(t *testing.T) {
+	input := "ALTER TABLE users ADD CONSTRAINT uq_email UNIQUE (email)"
+	stmt, err := Parse(input)
+	if err != nil {
+		t.Fatalf("Parse failed: %v", err)
+	}
+
+	alterStmt, ok := stmt.(*AlterTableStmt)
+	if !ok {
+		t.Fatalf("Expected *AlterTableStmt, got %T", stmt)
+	}
+
+	if len(alterStmt.Actions) == 0 {
+		t.Fatal("Expected at least one action")
+	}
+	addCon, ok := alterStmt.Actions[0].(*AddConstraintAction)
+	if !ok {
+		t.Fatalf("Expected *AddConstraintAction, got %T", alterStmt.Actions[0])
+	}
+	if addCon.Constraint.Type != ConstraintUnique {
+		t.Errorf("Constraint type: got %v, want ConstraintUnique", addCon.Constraint.Type)
+	}
+}
+
+func TestParseAlterTable_AddConstraintForeignKey(t *testing.T) {
+	input := "ALTER TABLE orders ADD CONSTRAINT fk_user FOREIGN KEY (user_id) REFERENCES users(id)"
+	stmt, err := Parse(input)
+	if err != nil {
+		t.Fatalf("Parse failed: %v", err)
+	}
+
+	alterStmt, ok := stmt.(*AlterTableStmt)
+	if !ok {
+		t.Fatalf("Expected *AlterTableStmt, got %T", stmt)
+	}
+
+	if len(alterStmt.Actions) == 0 {
+		t.Fatal("Expected at least one action")
+	}
+	addCon, ok := alterStmt.Actions[0].(*AddConstraintAction)
+	if !ok {
+		t.Fatalf("Expected *AddConstraintAction, got %T", alterStmt.Actions[0])
+	}
+	if addCon.Constraint.Type != ConstraintForeignKey {
+		t.Errorf("Constraint type: got %v, want ConstraintForeignKey", addCon.Constraint.Type)
+	}
+	if addCon.Constraint.RefTable != "users" {
+		t.Errorf("Referenced table: got %q, want users", addCon.Constraint.RefTable)
+	}
+}
+
+func TestParseAlterTable_AddConstraintCheck(t *testing.T) {
+	input := "ALTER TABLE users ADD CONSTRAINT chk_age CHECK (age >= 0)"
+	stmt, err := Parse(input)
+	if err != nil {
+		t.Fatalf("Parse failed: %v", err)
+	}
+
+	alterStmt, ok := stmt.(*AlterTableStmt)
+	if !ok {
+		t.Fatalf("Expected *AlterTableStmt, got %T", stmt)
+	}
+
+	if len(alterStmt.Actions) == 0 {
+		t.Fatal("Expected at least one action")
+	}
+	addCon, ok := alterStmt.Actions[0].(*AddConstraintAction)
+	if !ok {
+		t.Fatalf("Expected *AddConstraintAction, got %T", alterStmt.Actions[0])
+	}
+	if addCon.Constraint.Type != ConstraintCheck {
+		t.Errorf("Constraint type: got %v, want ConstraintCheck", addCon.Constraint.Type)
+	}
+}
