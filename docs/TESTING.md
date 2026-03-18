@@ -223,13 +223,47 @@ func BenchmarkOperation(b *testing.B) {
 
 ## 覆盖率目标
 
-| 模块类型 | 目标覆盖率 |
-|----------|------------|
-| 存储核心 | ≥ 60% |
-| 协议层 | ≥ 50% |
-| 执行器 | ≥ 50% |
-| 工具类 | ≥ 40% |
-| 总体 | ≥ 50% |
+| 模块类型 | 目标覆盖率 | 当前覆盖率 |
+|----------|------------|------------|
+| 存储核心 | ≥ 85% | 89.4% ✅ |
+| 协议层 | ≥ 80% | 86.4% ✅ |
+| 执行器 | ≥ 80% | 81.5% ✅ |
+| 认证安全 | ≥ 85% | 91.4% ✅ |
+| 工具类 | ≥ 80% | 83.1% ✅ |
+| **总体** | **≥ 80%** | **87.5%** ✅ |
+
+### 各模块详细覆盖率
+
+| 模块 | 覆盖率 |
+|------|--------|
+| pkg/errors | 98.0% |
+| storage/page | 100.0% |
+| config | 96.7% |
+| auth | 93.9% |
+| storage/catalog | 90.5% |
+| storage | 89.4% |
+| storage/row | 89.1% |
+| storage/btree | 89.0% |
+| storage/checkpoint | 88.9% |
+| security | 88.8% |
+| storage/types | 88.1% |
+| protocol | 86.4% |
+| storage/buffer | 86.2% |
+| web | 86.1% |
+| storage/table | 85.9% |
+| cmd/xxsqls | 85.7% |
+| storage/lock | 84.4% |
+| mysql | 84.8% |
+| storage/wal | 84.8% |
+| sql | 84.3% |
+| storage/sequence | 85.1% |
+| storage/recovery | 83.3% |
+| pkg/xxsql | 83.5% |
+| server | 83.8% |
+| backup | 83.1% |
+| log | 82.0% |
+| executor | 81.5% |
+| cmd/xxsqlc | 77.9% |
 
 ## CI/CD 集成
 

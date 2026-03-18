@@ -4,6 +4,7 @@
 [![Go Reference](https://pkg.go.dev/badge/github.com/topxeq/xxsql.svg)](https://pkg.go.dev/github.com/topxeq/xxsql)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Go Version](https://img.shields.io/badge/Go-1.21+-00ADD8?logo=go)](https://golang.org/)
+[![Release](https://img.shields.io/github/v/release/topxeq/xxsql)](https://github.com/topxeq/xxsql/releases)
 
 A lightweight SQL database implemented in pure Go, featuring a B+ tree storage engine and MySQL-compatible protocol.
 
@@ -595,33 +596,38 @@ make lint
 |---------|----------|
 | Pkg/Errors | 98.0% |
 | Storage/Page | 100.0% |
+| Config | 96.7% |
+| Auth | 93.9% |
 | Storage/Catalog | 90.5% |
 | Storage/Storage | 89.4% |
 | Storage/Row | 89.1% |
+| Storage/BTree | 89.0% |
+| Storage/Checkpoint | 88.9% |
 | Storage/Types | 88.1% |
-| Internal/Log | 82.5% |
+| Security | 88.8% |
+| Protocol | 86.4% |
+| Storage/Buffer | 86.2% |
+| Web | 86.1% |
+| Storage/Table | 85.9% |
+| Cmd/Xxsqls | 85.7% |
+| Storage/Lock | 84.4% |
+| Storage/WAL | 84.8% |
+| MySQL | 84.8% |
 | Storage/Sequence | 85.1% |
-| Storage/Table | 73.8% |
-| Storage/Checkpoint | 79.5% |
-| Config | 75.0% |
-| Protocol | 73.6% |
-| Auth | 72.5% |
-| Storage/Lock | 68.0% |
-| Storage/WAL | 66.3% |
-| Storage/Recovery | 66.2% |
-| Executor | 64.0% |
-| Backup | 62.6% |
-| Storage/Buffer | 59.4% |
-| Storage/BTree | 52.2% |
-| Security | 50.1% |
-| Cmd/Xxsqlc | 48.0% |
-| **Total** | **59.1%** |
+| Storage/Recovery | 83.3% |
+| Backup | 83.1% |
+| Pkg/Xxsql | 83.5% |
+| Server | 83.8% |
+| Log | 82.0% |
+| Executor | 81.5% |
+| Cmd/Xxsqlc | 77.9% |
+| **Average** | **87.5%** |
 
 See [docs/TESTING.md](docs/TESTING.md) for testing guidelines.
 
 ## Roadmap
 
-### Completed ✅
+### v0.0.1 (Current Release) ✅
 
 - [x] Basic framework + Config + Logging
 - [x] SQL Parser
@@ -633,13 +639,14 @@ See [docs/TESTING.md](docs/TESTING.md) for testing guidelines.
 - [x] MySQL Protocol
 - [x] Authentication & Permissions
 - [x] Security Features (Audit, Rate Limiting, IP Access, TLS)
-- [x] JOIN Support
+- [x] JOIN Support (INNER, LEFT, RIGHT, CROSS)
 - [x] UNION Support
 - [x] DDL Enhancement (Constraints, ALTER TABLE)
 - [x] Backup/Recovery
 - [x] Go SQL Driver
-- [x] CLI Client
+- [x] CLI Client with REPL
 - [x] Web Management Interface
+- [x] Comprehensive test suite (87.5% average coverage)
 
 ### Future Plans
 
