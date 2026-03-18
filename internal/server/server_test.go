@@ -9,6 +9,8 @@ import (
 	"github.com/topxeq/xxsql/internal/auth"
 	"github.com/topxeq/xxsql/internal/config"
 	"github.com/topxeq/xxsql/internal/log"
+	"github.com/topxeq/xxsql/internal/mysql"
+	"github.com/topxeq/xxsql/internal/protocol"
 	"github.com/topxeq/xxsql/internal/storage"
 )
 
@@ -1169,4 +1171,339 @@ func TestServer_Logger_Methods(t *testing.T) {
 	srvLogger.Info("Test info message")
 	srvLogger.Warn("Test warn message")
 	srvLogger.Error("Test error message")
+}
+
+// ============================================================================
+// Protocol Handler Tests (using actual structs)
+// ============================================================================
+
+func TestServer_OnQuery_NoExecutor(t *testing.T) {
+	cfg := config.DefaultConfig()
+	logger := log.NewLogger(log.WithLevel(log.ERROR))
+
+	srv := New(cfg, logger, nil) // No engine, so no executor
+
+	req := &protocol.QueryRequest{
+		SQL: "SELECT 1",
+	}
+
+	resp, err := srv.onQuery(nil, req)
+	if err != nil {
+		t.Fatalf("onQuery returned error: %v", err)
+	}
+	if resp.Status != protocol.StatusError {
+		t.Errorf("Expected error status, got %d", resp.Status)
+	}
+	if resp.Message == "" {
+		t.Error("Expected error message")
+	}
+}
+
+func TestServer_OnQuery_WithExecutor(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "xxsql-server-test-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	cfg := config.DefaultConfig()
+	cfg.Server.DataDir = tmpDir
+	cfg.Auth.Enabled = false
+	logger := log.NewLogger(log.WithLevel(log.ERROR))
+
+	engine := storage.NewEngine(tmpDir)
+	if err := engine.Open(); err != nil {
+		t.Fatalf("Failed to open engine: %v", err)
+	}
+	defer engine.Close()
+
+	srv := New(cfg, logger, engine)
+
+	req := &protocol.QueryRequest{
+		SQL: "SELECT 1 AS col",
+	}
+
+	resp, err := srv.onQuery(nil, req)
+	if err != nil {
+		t.Fatalf("onQuery returned error: %v", err)
+	}
+	if resp.Status != protocol.StatusOK {
+		t.Errorf("Expected OK status, got %d", resp.Status)
+	}
+	if resp.RowCount != 1 {
+		t.Errorf("Expected 1 row, got %d", resp.RowCount)
+	}
+}
+
+func TestServer_OnQuery_Error(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "xxsql-server-test-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	cfg := config.DefaultConfig()
+	cfg.Server.DataDir = tmpDir
+	cfg.Auth.Enabled = false
+	logger := log.NewLogger(log.WithLevel(log.ERROR))
+
+	engine := storage.NewEngine(tmpDir)
+	if err := engine.Open(); err != nil {
+		t.Fatalf("Failed to open engine: %v", err)
+	}
+	defer engine.Close()
+
+	srv := New(cfg, logger, engine)
+
+	req := &protocol.QueryRequest{
+		SQL: "INVALID SQL SYNTAX",
+	}
+
+	resp, err := srv.onQuery(nil, req)
+	if err != nil {
+		t.Fatalf("onQuery returned error: %v", err)
+	}
+	if resp.Status != protocol.StatusError {
+		t.Errorf("Expected error status, got %d", resp.Status)
+	}
+}
+
+func TestServer_OnHandshake(t *testing.T) {
+	cfg := config.DefaultConfig()
+	logger := log.NewLogger(log.WithLevel(log.ERROR))
+
+	srv := New(cfg, logger, nil)
+
+	tests := []struct {
+		name     string
+		version  uint16
+		expected uint16
+	}{
+		{"version 1", protocol.ProtocolV1, protocol.ProtocolV1},
+		{"version 2", protocol.ProtocolV2, protocol.ProtocolV2},
+		{"version 3 (higher than supported)", 3, protocol.ProtocolV2},
+		{"version 0", 0, 0},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req := &protocol.HandshakeRequest{
+				ProtocolVersion: tt.version,
+			}
+
+			resp, err := srv.onHandshake(nil, req)
+			if err != nil {
+				t.Fatalf("onHandshake returned error: %v", err)
+			}
+			if resp.ProtocolVersion != tt.expected {
+				t.Errorf("Protocol version: got %d, want %d", resp.ProtocolVersion, tt.expected)
+			}
+		})
+	}
+}
+
+func TestServer_OnAuth_Disabled(t *testing.T) {
+	cfg := config.DefaultConfig()
+	cfg.Auth.Enabled = false
+	logger := log.NewLogger(log.WithLevel(log.ERROR))
+
+	srv := New(cfg, logger, nil)
+
+	req := &protocol.AuthRequest{
+		Username: "testuser",
+		Password: []byte("testpass"),
+		Database: "testdb",
+	}
+
+	resp, err := srv.onAuth(nil, req)
+	if err != nil {
+		t.Fatalf("onAuth returned error: %v", err)
+	}
+	if resp.Status != protocol.StatusOK {
+		t.Errorf("Expected OK status with auth disabled, got %d", resp.Status)
+	}
+	if resp.SessionID != "no-auth" {
+		t.Errorf("Expected 'no-auth' session ID, got %q", resp.SessionID)
+	}
+}
+
+func TestServer_OnAuth_Enabled(t *testing.T) {
+	cfg := config.DefaultConfig()
+	cfg.Auth.Enabled = true
+	logger := log.NewLogger(log.WithLevel(log.ERROR))
+
+	srv := New(cfg, logger, nil)
+
+	// Create a user first
+	srv.auth.CreateUser("testuser", "testpass", auth.RoleUser)
+
+	tests := []struct {
+		name     string
+		username string
+		password string
+		wantOK   bool
+	}{
+		{"valid credentials", "testuser", "testpass", true},
+		{"invalid password", "testuser", "wrongpass", false},
+		{"invalid user", "nobody", "testpass", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			req := &protocol.AuthRequest{
+				Username: tt.username,
+				Password: []byte(tt.password),
+			}
+
+			resp, err := srv.onAuth(nil, req)
+			if err != nil {
+				t.Fatalf("onAuth returned error: %v", err)
+			}
+			if tt.wantOK && resp.Status != protocol.StatusOK {
+				t.Errorf("Expected OK status, got %d", resp.Status)
+			}
+			if !tt.wantOK && resp.Status != protocol.StatusAuth {
+				t.Errorf("Expected auth status, got %d", resp.Status)
+			}
+		})
+	}
+}
+
+func TestServer_OnAuth_WithDatabase(t *testing.T) {
+	cfg := config.DefaultConfig()
+	cfg.Auth.Enabled = true
+	logger := log.NewLogger(log.WithLevel(log.ERROR))
+
+	srv := New(cfg, logger, nil)
+
+	// Create a user
+	srv.auth.CreateUser("testuser", "testpass", auth.RoleUser)
+
+	req := &protocol.AuthRequest{
+		Username: "testuser",
+		Password: []byte("testpass"),
+		Database: "testdb",
+	}
+
+	resp, err := srv.onAuth(nil, req)
+	if err != nil {
+		t.Fatalf("onAuth returned error: %v", err)
+	}
+	if resp.Status != protocol.StatusOK {
+		t.Errorf("Expected OK status, got %d", resp.Status)
+	}
+}
+
+// ============================================================================
+// MySQL Handler Tests (using actual structs where possible)
+// ============================================================================
+
+func TestMySQLServer_HandleMySQLQuery_NoExecutor(t *testing.T) {
+	cfg := config.DefaultConfig()
+	logger := log.NewLogger(log.WithLevel(log.ERROR))
+
+	srv := New(cfg, logger, nil) // No executor
+	mysqlSrv := NewMySQLServer(srv, "127.0.0.1", 3306)
+
+	// Create a real MySQLHandler with minimal setup
+	handler := mysql.NewMySQLHandler(nil, 1)
+
+	_, _, err := mysqlSrv.handleMySQLQuery(handler, "SELECT 1")
+	if err == nil {
+		t.Error("Expected error when no executor")
+	}
+}
+
+func TestMySQLServer_HandleMySQLQuery_WithExecutor(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "xxsql-server-test-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	cfg := config.DefaultConfig()
+	cfg.Server.DataDir = tmpDir
+	cfg.Auth.Enabled = false
+	logger := log.NewLogger(log.WithLevel(log.ERROR))
+
+	engine := storage.NewEngine(tmpDir)
+	if err := engine.Open(); err != nil {
+		t.Fatalf("Failed to open engine: %v", err)
+	}
+	defer engine.Close()
+
+	srv := New(cfg, logger, engine)
+	mysqlSrv := NewMySQLServer(srv, "127.0.0.1", 3306)
+
+	// Create a real MySQLHandler with minimal setup
+	handler := mysql.NewMySQLHandler(nil, 1)
+
+	cols, rows, err := mysqlSrv.handleMySQLQuery(handler, "SELECT 1 AS col")
+	if err != nil {
+		t.Fatalf("handleMySQLQuery returned error: %v", err)
+	}
+	if len(cols) != 1 {
+		t.Errorf("Expected 1 column, got %d", len(cols))
+	}
+	if len(rows) != 1 {
+		t.Errorf("Expected 1 row, got %d", len(rows))
+	}
+}
+
+func TestMySQLServer_HandleMySQLQuery_Insert(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "xxsql-server-test-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	cfg := config.DefaultConfig()
+	cfg.Server.DataDir = tmpDir
+	cfg.Auth.Enabled = false
+	logger := log.NewLogger(log.WithLevel(log.ERROR))
+
+	engine := storage.NewEngine(tmpDir)
+	if err := engine.Open(); err != nil {
+		t.Fatalf("Failed to open engine: %v", err)
+	}
+	defer engine.Close()
+
+	srv := New(cfg, logger, engine)
+	mysqlSrv := NewMySQLServer(srv, "127.0.0.1", 3306)
+
+	handler := mysql.NewMySQLHandler(nil, 1)
+
+	// First create a table
+	mysqlSrv.handleMySQLQuery(handler, "CREATE TABLE test (id INT)")
+
+	// Insert should return no columns
+	cols, rows, err := mysqlSrv.handleMySQLQuery(handler, "INSERT INTO test (id) VALUES (1)")
+	if err != nil {
+		t.Fatalf("handleMySQLQuery returned error: %v", err)
+	}
+	if cols != nil {
+		t.Errorf("Expected nil columns for INSERT, got %d", len(cols))
+	}
+	if rows != nil {
+		t.Errorf("Expected nil rows for INSERT, got %d", len(rows))
+	}
+}
+
+func TestMySQLServer_HandleMySQLAuth_Disabled(t *testing.T) {
+	cfg := config.DefaultConfig()
+	cfg.Auth.Enabled = false
+	logger := log.NewLogger(log.WithLevel(log.ERROR))
+
+	srv := New(cfg, logger, nil)
+	mysqlSrv := NewMySQLServer(srv, "127.0.0.1", 3306)
+
+	handler := mysql.NewMySQLHandler(nil, 1)
+
+	valid, err := mysqlSrv.handleMySQLAuth(handler, "user", "db", []byte("response"))
+	if err != nil {
+		t.Fatalf("handleMySQLAuth returned error: %v", err)
+	}
+	if !valid {
+		t.Error("Expected valid=true when auth is disabled")
+	}
 }
