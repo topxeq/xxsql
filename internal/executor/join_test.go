@@ -1178,3 +1178,191 @@ func TestJoinTableColumnsToLower(t *testing.T) {
 		t.Error("hasColumn should find 'id'")
 	}
 }
+
+// TestJoinOrderByFloat tests ORDER BY with float values
+func TestJoinOrderByFloat(t *testing.T) {
+	exec, cleanup := setupJoinTest(t)
+	defer cleanup()
+
+	// Create tables with float values
+	exec.Execute("CREATE TABLE products (id INT PRIMARY KEY, price FLOAT)")
+	exec.Execute("CREATE TABLE sales (id INT PRIMARY KEY, product_id INT, amount FLOAT)")
+
+	exec.Execute("INSERT INTO products VALUES (1, 10.5)")
+	exec.Execute("INSERT INTO products VALUES (2, 5.25)")
+	exec.Execute("INSERT INTO products VALUES (3, 15.75)")
+
+	exec.Execute("INSERT INTO sales VALUES (1, 1, 100.0)")
+	exec.Execute("INSERT INTO sales VALUES (2, 2, 200.0)")
+	exec.Execute("INSERT INTO sales VALUES (3, 3, 50.0)")
+
+	result, err := exec.Execute(`
+		SELECT p.id, p.price, s.amount
+		FROM products p
+		INNER JOIN sales s ON p.id = s.product_id
+		ORDER BY 2 DESC
+	`)
+	if err != nil {
+		t.Fatalf("Query failed: %v", err)
+	}
+
+	if result.RowCount != 3 {
+		t.Errorf("Expected 3 rows, got %d", result.RowCount)
+	}
+}
+
+// TestJoinOrderByString tests ORDER BY with string values
+func TestJoinOrderByString(t *testing.T) {
+	exec, cleanup := setupJoinTest(t)
+	defer cleanup()
+
+	exec.Execute("CREATE TABLE categories (id INT PRIMARY KEY, name VARCHAR(50))")
+	exec.Execute("CREATE TABLE items (id INT PRIMARY KEY, category_id INT, name VARCHAR(50))")
+
+	exec.Execute("INSERT INTO categories VALUES (1, 'Zebra')")
+	exec.Execute("INSERT INTO categories VALUES (2, 'Apple')")
+	exec.Execute("INSERT INTO categories VALUES (3, 'Mango')")
+
+	exec.Execute("INSERT INTO items VALUES (1, 1, 'Item1')")
+	exec.Execute("INSERT INTO items VALUES (2, 2, 'Item2')")
+	exec.Execute("INSERT INTO items VALUES (3, 3, 'Item3')")
+
+	result, err := exec.Execute(`
+		SELECT c.name, i.name
+		FROM categories c
+		INNER JOIN items i ON c.id = i.category_id
+		ORDER BY 1 ASC
+	`)
+	if err != nil {
+		t.Fatalf("Query failed: %v", err)
+	}
+
+	if result.RowCount != 3 {
+		t.Errorf("Expected 3 rows, got %d", result.RowCount)
+	}
+}
+
+// TestJoinAmbiguousColumn tests that ambiguous columns return an error
+func TestJoinAmbiguousColumn(t *testing.T) {
+	exec, cleanup := setupJoinTest(t)
+	defer cleanup()
+
+	exec.Execute("CREATE TABLE t1 (id INT PRIMARY KEY, name VARCHAR(50))")
+	exec.Execute("CREATE TABLE t2 (id INT PRIMARY KEY, name VARCHAR(50))")
+
+	exec.Execute("INSERT INTO t1 VALUES (1, 'A')")
+	exec.Execute("INSERT INTO t2 VALUES (1, 'B')")
+
+	// This should fail because 'name' is ambiguous
+	_, err := exec.Execute(`
+		SELECT name
+		FROM t1
+		INNER JOIN t2 ON t1.id = t2.id
+	`)
+	if err == nil {
+		t.Error("Expected error for ambiguous column 'name'")
+	}
+}
+
+// TestJoinWithNullComparison tests NULL comparisons in JOINs
+func TestJoinWithNullComparison(t *testing.T) {
+	exec, cleanup := setupJoinTest(t)
+	defer cleanup()
+
+	exec.Execute("CREATE TABLE a (id INT PRIMARY KEY, ref INT)")
+	exec.Execute("CREATE TABLE b (id INT PRIMARY KEY, value INT)")
+
+	exec.Execute("INSERT INTO a VALUES (1, NULL)")
+	exec.Execute("INSERT INTO a VALUES (2, 1)")
+	exec.Execute("INSERT INTO b VALUES (1, 100)")
+
+	// LEFT JOIN should include NULL ref row
+	result, err := exec.Execute(`
+		SELECT a.id, b.value
+		FROM a
+		LEFT JOIN b ON a.ref = b.id
+	`)
+	if err != nil {
+		t.Fatalf("Query failed: %v", err)
+	}
+
+	if result.RowCount != 2 {
+		t.Errorf("Expected 2 rows, got %d", result.RowCount)
+	}
+}
+
+// TestJoinNumericComparison tests numeric comparisons with different types
+func TestJoinNumericComparison(t *testing.T) {
+	exec, cleanup := setupJoinTest(t)
+	defer cleanup()
+
+	exec.Execute("CREATE TABLE numbers1 (id INT PRIMARY KEY, val INT)")
+	exec.Execute("CREATE TABLE numbers2 (id INT PRIMARY KEY, val INT)")
+
+	exec.Execute("INSERT INTO numbers1 VALUES (1, 10)")
+	exec.Execute("INSERT INTO numbers1 VALUES (2, 20)")
+	exec.Execute("INSERT INTO numbers1 VALUES (3, 30)")
+
+	exec.Execute("INSERT INTO numbers2 VALUES (1, 10)")
+	exec.Execute("INSERT INTO numbers2 VALUES (2, 25)")
+	exec.Execute("INSERT INTO numbers2 VALUES (3, 30)")
+
+	// Test equality
+	result, err := exec.Execute(`
+		SELECT n1.id
+		FROM numbers1 n1
+		INNER JOIN numbers2 n2 ON n1.val = n2.val
+	`)
+	if err != nil {
+		t.Fatalf("Query failed: %v", err)
+	}
+	if result.RowCount != 2 {
+		t.Errorf("Expected 2 rows for equality, got %d", result.RowCount)
+	}
+
+	// Test with WHERE clause for numeric comparison
+	result, err = exec.Execute(`
+		SELECT n1.val
+		FROM numbers1 n1
+		INNER JOIN numbers2 n2 ON n1.id = n2.id
+		WHERE n1.val <= 20
+	`)
+	if err != nil {
+		t.Fatalf("Query failed: %v", err)
+	}
+	if result.RowCount != 2 {
+		t.Errorf("Expected 2 rows for <= comparison, got %d", result.RowCount)
+	}
+
+	// Test with WHERE clause for numeric comparison
+	result, err = exec.Execute(`
+		SELECT n1.val
+		FROM numbers1 n1
+		INNER JOIN numbers2 n2 ON n1.id = n2.id
+		WHERE n1.val > 15
+	`)
+	if err != nil {
+		t.Fatalf("Query failed: %v", err)
+	}
+	if result.RowCount != 2 {
+		t.Errorf("Expected 2 rows for > comparison, got %d", result.RowCount)
+	}
+}
+
+// TestJoinUnknownTableAlias tests error handling for unknown table alias
+func TestJoinUnknownTableAlias(t *testing.T) {
+	exec, cleanup := setupJoinTest(t)
+	defer cleanup()
+
+	exec.Execute("CREATE TABLE t1 (id INT PRIMARY KEY)")
+	exec.Execute("INSERT INTO t1 VALUES (1)")
+
+	_, err := exec.Execute(`
+		SELECT nonexistent.id
+		FROM t1
+		INNER JOIN t1 t ON t1.id = t.id
+	`)
+	if err == nil {
+		t.Error("Expected error for unknown table alias")
+	}
+}
