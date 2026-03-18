@@ -366,6 +366,7 @@ func (h *MySQLHandler) encodeHandshake(hs *ServerHandshakePacket) []byte {
 	copy(buf[offset:], hs.AuthPluginName)
 	offset += len(hs.AuthPluginName)
 	buf[offset] = 0 // null terminator
+	offset += 1
 
 	// Write header
 	binary.LittleEndian.PutUint32(buf[0:4], uint32(offset-4)|uint32(h.seqID)<<24)
@@ -577,7 +578,7 @@ func (h *MySQLHandler) handleQuery(sql string) error {
 
 	// Send column count
 	colCount := h.writeLengthEncodedInt(uint64(len(columns)))
-	if err := h.writePacket(append([]byte{0}, colCount...)); err != nil {
+	if err := h.writePacket(colCount); err != nil {
 		return err
 	}
 

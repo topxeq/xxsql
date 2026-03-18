@@ -301,6 +301,11 @@ func (e *Executor) executeSelect(stmt *sql.SelectStmt) (*Result, error) {
 	// Determine result columns
 	var resultCols []ColumnInfo
 	var colIndices []int
+	var aggregateFuncs []struct {
+		name  string
+		arg   string // column name for the aggregate argument
+		index int    // result column index
+	}
 
 	for _, colExpr := range stmt.Columns {
 		switch expr := colExpr.(type) {
@@ -330,7 +335,181 @@ func (e *Executor) executeSelect(stmt *sql.SelectStmt) (*Result, error) {
 				return nil, fmt.Errorf("unknown column: %s", expr.Name)
 			}
 			colIndices = append(colIndices, idx)
+		case *sql.FunctionCall:
+			funcName := strings.ToUpper(expr.Name)
+			colName := ""
+			if len(expr.Args) > 0 {
+				if _, ok := expr.Args[0].(*sql.StarExpr); ok {
+					colName = "*"
+				} else if colRef, ok := expr.Args[0].(*sql.ColumnRef); ok {
+					colName = strings.ToLower(colRef.Name)
+				}
+			}
+
+			// Determine result type
+			resultType := "INT"
+			if funcName == "AVG" {
+				resultType = "FLOAT"
+			}
+
+			resultCols = append(resultCols, ColumnInfo{
+				Name: expr.Name + "()",
+				Type: resultType,
+			})
+			aggregateFuncs = append(aggregateFuncs, struct {
+				name  string
+				arg   string
+				index int
+			}{funcName, colName, len(resultCols) - 1})
 		}
+	}
+
+	// If there are aggregate functions, compute aggregates
+	if len(aggregateFuncs) > 0 {
+		result := &Result{
+			Columns: resultCols,
+			Rows:    make([][]interface{}, 0),
+		}
+
+		// Initialize aggregate values
+		countVal := 0
+
+		// Count matching rows
+		for _, r := range rows {
+			if stmt.Where != nil {
+				match, err := e.evaluateWhere(stmt.Where, r, columnMap, columnOrder)
+				if err != nil {
+					return nil, err
+				}
+				if !match {
+					continue
+				}
+			}
+			countVal++
+		}
+
+		// Build result row with aggregate values
+		resultRow := make([]interface{}, len(resultCols))
+		for _, agg := range aggregateFuncs {
+			switch agg.name {
+			case "COUNT":
+				resultRow[agg.index] = countVal
+			case "SUM":
+				// Compute sum
+				var sum int64
+				for _, r := range rows {
+					if stmt.Where != nil {
+						match, _ := e.evaluateWhere(stmt.Where, r, columnMap, columnOrder)
+						if !match {
+							continue
+						}
+					}
+					if agg.arg != "" {
+						for j, col := range tblInfo.Columns {
+							if strings.ToLower(col.Name) == agg.arg {
+								if j < len(r.Values) && !r.Values[j].Null {
+									sum += r.Values[j].AsInt()
+								}
+							}
+						}
+					}
+				}
+				resultRow[agg.index] = sum
+			case "AVG":
+				// Compute average
+				var sum int64
+				count := 0
+				for _, r := range rows {
+					if stmt.Where != nil {
+						match, _ := e.evaluateWhere(stmt.Where, r, columnMap, columnOrder)
+						if !match {
+							continue
+						}
+					}
+					if agg.arg != "" {
+						for j, col := range tblInfo.Columns {
+							if strings.ToLower(col.Name) == agg.arg {
+								if j < len(r.Values) && !r.Values[j].Null {
+									sum += r.Values[j].AsInt()
+									count++
+								}
+							}
+						}
+					}
+				}
+				if count > 0 {
+					resultRow[agg.index] = float64(sum) / float64(count)
+				} else {
+					resultRow[agg.index] = nil
+				}
+			case "MIN":
+				// Compute min
+				var minVal int64
+				hasMin := false
+				for _, r := range rows {
+					if stmt.Where != nil {
+						match, _ := e.evaluateWhere(stmt.Where, r, columnMap, columnOrder)
+						if !match {
+							continue
+						}
+					}
+					if agg.arg != "" {
+						for j, col := range tblInfo.Columns {
+							if strings.ToLower(col.Name) == agg.arg {
+								if j < len(r.Values) && !r.Values[j].Null {
+									v := r.Values[j].AsInt()
+									if !hasMin || v < minVal {
+										minVal = v
+										hasMin = true
+									}
+								}
+							}
+						}
+					}
+				}
+				if hasMin {
+					resultRow[agg.index] = minVal
+				} else {
+					resultRow[agg.index] = nil
+				}
+			case "MAX":
+				// Compute max
+				var maxVal int64
+				hasMax := false
+				for _, r := range rows {
+					if stmt.Where != nil {
+						match, _ := e.evaluateWhere(stmt.Where, r, columnMap, columnOrder)
+						if !match {
+							continue
+						}
+					}
+					if agg.arg != "" {
+						for j, col := range tblInfo.Columns {
+							if strings.ToLower(col.Name) == agg.arg {
+								if j < len(r.Values) && !r.Values[j].Null {
+									v := r.Values[j].AsInt()
+									if !hasMax || v > maxVal {
+										maxVal = v
+										hasMax = true
+									}
+								}
+							}
+						}
+					}
+				}
+				if hasMax {
+					resultRow[agg.index] = maxVal
+				} else {
+					resultRow[agg.index] = nil
+				}
+			default:
+				resultRow[agg.index] = nil
+			}
+		}
+
+		result.Rows = append(result.Rows, resultRow)
+		result.RowCount = 1
+		return result, nil
 	}
 
 	// Build result rows
