@@ -1,6 +1,7 @@
 package server
 
 import (
+	"net"
 	"os"
 	"sync"
 	"testing"
@@ -1505,5 +1506,403 @@ func TestMySQLServer_HandleMySQLAuth_Disabled(t *testing.T) {
 	}
 	if !valid {
 		t.Error("Expected valid=true when auth is disabled")
+	}
+}
+
+// ============================================================================
+// onConnect and onDisconnect Handler Tests
+// ============================================================================
+
+// Note: onConnect and onDisconnect handlers require a real ConnectionHandler
+// which needs a net.Conn. These are tested indirectly through the protocol
+// server tests when actual connections are made.
+
+func TestServer_StatsTracking(t *testing.T) {
+	cfg := config.DefaultConfig()
+	logger := log.NewLogger(log.WithLevel(log.ERROR))
+
+	srv := New(cfg, logger, nil)
+
+	// Stats should start at zero
+	stats := srv.GetStats()
+	if stats.TotalConnections != 0 {
+		t.Errorf("Initial TotalConnections: got %d, want 0", stats.TotalConnections)
+	}
+	if stats.ActiveConnections != 0 {
+		t.Errorf("Initial ActiveConnections: got %d, want 0", stats.ActiveConnections)
+	}
+
+	// We can only test the stats update through actual connections
+	// which is tested in the protocol package tests
+}
+
+// ============================================================================
+// MySQLServer HandleMySQLAuth with Enabled Auth Tests
+// ============================================================================
+
+func TestMySQLServer_HandleMySQLAuth_EnabledWithValidUser(t *testing.T) {
+	cfg := config.DefaultConfig()
+	cfg.Auth.Enabled = true
+	logger := log.NewLogger(log.WithLevel(log.ERROR))
+
+	srv := New(cfg, logger, nil)
+	mysqlSrv := NewMySQLServer(srv, "127.0.0.1", 3306)
+
+	// Create a user
+	srv.auth.CreateUser("testuser", "testpass", auth.RoleUser)
+
+	// Create a real connection for the handler
+	server, client := net.Pipe()
+	defer server.Close()
+	defer client.Close()
+
+	handler := mysql.NewMySQLHandler(server, 1)
+
+	// Get the salt from the handler
+	salt := handler.AuthPluginData()
+	if len(salt) != 20 {
+		t.Fatalf("Salt length: got %d, want 20", len(salt))
+	}
+
+	// Create a proper 20-byte auth response
+	authResponse := make([]byte, 20)
+	for i := range authResponse {
+		authResponse[i] = salt[i] ^ byte(i)
+	}
+
+	// This will fail auth verification but shouldn't panic
+	valid, err := mysqlSrv.handleMySQLAuth(handler, "testuser", "db", authResponse)
+	// Auth will fail because the password hash doesn't match
+	_ = valid
+	_ = err
+}
+
+func TestMySQLServer_HandleMySQLAuth_UnknownUser(t *testing.T) {
+	cfg := config.DefaultConfig()
+	cfg.Auth.Enabled = true
+	logger := log.NewLogger(log.WithLevel(log.ERROR))
+
+	srv := New(cfg, logger, nil)
+	mysqlSrv := NewMySQLServer(srv, "127.0.0.1", 3306)
+
+	// Create a real connection for the handler
+	server, client := net.Pipe()
+	defer server.Close()
+	defer client.Close()
+
+	handler := mysql.NewMySQLHandler(server, 1)
+
+	// Test with unknown user
+	valid, err := mysqlSrv.handleMySQLAuth(handler, "unknown", "db", make([]byte, 20))
+	if err != nil {
+		t.Fatalf("Unexpected error: %v", err)
+	}
+	if valid {
+		t.Error("Expected false for unknown user")
+	}
+}
+
+// ============================================================================
+// handleMySQLQuery with Auth Tests
+// ============================================================================
+
+func TestMySQLServer_HandleMySQLQuery_WithAuth(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "xxsql-server-test-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	cfg := config.DefaultConfig()
+	cfg.Server.DataDir = tmpDir
+	cfg.Auth.Enabled = true
+	logger := log.NewLogger(log.WithLevel(log.ERROR))
+
+	engine := storage.NewEngine(tmpDir)
+	if err := engine.Open(); err != nil {
+		t.Fatalf("Failed to open engine: %v", err)
+	}
+	defer engine.Close()
+
+	srv := New(cfg, logger, engine)
+	srv.auth.CreateUser("testuser", "testpass", auth.RoleAdmin)
+
+	mysqlSrv := NewMySQLServer(srv, "127.0.0.1", 3306)
+
+	// Create handler with username set
+	handler := mysql.NewMySQLHandler(nil, 1)
+
+	// Query with user that has permissions
+	cols, rows, err := mysqlSrv.handleMySQLQuery(handler, "SELECT 1 AS col")
+	if err != nil {
+		t.Fatalf("handleMySQLQuery returned error: %v", err)
+	}
+	if len(cols) != 1 {
+		t.Errorf("Expected 1 column, got %d", len(cols))
+	}
+	if len(rows) != 1 {
+		t.Errorf("Expected 1 row, got %d", len(rows))
+	}
+}
+
+func TestMySQLServer_HandleMySQLQuery_QueryError(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "xxsql-server-test-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	cfg := config.DefaultConfig()
+	cfg.Server.DataDir = tmpDir
+	cfg.Auth.Enabled = false
+	logger := log.NewLogger(log.WithLevel(log.ERROR))
+
+	engine := storage.NewEngine(tmpDir)
+	if err := engine.Open(); err != nil {
+		t.Fatalf("Failed to open engine: %v", err)
+	}
+	defer engine.Close()
+
+	srv := New(cfg, logger, engine)
+	mysqlSrv := NewMySQLServer(srv, "127.0.0.1", 3306)
+
+	handler := mysql.NewMySQLHandler(nil, 1)
+
+	// Query with invalid syntax
+	_, _, err = mysqlSrv.handleMySQLQuery(handler, "INVALID SQL")
+	if err == nil {
+		t.Error("Expected error for invalid SQL")
+	}
+}
+
+// ============================================================================
+// onQuery with Session Tests
+// ============================================================================
+
+// Note: Testing onQuery with a real session requires a ConnectionHandler
+// which needs a net.Conn. The session-based permission checks are tested
+// indirectly through the MySQL protocol tests.
+
+func TestServer_OnQuery_Columns(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "xxsql-server-test-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	cfg := config.DefaultConfig()
+	cfg.Server.DataDir = tmpDir
+	cfg.Auth.Enabled = false
+	logger := log.NewLogger(log.WithLevel(log.ERROR))
+
+	engine := storage.NewEngine(tmpDir)
+	if err := engine.Open(); err != nil {
+		t.Fatalf("Failed to open engine: %v", err)
+	}
+	defer engine.Close()
+
+	srv := New(cfg, logger, engine)
+
+	req := &protocol.QueryRequest{
+		SQL: "SELECT 1 AS col1, 'test' AS col2",
+	}
+
+	resp, err := srv.onQuery(nil, req)
+	if err != nil {
+		t.Fatalf("onQuery returned error: %v", err)
+	}
+	if resp.Status != protocol.StatusOK {
+		t.Errorf("Expected OK status, got %d", resp.Status)
+	}
+	if len(resp.Columns) != 2 {
+		t.Errorf("Expected 2 columns, got %d", len(resp.Columns))
+	}
+	// Column names depend on how the executor handles aliases
+	// Just verify we have columns
+}
+
+func TestServer_OnQuery_AffectedRows(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "xxsql-server-test-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	cfg := config.DefaultConfig()
+	cfg.Server.DataDir = tmpDir
+	cfg.Auth.Enabled = false
+	logger := log.NewLogger(log.WithLevel(log.ERROR))
+
+	engine := storage.NewEngine(tmpDir)
+	if err := engine.Open(); err != nil {
+		t.Fatalf("Failed to open engine: %v", err)
+	}
+	defer engine.Close()
+
+	srv := New(cfg, logger, engine)
+
+	// Create table first
+	srv.onQuery(nil, &protocol.QueryRequest{SQL: "CREATE TABLE test (id INT)"})
+
+	// Insert should have affected rows
+	resp, err := srv.onQuery(nil, &protocol.QueryRequest{SQL: "INSERT INTO test (id) VALUES (1), (2), (3)"})
+	if err != nil {
+		t.Fatalf("onQuery returned error: %v", err)
+	}
+	if resp.Status != protocol.StatusOK {
+		t.Errorf("Expected OK status, got %d", resp.Status)
+	}
+	if resp.Affected != 3 {
+		t.Errorf("Affected rows: got %d, want 3", resp.Affected)
+	}
+}
+
+// ============================================================================
+// MySQL Type Conversion Tests
+// ============================================================================
+
+func TestMysqlTypeFromString_AllTypes(t *testing.T) {
+	tests := []struct {
+		input    string
+		expected uint8
+	}{
+		// Integer types
+		{"SEQ", 0x03},
+		{"INT", 0x03},
+		{"int", 0x03},
+
+		// Float types
+		{"FLOAT", 0x05},
+		{"DOUBLE", 0x05},
+
+		// String types
+		{"VARCHAR", 0xFD},
+		{"CHAR", 0xFD},
+		{"TEXT", 0xFD},
+
+		// Boolean
+		{"BOOL", 0x01},
+
+		// Date/Time
+		{"DATE", 0x0A},
+		{"TIME", 0x0B},
+		{"DATETIME", 0x0C},
+
+		// Unknown defaults to VAR_STRING
+		{"UNKNOWN", 0xFD},
+		{"BLOB", 0xFD},
+		{"", 0xFD},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.input, func(t *testing.T) {
+			result := mysqlTypeFromString(tt.input)
+			if result != tt.expected {
+				t.Errorf("mysqlTypeFromString(%q): got 0x%02X, want 0x%02X", tt.input, result, tt.expected)
+			}
+		})
+	}
+}
+
+// ============================================================================
+// Server Auth Load Failure Test
+// ============================================================================
+
+func TestServer_AuthLoadFailure(t *testing.T) {
+	// Create a directory with a corrupted auth file
+	tmpDir := t.TempDir()
+
+	cfg := config.DefaultConfig()
+	cfg.Server.DataDir = tmpDir
+	cfg.Network.PrivatePort = 19580
+	cfg.Auth.Enabled = true
+	cfg.Auth.AdminUser = "admin"
+	cfg.Auth.AdminPassword = "password"
+
+	// Create a file that will fail to load
+	// (simulating corrupted data)
+	badData := []byte("invalid json data")
+	os.WriteFile(tmpDir+"/users.json", badData, 0644)
+
+	engine := storage.NewEngine(tmpDir)
+	engine.Open()
+	defer engine.Close()
+
+	logger := log.NewLogger(log.WithLevel(log.ERROR))
+	srv := New(cfg, logger, engine)
+
+	// Start should succeed even with load failure
+	if err := srv.Start(); err != nil {
+		t.Fatalf("Start should succeed: %v", err)
+	}
+	defer srv.Stop()
+
+	time.Sleep(50 * time.Millisecond)
+}
+
+// ============================================================================
+// Server Start with Various Config Tests
+// ============================================================================
+
+func TestServer_StartWithAllNetworkServices(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	cfg := config.DefaultConfig()
+	cfg.Server.DataDir = tmpDir
+	cfg.Network.PrivatePort = 19581
+	cfg.Network.MySQLPort = 13381
+	cfg.Network.HTTPPort = 18081
+	cfg.Auth.Enabled = false
+
+	engine := storage.NewEngine(tmpDir)
+	engine.Open()
+	defer engine.Close()
+
+	logger := log.NewLogger(log.WithLevel(log.INFO))
+	srv := New(cfg, logger, engine)
+
+	if err := srv.Start(); err != nil {
+		t.Fatalf("Start failed: %v", err)
+	}
+	defer srv.Stop()
+
+	time.Sleep(100 * time.Millisecond)
+
+	// Verify all services are running
+	if srv.private == nil {
+		t.Error("Private server should be running")
+	}
+	if srv.mysql == nil {
+		t.Error("MySQL server should be running")
+	}
+	if srv.http == nil {
+		t.Error("HTTP server should be running")
+	}
+}
+
+// ============================================================================
+// Server Context Cancel Test
+// ============================================================================
+
+func TestServer_ContextCancel(t *testing.T) {
+	cfg := config.DefaultConfig()
+	logger := log.NewLogger(log.WithLevel(log.ERROR))
+
+	srv := New(cfg, logger, nil)
+
+	// Context should be valid
+	if srv.ctx == nil {
+		t.Fatal("Context should not be nil")
+	}
+
+	// Cancel the context
+	srv.cancel()
+
+	// Context should be done
+	select {
+	case <-srv.ctx.Done():
+		// Expected
+	default:
+		t.Error("Context should be done after cancel")
 	}
 }
