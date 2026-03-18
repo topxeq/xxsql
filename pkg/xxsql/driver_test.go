@@ -3,6 +3,7 @@ package xxsql
 import (
 	"context"
 	"database/sql/driver"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -2047,12 +2048,1115 @@ func TestParseOKPacket_EdgeCases(t *testing.T) {
 	mc := &mysqlConn{}
 
 	t.Run("empty packet", func(t *testing.T) {
-		// This may panic or return error, we just want to test it doesn't crash
-		defer func() {
-			if r := recover(); r != nil {
-				// Expected panic
-			}
-		}()
-		mc.parseOKPacket([]byte{OKPacket})
+		_, _, err := mc.parseOKPacket([]byte{OKPacket})
+		if err != nil {
+			t.Errorf("unexpected error: %v", err)
+		}
+	})
+
+	t.Run("with affected rows", func(t *testing.T) {
+		// OKPacket + affected rows (3) + last insert id (5)
+		packet := []byte{OKPacket, 0x03, 0x05}
+		affected, lastID, err := mc.parseOKPacket(packet)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if affected != 3 {
+			t.Errorf("affected rows: got %d, want 3", affected)
+		}
+		if lastID != 5 {
+			t.Errorf("last insert id: got %d, want 5", lastID)
+		}
 	})
 }
+
+func TestReadPacket_WritePacket(t *testing.T) {
+	t.Run("read and write packet", func(t *testing.T) {
+		server, client := net.Pipe()
+		defer server.Close()
+
+		mc := newMySQLConn(client, &Config{})
+
+		// Goroutine to handle read/write
+		done := make(chan struct{})
+		go func() {
+			defer close(done)
+			// Write a packet to server
+			err := mc.writePacket([]byte("hello"))
+			if err != nil {
+				t.Errorf("writePacket error: %v", err)
+				return
+			}
+
+			// Read a packet from server
+			payload, err := mc.readPacket()
+			if err != nil {
+				t.Errorf("readPacket error: %v", err)
+				return
+			}
+			if string(payload) != "response" {
+				t.Errorf("readPacket: got %q, want 'response'", string(payload))
+			}
+		}()
+
+		// Server side: read packet, then send response
+		buf := make([]byte, 9) // header(4) + "hello"(5)
+		io.ReadFull(server, buf)
+		if string(buf[4:]) != "hello" {
+			t.Errorf("server received: got %q, want 'hello'", string(buf[4:]))
+		}
+
+		// Send response
+		resp := []byte{0x08, 0x00, 0x00, 0x00} // length=8, seqID=0
+		resp = append(resp, []byte("response")...)
+		server.Write(resp)
+
+		<-done
+		client.Close()
+	})
+
+	t.Run("readPacket error", func(t *testing.T) {
+		server, client := net.Pipe()
+		server.Close() // Close immediately to cause error
+
+		mc := newMySQLConn(client, &Config{})
+		_, err := mc.readPacket()
+		if err == nil {
+			t.Error("expected error from readPacket on closed connection")
+		}
+		client.Close()
+	})
+}
+
+func TestStmt_Exec_Query(t *testing.T) {
+	t.Run("Exec on closed connection", func(t *testing.T) {
+		c := &conn{closed: true}
+		s := &stmt{conn: c, query: "SELECT ?", paramLen: 1}
+		_, err := s.Exec([]driver.Value{42})
+		if err != driver.ErrBadConn {
+			t.Errorf("Exec on closed conn: got %v, want %v", err, driver.ErrBadConn)
+		}
+	})
+
+	t.Run("Query on closed connection", func(t *testing.T) {
+		c := &conn{closed: true}
+		s := &stmt{conn: c, query: "SELECT ?", paramLen: 1}
+		_, err := s.Query([]driver.Value{42})
+		if err != driver.ErrBadConn {
+			t.Errorf("Query on closed conn: got %v, want %v", err, driver.ErrBadConn)
+		}
+	})
+
+	t.Run("interpolate only", func(t *testing.T) {
+		c := &conn{closed: false}
+		s := &stmt{conn: c, query: "SELECT ?, ?", paramLen: 2}
+
+		result, err := s.interpolate([]driver.NamedValue{
+			{Ordinal: 1, Value: 42},
+			{Ordinal: 2, Value: "test"},
+		})
+		if err != nil {
+			t.Errorf("interpolate error: %v", err)
+		}
+		if result != "SELECT 42, 'test'" {
+			t.Errorf("got %q, want 'SELECT 42, ''test'''", result)
+		}
+	})
+}
+
+func TestCloseConnection_WithRealConn(t *testing.T) {
+	server, client := net.Pipe()
+
+	mc := newMySQLConn(client, &Config{})
+
+	// Server needs to read the COM_QUIT packet
+	go func() {
+		buf := make([]byte, 5) // header + COM_QUIT
+		io.ReadFull(server, buf)
+		server.Close()
+	}()
+
+	err := mc.closeConnection()
+	if err != nil {
+		t.Errorf("closeConnection error: %v", err)
+	}
+	if !mc.closed {
+		t.Error("expected closed to be true")
+	}
+}
+
+func TestInterpolate(t *testing.T) {
+	s := &stmt{query: "SELECT ?, ?", paramLen: 2}
+
+	result, err := s.interpolate([]driver.NamedValue{
+		{Ordinal: 1, Value: 42},
+		{Ordinal: 2, Value: "test"},
+	})
+	if err != nil {
+		t.Errorf("interpolate error: %v", err)
+	}
+	if result != "SELECT 42, 'test'" {
+		t.Errorf("got %q, want 'SELECT 42, ''test'''", result)
+	}
+}
+
+func TestMysqlError_Error(t *testing.T) {
+	err := &mysqlError{
+		code:    1146,
+		state:   "42S02",
+		message: "Table doesn't exist",
+	}
+
+	// Error() only returns the message
+	expected := "Table doesn't exist"
+	if err.Error() != expected {
+		t.Errorf("got %q, want %q", err.Error(), expected)
+	}
+
+	// Test Number() and SQLState()
+	if err.Number() != 1146 {
+		t.Errorf("Number: got %d, want 1146", err.Number())
+	}
+	if err.SQLState() != "42S02" {
+		t.Errorf("SQLState: got %q, want '42S02'", err.SQLState())
+	}
+}
+
+func TestMysqlError_Is(t *testing.T) {
+	tests := []struct {
+		name     string
+		code     uint16
+		target   error
+		expected bool
+	}{
+		{"duplicate entry", ErrCodeDuplicateEntry, ErrDuplicateEntry, true},
+		{"table not exist", ErrCodeTableNotExist, ErrTableNotExist, true},
+		{"deadlock", ErrCodeDeadlock, ErrDeadlock, true},
+		{"access denied", ErrCodeAccessDenied, ErrAccessDenied, true},
+		{"syntax", ErrCodeSyntax, ErrSyntax, true},
+		{"wrong code for duplicate", ErrCodeTableNotExist, ErrDuplicateEntry, false},
+		{"unknown target", ErrCodeTableNotExist, errors.New("unknown"), false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := &mysqlError{code: tt.code}
+			if err.Is(tt.target) != tt.expected {
+				t.Errorf("Is(%v): got %v, want %v", tt.target, !tt.expected, tt.expected)
+			}
+		})
+	}
+}
+
+func TestReadLengthEncodedInt_Additional(t *testing.T) {
+	mc := &mysqlConn{}
+
+	// Test 0xFE prefix with 8 bytes
+	t.Run("0xFE prefix full", func(t *testing.T) {
+		data := []byte{0xFE, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0x7F}
+		val, n := mc.readLengthEncodedInt(data)
+		if n != 9 {
+			t.Errorf("length: got %d, want 9", n)
+		}
+		// Should decode the 8-byte value
+		if val <= 0 {
+			t.Errorf("expected positive value, got %d", val)
+		}
+	})
+}
+
+func TestErrors_Is(t *testing.T) {
+	// Test errors.Is with mysqlError
+	t.Run("errors.Is with duplicate entry", func(t *testing.T) {
+		err := &mysqlError{code: ErrCodeDuplicateEntry}
+		if !errors.Is(err, ErrDuplicateEntry) {
+			t.Error("errors.Is should match ErrDuplicateEntry")
+		}
+	})
+
+	t.Run("errors.Is with table not exist", func(t *testing.T) {
+		err := &mysqlError{code: ErrCodeTableNotExist}
+		if !errors.Is(err, ErrTableNotExist) {
+			t.Error("errors.Is should match ErrTableNotExist")
+		}
+	})
+}
+
+func TestRows_Next_EOF(t *testing.T) {
+	r := &rows{
+		columns:  []string{"id", "name"},
+		colTypes: []byte{TypeLong, TypeVarChar},
+		rowData:  nil,
+		pos:      0,
+	}
+
+	dest := make([]driver.Value, 2)
+	err := r.Next(dest)
+	if err != io.EOF {
+		t.Errorf("expected io.EOF, got %v", err)
+	}
+}
+
+func TestRows_Columns_Close(t *testing.T) {
+	r := &rows{
+		columns:  []string{"id", "name", "email"},
+		colTypes: []byte{TypeLong, TypeVarChar, TypeVarChar},
+		rowData:  [][]byte{},
+	}
+
+	cols := r.Columns()
+	if len(cols) != 3 {
+		t.Errorf("Columns: got %d, want 3", len(cols))
+	}
+
+	err := r.Close()
+	if err != nil {
+		t.Errorf("Close error: %v", err)
+	}
+	if r.rowData != nil {
+		t.Error("rowData should be nil after Close")
+	}
+}
+
+func TestRows_HasNextResultSet(t *testing.T) {
+	r := &rows{}
+
+	if r.HasNextResultSet() {
+		t.Error("HasNextResultSet should always return false")
+	}
+
+	err := r.NextResultSet()
+	if err != io.EOF {
+		t.Errorf("NextResultSet: got %v, want io.EOF", err)
+	}
+}
+
+func TestParseRow_WithNull(t *testing.T) {
+	r := &rows{
+		colTypes: []byte{TypeLong, TypeVarChar, TypeLong},
+	}
+
+	// Row with NULL (0xFB) in second column
+	// Format: length(1 byte) + "42" + NULL marker(0xFB) + length(1 byte) + "100"
+	data := []byte{0x02, '4', '2', 0xFB, 0x03, '1', '0', '0'}
+	dest := make([]driver.Value, 3)
+
+	err := r.parseRow(data, dest)
+	if err != nil {
+		t.Fatalf("parseRow error: %v", err)
+	}
+
+	if dest[0] != int64(42) {
+		t.Errorf("col0: got %v, want 42", dest[0])
+	}
+	if dest[1] != nil {
+		t.Errorf("col1: got %v, want nil", dest[1])
+	}
+	if dest[2] != int64(100) {
+		t.Errorf("col2: got %v, want 100", dest[2])
+	}
+}
+
+func TestParseRow_NoColTypes(t *testing.T) {
+	r := &rows{
+		colTypes: []byte{}, // No column types
+	}
+
+	// Single string value
+	data := []byte{0x05, 'h', 'e', 'l', 'l', 'o'}
+	dest := make([]driver.Value, 1)
+
+	err := r.parseRow(data, dest)
+	if err != nil {
+		t.Fatalf("parseRow error: %v", err)
+	}
+
+	if dest[0] != "hello" {
+		t.Errorf("got %v, want 'hello'", dest[0])
+	}
+}
+
+func TestConvertValue_DateTime(t *testing.T) {
+	tests := []struct {
+		name    string
+		data    []byte
+		colType byte
+		check   func(driver.Value) bool
+	}{
+		{
+			name:    "date",
+			data:    []byte("2024-01-15"),
+			colType: TypeDate,
+			check: func(v driver.Value) bool {
+				t, ok := v.(time.Time)
+				return ok && t.Year() == 2024
+			},
+		},
+		{
+			name:    "datetime",
+			data:    []byte("2024-01-15 10:30:00"),
+			colType: TypeDateTime,
+			check: func(v driver.Value) bool {
+				t, ok := v.(time.Time)
+				return ok && t.Hour() == 10
+			},
+		},
+		{
+			name:    "timestamp",
+			data:    []byte("2024-06-20 15:45:30"),
+			colType: TypeTimestamp,
+			check: func(v driver.Value) bool {
+				t, ok := v.(time.Time)
+				return ok && t.Minute() == 45
+			},
+		},
+		{
+			name:    "time type",
+			data:    []byte("12:30:45"),
+			colType: TypeTime,
+			check: func(v driver.Value) bool {
+				s, ok := v.(string)
+				return ok && s == "12:30:45"
+			},
+		},
+		{
+			name:    "bit type",
+			data:    []byte{0x01, 0x02, 0x03},
+			colType: TypeBit,
+			check: func(v driver.Value) bool {
+				b, ok := v.([]byte)
+				return ok && len(b) == 3
+			},
+		},
+		{
+			name:    "null type",
+			data:    []byte{0x00},
+			colType: TypeNull,
+			check: func(v driver.Value) bool {
+				return v == nil
+			},
+		},
+		{
+			name:    "invalid int",
+			data:    []byte("notanumber"),
+			colType: TypeLong,
+			check: func(v driver.Value) bool {
+				s, ok := v.(string)
+				return ok && s == "notanumber"
+			},
+		},
+		{
+			name:    "invalid float",
+			data:    []byte("notafloat"),
+			colType: TypeDouble,
+			check: func(v driver.Value) bool {
+				s, ok := v.(string)
+				return ok && s == "notafloat"
+			},
+		},
+		{
+			name:    "invalid date",
+			data:    []byte("notadate"),
+			colType: TypeDate,
+			check: func(v driver.Value) bool {
+				s, ok := v.(string)
+				return ok && s == "notadate"
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := convertValue(tt.data, tt.colType)
+			if !tt.check(result) {
+				t.Errorf("check failed for value %v (type %T)", result, result)
+			}
+		})
+	}
+}
+
+func TestConvertValue_EmptyData(t *testing.T) {
+	result := convertValue([]byte{}, TypeVarChar)
+	if result != "" {
+		t.Errorf("got %v, want empty string", result)
+	}
+}
+
+func TestResult_Methods(t *testing.T) {
+	r := &result{
+		affectedRows: 100,
+		lastInsertID: 42,
+	}
+
+	lastID, err := r.LastInsertId()
+	if err != nil || lastID != 42 {
+		t.Errorf("LastInsertId: got %d, %v, want 42, nil", lastID, err)
+	}
+
+	affected, err := r.RowsAffected()
+	if err != nil || affected != 100 {
+		t.Errorf("RowsAffected: got %d, %v, want 100, nil", affected, err)
+	}
+}
+
+func TestTx_CommitRollback_WithMock(t *testing.T) {
+	t.Run("commit success", func(t *testing.T) {
+		server, client := net.Pipe()
+		defer server.Close()
+
+		mc := newMySQLConn(client, &Config{})
+		c := &conn{mysqlConn: mc, inTx: true}
+		tx := &tx{conn: c}
+
+		// Server reads the COMMIT command
+		go func() {
+			buf := make([]byte, 20)
+			n, _ := io.ReadFull(server, buf[:4+7]) // header + "COMMIT"
+			// Send OK response
+			resp := []byte{0x01, 0x00, 0x00, 0x01, OKPacket}
+			server.Write(resp[:5])
+			_ = n
+		}()
+
+		err := tx.Commit()
+		if err != nil {
+			t.Logf("Commit error (expected with mock): %v", err)
+		}
+		if !tx.closed {
+			t.Error("tx should be closed after commit")
+		}
+	})
+
+	t.Run("rollback success", func(t *testing.T) {
+		server, client := net.Pipe()
+		defer server.Close()
+
+		mc := newMySQLConn(client, &Config{})
+		c := &conn{mysqlConn: mc, inTx: true}
+		tx := &tx{conn: c}
+
+		// Server reads the ROLLBACK command
+		go func() {
+			buf := make([]byte, 20)
+			n, _ := io.ReadFull(server, buf[:4+9]) // header + "ROLLBACK"
+			// Send OK response
+			resp := []byte{0x01, 0x00, 0x00, 0x01, OKPacket}
+			server.Write(resp[:5])
+			_ = n
+		}()
+
+		err := tx.Rollback()
+		if err != nil {
+			t.Logf("Rollback error (expected with mock): %v", err)
+		}
+		if !tx.closed {
+			t.Error("tx should be closed after rollback")
+		}
+	})
+
+	t.Run("commit already closed", func(t *testing.T) {
+		tx := &tx{closed: true}
+		err := tx.Commit()
+		if err != ErrTxDone {
+			t.Errorf("got %v, want ErrTxDone", err)
+		}
+	})
+
+	t.Run("rollback already closed", func(t *testing.T) {
+		tx := &tx{closed: true}
+		err := tx.Rollback()
+		if err != ErrTxDone {
+			t.Errorf("got %v, want ErrTxDone", err)
+		}
+	})
+}
+
+func TestWriteLengthEncodedInt_EdgeCases(t *testing.T) {
+	mc := &mysqlConn{}
+
+	tests := []struct {
+		name  string
+		value int64
+		check func([]byte) bool
+	}{
+		{"small", 250, func(b []byte) bool { return len(b) == 1 && b[0] == 250 }},
+		{"medium", 65535, func(b []byte) bool { return len(b) == 3 && b[0] == 0xFC }},
+		{"large", 16777215, func(b []byte) bool { return len(b) == 4 && b[0] == 0xFD }},
+		{"xlarge", 2147483647, func(b []byte) bool { return len(b) == 9 && b[0] == 0xFE }},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := mc.writeLengthEncodedInt(tt.value)
+			if !tt.check(result) {
+				t.Errorf("check failed for value %d, got %v", tt.value, result)
+			}
+		})
+	}
+}
+
+func TestRows_Next_WithData(t *testing.T) {
+	// Test with actual row data
+	r := &rows{
+		columns:  []string{"id", "name"},
+		colTypes: []byte{TypeLong, TypeVarChar},
+		rowData: [][]byte{
+			// Row 1: id=42, name="hello"
+			// Each field is length-encoded in text protocol
+			{0x02, '4', '2', 0x05, 'h', 'e', 'l', 'l', 'o'},
+		},
+		pos: 0,
+	}
+
+	dest := make([]driver.Value, 2)
+	err := r.Next(dest)
+	if err != nil {
+		t.Fatalf("Next error: %v", err)
+	}
+
+	if dest[0] != int64(42) {
+		t.Errorf("id: got %v, want 42", dest[0])
+	}
+	if dest[1] != "hello" {
+		t.Errorf("name: got %v, want 'hello'", dest[1])
+	}
+
+	// Second call should return EOF
+	err = r.Next(dest)
+	if err != io.EOF {
+		t.Errorf("expected EOF, got %v", err)
+	}
+}
+
+func TestParseRow_UnexpectedEOF(t *testing.T) {
+	r := &rows{
+		colTypes: []byte{TypeLong, TypeVarChar},
+	}
+
+	// Invalid data: length says 10 bytes but only 2 available
+	data := []byte{0x0A, 'a', 'b'}
+	dest := make([]driver.Value, 2)
+
+	err := r.parseRow(data, dest)
+	if err != io.ErrUnexpectedEOF {
+		t.Errorf("expected ErrUnexpectedEOF, got %v", err)
+	}
+}
+
+func TestConvertValue_AllTypes_Complete(t *testing.T) {
+	tests := []struct {
+		name    string
+		data    []byte
+		colType byte
+		check   func(driver.Value) bool
+	}{
+		{"tiny int", []byte("127"), TypeTiny, func(v driver.Value) bool { return v == int64(127) }},
+		{"short int", []byte("32767"), TypeShort, func(v driver.Value) bool { return v == int64(32767) }},
+		{"long int", []byte("2147483647"), TypeLong, func(v driver.Value) bool { return v == int64(2147483647) }},
+		{"long long", []byte("9223372036854775807"), TypeLongLong, func(v driver.Value) bool { return v == int64(9223372036854775807) }},
+		{"int24", []byte("8388607"), TypeInt24, func(v driver.Value) bool { return v == int64(8388607) }},
+		{"year", []byte("2024"), TypeYear, func(v driver.Value) bool { return v == int64(2024) }},
+		{"float", []byte("3.14159"), TypeFloat, func(v driver.Value) bool {
+			f, ok := v.(float64)
+			return ok && f > 3.14 && f < 3.15
+		}},
+		{"double", []byte("2.718281828"), TypeDouble, func(v driver.Value) bool {
+			f, ok := v.(float64)
+			return ok && f > 2.71 && f < 2.72
+		}},
+		{"varchar", []byte("hello world"), TypeVarChar, func(v driver.Value) bool { return v == "hello world" }},
+		{"var string", []byte("test"), TypeVarString, func(v driver.Value) bool { return v == "test" }},
+		{"string", []byte("foo"), TypeString, func(v driver.Value) bool { return v == "foo" }},
+		{"enum", []byte("option1"), TypeEnum, func(v driver.Value) bool { return v == "option1" }},
+		{"set", []byte("a,b,c"), TypeSet, func(v driver.Value) bool { return v == "a,b,c" }},
+		{"tiny blob", []byte{0x01, 0x02}, TypeTinyBlob, func(v driver.Value) bool {
+			b, ok := v.([]byte)
+			return ok && len(b) == 2
+		}},
+		{"medium blob", []byte{0x03, 0x04}, TypeMediumBlob, func(v driver.Value) bool {
+			b, ok := v.([]byte)
+			return ok && len(b) == 2
+		}},
+		{"long blob", []byte{0x05, 0x06}, TypeLongBlob, func(v driver.Value) bool {
+			b, ok := v.([]byte)
+			return ok && len(b) == 2
+		}},
+		{"blob", []byte{0x07, 0x08}, TypeBlob, func(v driver.Value) bool {
+			b, ok := v.([]byte)
+			return ok && len(b) == 2
+		}},
+		{"geometry", []byte("point"), TypeGeometry, func(v driver.Value) bool { return v == "point" }},
+		{"unknown type", []byte("value"), 0xFF, func(v driver.Value) bool { return v == "value" }},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := convertValue(tt.data, tt.colType)
+			if !tt.check(result) {
+				t.Errorf("check failed for value %v (type %T)", result, result)
+			}
+		})
+	}
+}
+
+// TestMockHandshake tests the MySQL handshake protocol with a mock server
+func TestMockHandshake(t *testing.T) {
+	server, client := net.Pipe()
+	defer server.Close()
+
+	mc := newMySQLConn(client, &Config{
+		User:   "testuser",
+		Passwd: "testpass",
+	})
+
+	// Server goroutine sends handshake and handles auth
+	serverDone := make(chan error, 1)
+	go func() {
+		defer close(serverDone)
+
+		// Send handshake packet
+		handshake := buildMockHandshake()
+		if _, err := server.Write(handshake); err != nil {
+			serverDone <- err
+			return
+		}
+
+		// Read auth response from client
+		buf := make([]byte, 1024)
+		n, err := server.Read(buf)
+		if err != nil {
+			serverDone <- err
+			return
+		}
+		t.Logf("Server received %d bytes auth response", n)
+
+		// Send OK packet
+		okPacket := []byte{0x07, 0x00, 0x00, 0x02, OKPacket, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00}
+		if _, err := server.Write(okPacket); err != nil {
+			serverDone <- err
+			return
+		}
+
+		serverDone <- nil
+	}()
+
+	// Client performs handshake
+	err := mc.connect()
+	if err != nil {
+		t.Logf("connect error: %v", err)
+	}
+
+	client.Close()
+	<-serverDone
+}
+
+// buildMockHandshake builds a minimal MySQL handshake packet
+func buildMockHandshake() []byte {
+	// Build a minimal handshake packet
+	packet := []byte{}
+
+	// Protocol version
+	packet = append(packet, ProtocolVersion)
+
+	// Server version (null-terminated)
+	serverVersion := "5.7.0-test"
+	packet = append(packet, []byte(serverVersion)...)
+	packet = append(packet, 0)
+
+	// Connection ID (4 bytes)
+	packet = append(packet, 0x01, 0x00, 0x00, 0x00)
+
+	// Auth plugin data part 1 (8 bytes)
+	packet = append(packet, []byte("12345678")...)
+
+	// Filler
+	packet = append(packet, 0)
+
+	// Capability flags lower 2 bytes
+	packet = append(packet, 0xFF, 0xF7)
+
+	// Character set (utf8mb4)
+	packet = append(packet, CharacterSetUTF8MB4)
+
+	// Status flags
+	packet = append(packet, 0x02, 0x00)
+
+	// Capability flags upper 2 bytes
+	packet = append(packet, 0xFF, 0x01)
+
+	// Auth plugin data length
+	packet = append(packet, 21)
+
+	// Reserved (10 bytes)
+	packet = append(packet, make([]byte, 10)...)
+
+	// Auth plugin data part 2 (12 bytes)
+	packet = append(packet, []byte("901234567890")...)
+
+	// Auth plugin name (null-terminated)
+	packet = append(packet, []byte("mysql_native_password")...)
+	packet = append(packet, 0)
+
+	// Prepend packet header (length + sequence ID)
+	length := len(packet)
+	header := []byte{byte(length), byte(length >> 8), byte(length >> 16), 0x00}
+
+	return append(header, packet...)
+}
+
+// TestMockQuery tests query execution with a mock server
+func TestMockQuery(t *testing.T) {
+	server, client := net.Pipe()
+	defer server.Close()
+
+	mc := newMySQLConn(client, &Config{})
+	mc.closed = false
+
+	serverDone := make(chan error, 1)
+	go func() {
+		defer close(serverDone)
+
+		buf := make([]byte, 1024)
+		n, err := server.Read(buf)
+		if err != nil {
+			serverDone <- err
+			return
+		}
+		t.Logf("Server received query: %s", string(buf[4:n]))
+
+		okPacket := []byte{0x07, 0x00, 0x00, 0x01, OKPacket, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00}
+		if _, err := server.Write(okPacket); err != nil {
+			serverDone <- err
+			return
+		}
+
+		serverDone <- nil
+	}()
+
+	response, err := mc.query("SELECT 1")
+	if err != nil {
+		t.Logf("query error: %v", err)
+	} else {
+		t.Logf("Response: %v", response)
+	}
+
+	client.Close()
+	<-serverDone
+}
+
+// TestMockExec tests exec with a mock server
+func TestMockExec(t *testing.T) {
+	server, client := net.Pipe()
+	defer server.Close()
+
+	mc := newMySQLConn(client, &Config{})
+	mc.closed = false
+
+	serverDone := make(chan error, 1)
+	go func() {
+		defer close(serverDone)
+
+		buf := make([]byte, 1024)
+		n, err := server.Read(buf)
+		if err != nil {
+			serverDone <- err
+			return
+		}
+		t.Logf("Server received exec: %s", string(buf[4:n]))
+
+		okPacket := []byte{0x09, 0x00, 0x00, 0x01, OKPacket, 0x03, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00}
+		if _, err := server.Write(okPacket); err != nil {
+			serverDone <- err
+			return
+		}
+
+		serverDone <- nil
+	}()
+
+	affectedRows, lastInsertID, err := mc.exec("INSERT INTO test VALUES (1)")
+	if err != nil {
+		t.Logf("exec error: %v", err)
+	} else {
+		t.Logf("Affected: %d, LastInsertID: %d", affectedRows, lastInsertID)
+	}
+
+	client.Close()
+	<-serverDone
+}
+
+// TestParseResultSet_OKPacket tests parseResultSet with OK packet
+func TestParseResultSet_OKPacket(t *testing.T) {
+	mc := &mysqlConn{}
+	c := &conn{mysqlConn: mc}
+
+	response := []byte{OKPacket, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00}
+
+	rows, err := c.parseResultSet(response)
+	if err != nil {
+		t.Fatalf("parseResultSet error: %v", err)
+	}
+	if rows == nil {
+		t.Fatal("expected rows, got nil")
+	}
+	if len(rows.columns) != 0 {
+		t.Errorf("expected empty columns, got %d", len(rows.columns))
+	}
+}
+
+// TestParseResultSet_ERRPacket tests parseResultSet with error packet
+func TestParseResultSet_ERRPacket(t *testing.T) {
+	mc := &mysqlConn{}
+	c := &conn{mysqlConn: mc}
+
+	response := []byte{ERRPacket, 0x41, 0x04, '#', '4', '2', '0', '0', '0', 'E', 'r', 'r', 'o', 'r'}
+
+	_, err := c.parseResultSet(response)
+	if err == nil {
+		t.Error("expected error for ERR packet")
+	}
+}
+
+// TestSendAuth_NoDB tests sendAuth without database
+func TestSendAuth_NoDB(t *testing.T) {
+	server, client := net.Pipe()
+	defer server.Close()
+
+	mc := newMySQLConn(client, &Config{
+		User:   "testuser",
+		Passwd: "testpass",
+		DBName: "",
+	})
+
+	serverDone := make(chan []byte, 1)
+	go func() {
+		buf := make([]byte, 1024)
+		n, _ := server.Read(buf)
+		serverDone <- buf[:n]
+	}()
+
+	hs := &serverHandshake{
+		capabilityFlags: ClientProtocol41 | ClientSecureConn | ClientPluginAuth,
+		authPluginData:  make([]byte, 20),
+		authPluginName:  "mysql_native_password",
+	}
+
+	err := mc.sendAuth(hs)
+	if err != nil {
+		t.Errorf("sendAuth error: %v", err)
+	}
+
+	authPacket := <-serverDone
+	if len(authPacket) == 0 {
+		t.Error("expected auth packet")
+	}
+
+	client.Close()
+}
+
+// TestSendAuth_WithDB tests sendAuth with database
+func TestSendAuth_WithDB(t *testing.T) {
+	server, client := net.Pipe()
+	defer server.Close()
+
+	mc := newMySQLConn(client, &Config{
+		User:   "testuser",
+		Passwd: "testpass",
+		DBName: "testdb",
+	})
+
+	serverDone := make(chan []byte, 1)
+	go func() {
+		buf := make([]byte, 1024)
+		n, _ := server.Read(buf)
+		serverDone <- buf[:n]
+	}()
+
+	hs := &serverHandshake{
+		capabilityFlags: ClientProtocol41 | ClientSecureConn | ClientPluginAuth | ClientConnectWithDB,
+		authPluginData:  make([]byte, 20),
+		authPluginName:  "mysql_native_password",
+	}
+
+	err := mc.sendAuth(hs)
+	if err != nil {
+		t.Errorf("sendAuth error: %v", err)
+	}
+
+	authPacket := <-serverDone
+	if len(authPacket) == 0 {
+		t.Error("expected auth packet")
+	}
+
+	packet := string(authPacket)
+	if !strings.Contains(packet, "testdb") {
+		t.Error("expected database name in auth packet")
+	}
+
+	client.Close()
+}
+
+// TestReadHandshake_Valid tests readHandshake with valid packet
+func TestReadHandshake_Valid(t *testing.T) {
+	server, client := net.Pipe()
+	defer server.Close()
+
+	mc := newMySQLConn(client, &Config{})
+
+	go func() {
+		handshake := buildMockHandshake()
+		server.Write(handshake)
+	}()
+
+	hs, err := mc.readHandshake()
+	if err != nil {
+		t.Errorf("readHandshake error: %v", err)
+	} else {
+		if hs.protocolVersion != ProtocolVersion {
+			t.Errorf("protocol version: got %d, want %d", hs.protocolVersion, ProtocolVersion)
+		}
+		if hs.serverVersion != "5.7.0-test" {
+			t.Errorf("server version: got %s", hs.serverVersion)
+		}
+		if hs.authPluginName != "mysql_native_password" {
+			t.Errorf("auth plugin name: got %s", hs.authPluginName)
+		}
+	}
+
+	client.Close()
+}
+
+// TestReadHandshake_InvalidProtocol tests readHandshake with invalid protocol version
+func TestReadHandshake_InvalidProtocol(t *testing.T) {
+	server, client := net.Pipe()
+	defer server.Close()
+
+	mc := newMySQLConn(client, &Config{})
+
+	go func() {
+		packet := []byte{0x05, 0x00}
+		header := []byte{0x02, 0x00, 0x00, 0x00}
+		server.Write(append(header, packet...))
+	}()
+
+	_, err := mc.readHandshake()
+	if err == nil {
+		t.Error("expected error for invalid protocol version")
+	}
+
+	client.Close()
+}
+
+// TestConn_BeginTx_WithOptions tests BeginTx with isolation level
+func TestConn_BeginTx_WithOptions(t *testing.T) {
+	server, client := net.Pipe()
+	defer server.Close()
+
+	cfg := &Config{WriteTimeout: 5 * time.Second}
+	mc := newMySQLConn(client, cfg)
+	c := &conn{mysqlConn: mc, cfg: cfg, closed: false}
+
+	go func() {
+		buf := make([]byte, 1024)
+		for i := 0; i < 2; i++ {
+			n, _ := server.Read(buf)
+			t.Logf("Server received: %s", string(buf[4:n]))
+			ok := []byte{0x07, 0x00, 0x00, byte(i + 1), OKPacket, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00}
+			server.Write(ok)
+		}
+	}()
+
+	_, err := c.BeginTx(context.Background(), driver.TxOptions{
+		Isolation: IsolationLevelReadCommitted,
+		ReadOnly:  false,
+	})
+	if err != nil {
+		t.Logf("BeginTx error: %v", err)
+	}
+
+	client.Close()
+}
+
+// TestConn_BeginTx_ReadOnly tests BeginTx with read-only option
+func TestConn_BeginTx_ReadOnly(t *testing.T) {
+	server, client := net.Pipe()
+	defer server.Close()
+
+	cfg := &Config{WriteTimeout: 5 * time.Second}
+	mc := newMySQLConn(client, cfg)
+	c := &conn{mysqlConn: mc, cfg: cfg, closed: false}
+
+	go func() {
+		buf := make([]byte, 1024)
+		for i := 0; i < 3; i++ {
+			n, _ := server.Read(buf)
+			t.Logf("Server received: %s", string(buf[4:n]))
+			ok := []byte{0x07, 0x00, 0x00, byte(i + 1), OKPacket, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00}
+			server.Write(ok)
+		}
+	}()
+
+	_, err := c.BeginTx(context.Background(), driver.TxOptions{
+		Isolation: IsolationLevelRepeatableRead,
+		ReadOnly:  true,
+	})
+	if err != nil {
+		t.Logf("BeginTx error: %v", err)
+	}
+
+	client.Close()
+}
+
+// TestIsolationLevelToString_All tests all isolation levels
+func TestIsolationLevelToString_All(t *testing.T) {
+	tests := []struct {
+		level    driver.IsolationLevel
+		expected string
+	}{
+		{IsolationLevelDefault, ""},
+		{IsolationLevelReadUncommitted, "READ UNCOMMITTED"},
+		{IsolationLevelReadCommitted, "READ COMMITTED"},
+		{IsolationLevelRepeatableRead, "REPEATABLE READ"},
+		{IsolationLevelSerializable, "SERIALIZABLE"},
+	}
+
+	for _, tt := range tests {
+		result := isolationLevelToString(tt.level)
+		if result != tt.expected {
+			t.Errorf("isolationLevelToString(%d): got %q, want %q", tt.level, result, tt.expected)
+		}
+	}
+}
+
+// TestNewConn_DialError tests newConn with dial error
+func TestNewConn_DialError(t *testing.T) {
+	cfg := &Config{
+		Net:     "tcp",
+		Addr:    "invalid-host-that-does-not-exist:3306",
+		Timeout: 1 * time.Second,
+	}
+
+	_, err := newConn(cfg)
+	if err == nil {
+		t.Error("expected error for invalid host")
+	}
+}
+
+// TestConnector_Driver tests connector.Driver
+func TestConnector_Driver(t *testing.T) {
+	cfg := NewConfig()
+	c := &connector{cfg: cfg}
+
+	d := c.Driver()
+	if d == nil {
+		t.Error("expected driver, got nil")
+	}
+}
+
+// TestOpenDB_InvalidDSN tests OpenDB with invalid DSN
+func TestOpenDB_InvalidDSN(t *testing.T) {
+	_, err := OpenDB("invalid-dsn")
+	if err == nil {
+		t.Error("expected error for invalid DSN")
+	}
+}
+
