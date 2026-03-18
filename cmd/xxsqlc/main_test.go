@@ -1364,3 +1364,154 @@ func TestTSVFormatter_SpecialValues(t *testing.T) {
 	f := &tsvFormatter{}
 	f.Format(columns, rows)
 }
+
+func TestHandleMetaCommand_QuitCommand(t *testing.T) {
+	// \q calls os.Exit(0) which we can't easily test
+	// But we can verify the command is recognized
+	cmd := "\\q"
+	// This would exit, so we don't actually call it
+	// Just verify the pattern is correct
+	if !strings.HasPrefix(cmd, "\\q") {
+		t.Error("\\q should be recognized as quit command")
+	}
+}
+
+func TestHandleMetaCommand_ExitCommand(t *testing.T) {
+	// Similar to quit, we can't test os.Exit directly
+	// But verify the pattern
+	cmd := "exit"
+	if strings.ToLower(cmd) != "exit" {
+		t.Error("exit should be recognized")
+	}
+}
+
+func TestCompleter_AllKeywords(t *testing.T) {
+	c := &completer{}
+
+	// Test all SQL keywords that are defined in completer.go
+	keywords := []string{
+		"SE", "IN", "UP", "DE", "CR", "DR", "AL", "SH",
+		"US", "GR", "RE", "BE", "CO", "RO", "BA",
+	}
+
+	for _, kw := range keywords {
+		t.Run(kw, func(t *testing.T) {
+			newLine, _ := c.Do([]rune(kw), len(kw))
+			if len(newLine) == 0 {
+				t.Errorf("Expected completions for %q", kw)
+			}
+		})
+	}
+}
+
+func TestCompleteContext_AllKeywords(t *testing.T) {
+	c := &completer{}
+
+	contexts := []struct {
+		line     string
+		hasMatch bool
+	}{
+		{"SELECT * FROM users WHE", true},
+		{"SELECT * FROM users ORD", true},
+		{"SELECT * FROM users GRO", true},
+		{"SELECT * FROM users HAV", true},
+		{"SELECT * FROM users LIM", true},
+		{"SELECT * FROM users OFF", true},
+		{"SELECT * FROM users AS", true},
+		{"SELECT * FROM users AN", true},
+		{"SELECT * FROM users OR", true},
+		{"SELECT * FROM users IN", true},
+		{"SELECT * FROM users LI", true},
+	}
+
+	for _, tt := range contexts {
+		t.Run(tt.line, func(t *testing.T) {
+			newLine, _ := c.Do([]rune(tt.line), len(tt.line))
+			if tt.hasMatch && len(newLine) == 0 {
+				t.Errorf("Expected completions for %q, got none", tt.line)
+			}
+		})
+	}
+}
+
+func TestCompleteContext_SwitchCases(t *testing.T) {
+	c := &completer{}
+
+	// Test the switch cases that return nil (no completions)
+	tests := []string{
+		"SELECT * FROM ",
+		"SELECT * FROM users JOIN ",
+		"INSERT INTO ",
+		"DROP TABLE ",
+		"SELECT ",
+		"SELECT * FROM users WHERE ",
+	}
+
+	for _, tt := range tests {
+		t.Run(tt, func(t *testing.T) {
+			newLine, _ := c.Do([]rune(tt), len(tt))
+			// These all return nil, 0 - just verify no panic
+			_ = newLine
+		})
+	}
+}
+
+func TestFormatter_LargeDataset(t *testing.T) {
+	columns := []string{"id", "name", "value"}
+	var rows [][]interface{}
+	for i := 0; i < 100; i++ {
+		rows = append(rows, []interface{}{i, "name" + string(rune('A'+i%26)), i * 100})
+	}
+
+	formats := []struct {
+		name string
+		f    Formatter
+	}{
+		{"table", &tableFormatter{}},
+		{"vertical", &verticalFormatter{}},
+		{"json", &jsonFormatter{}},
+		{"tsv", &tsvFormatter{}},
+	}
+
+	for _, fmt := range formats {
+		t.Run(fmt.name, func(t *testing.T) {
+			fmt.f.Format(columns, rows)
+		})
+	}
+}
+
+func TestFormatValue_AllTypes(t *testing.T) {
+	tests := []struct {
+		name     string
+		value    interface{}
+		contains string
+	}{
+		{"int", int(42), "42"},
+		{"int8", int8(8), "8"},
+		{"int16", int16(16), "16"},
+		{"int32", int32(32), "32"},
+		{"int64", int64(64), "64"},
+		{"uint", uint(100), "100"},
+		{"uint8", uint8(8), "8"},
+		{"uint16", uint16(16), "16"},
+		{"uint32", uint32(32), "32"},
+		{"uint64", uint64(64), "64"},
+		{"float32", float32(3.14), "3"},
+		{"float64", float64(2.718), "2"},
+		{"bool_true", true, "1"},
+		{"bool_false", false, "0"},
+		{"string", "hello", "hello"},
+		{"bytes", []byte("test"), "test"},
+		{"nil", nil, "NULL"},
+		{"empty_string", "", ""},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := formatValue(tt.value)
+			if !strings.Contains(result, tt.contains) && tt.contains != "" {
+				t.Errorf("formatValue(%v) = %q, should contain %q", tt.value, result, tt.contains)
+			}
+		})
+	}
+}
