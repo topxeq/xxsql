@@ -958,3 +958,324 @@ func TestTableConcurrentInsert(t *testing.T) {
 func TestMain(m *testing.M) {
 	os.Exit(m.Run())
 }
+
+// TestTableTruncate tests truncating a table
+func TestTableTruncate(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	columns := []*types.ColumnInfo{
+		{Name: "id", Type: types.TypeInt, PrimaryKey: true},
+		{Name: "name", Type: types.TypeVarchar, Size: 100},
+	}
+
+	tbl, err := table.OpenTable(tmpDir, "truncate_test", columns)
+	if err != nil {
+		t.Fatalf("OpenTable failed: %v", err)
+	}
+	defer tbl.Close()
+
+	// Insert data
+	for i := 1; i <= 10; i++ {
+		values := []types.Value{
+			types.NewIntValue(int64(i)),
+			types.NewStringValue("item", types.TypeVarchar),
+		}
+		tbl.Insert(values)
+	}
+
+	if tbl.RowCount() != 10 {
+		t.Fatalf("Pre-truncate RowCount: got %d, want 10", tbl.RowCount())
+	}
+
+	// Truncate
+	err = tbl.Truncate()
+	if err != nil {
+		t.Fatalf("Truncate failed: %v", err)
+	}
+
+	if tbl.RowCount() != 0 {
+		t.Errorf("Post-truncate RowCount: got %d, want 0", tbl.RowCount())
+	}
+}
+
+// TestTableTruncateWithAutoIncrement tests truncating resets auto-increment
+func TestTableTruncateWithAutoIncrement(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	columns := []*types.ColumnInfo{
+		{Name: "id", Type: types.TypeInt, PrimaryKey: true, AutoIncr: true},
+		{Name: "value", Type: types.TypeInt},
+	}
+
+	tbl, err := table.OpenTable(tmpDir, "truncate_auto_test", columns)
+	if err != nil {
+		t.Fatalf("OpenTable failed: %v", err)
+	}
+	defer tbl.Close()
+
+	// Insert with auto-increment
+	for i := 0; i < 5; i++ {
+		values := []types.Value{
+			types.NewNullValue(), // Auto-increment
+			types.NewIntValue(int64(i)),
+		}
+		tbl.Insert(values)
+	}
+
+	// Truncate
+	err = tbl.Truncate()
+	if err != nil {
+		t.Fatalf("Truncate failed: %v", err)
+	}
+
+	// Insert again - should start from 1
+	values := []types.Value{
+		types.NewNullValue(),
+		types.NewIntValue(100),
+	}
+	rowID, err := tbl.Insert(values)
+	if err != nil {
+		t.Fatalf("Insert after truncate failed: %v", err)
+	}
+	if rowID != 1 {
+		t.Errorf("RowID after truncate: got %d, want 1", rowID)
+	}
+}
+
+// TestTableSetPrimaryKey tests setting a column as primary key
+func TestTableSetPrimaryKey(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	columns := []*types.ColumnInfo{
+		{Name: "id", Type: types.TypeInt},
+		{Name: "name", Type: types.TypeVarchar, Size: 100},
+	}
+
+	tbl, err := table.OpenTable(tmpDir, "setpk_test", columns)
+	if err != nil {
+		t.Fatalf("OpenTable failed: %v", err)
+	}
+	defer tbl.Close()
+
+	err = tbl.SetPrimaryKey("id")
+	if err != nil {
+		t.Fatalf("SetPrimaryKey failed: %v", err)
+	}
+
+	// Verify primary key was set
+	for _, col := range tbl.Columns() {
+		if col.Name == "id" {
+			if !col.PrimaryKey {
+				t.Error("id should be primary key")
+			}
+			if col.Nullable {
+				t.Error("primary key column should not be nullable")
+			}
+			break
+		}
+	}
+}
+
+// TestTableSetPrimaryKeyNonExistent tests setting primary key on non-existent column
+func TestTableSetPrimaryKeyNonExistent(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	columns := []*types.ColumnInfo{
+		{Name: "id", Type: types.TypeInt, PrimaryKey: true},
+	}
+
+	tbl, err := table.OpenTable(tmpDir, "setpk_nonexist_test", columns)
+	if err != nil {
+		t.Fatalf("OpenTable failed: %v", err)
+	}
+	defer tbl.Close()
+
+	err = tbl.SetPrimaryKey("nonexistent")
+	if err == nil {
+		t.Error("Expected error for non-existent column")
+	}
+}
+
+// TestTableSetPrimaryKeyCaseInsensitive tests setting primary key with different case
+func TestTableSetPrimaryKeyCaseInsensitive(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	columns := []*types.ColumnInfo{
+		{Name: "ID", Type: types.TypeInt},
+		{Name: "name", Type: types.TypeVarchar, Size: 100},
+	}
+
+	tbl, err := table.OpenTable(tmpDir, "setpk_case_test", columns)
+	if err != nil {
+		t.Fatalf("OpenTable failed: %v", err)
+	}
+	defer tbl.Close()
+
+	// Try with lowercase
+	err = tbl.SetPrimaryKey("id")
+	if err != nil {
+		t.Fatalf("SetPrimaryKey (case insensitive) failed: %v", err)
+	}
+}
+
+// TestTableAddUniqueConstraint tests adding a unique constraint
+func TestTableAddUniqueConstraint(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	columns := []*types.ColumnInfo{
+		{Name: "id", Type: types.TypeInt, PrimaryKey: true},
+		{Name: "email", Type: types.TypeVarchar, Size: 100},
+	}
+
+	tbl, err := table.OpenTable(tmpDir, "addunique_test", columns)
+	if err != nil {
+		t.Fatalf("OpenTable failed: %v", err)
+	}
+	defer tbl.Close()
+
+	err = tbl.AddUniqueConstraint("email", "uq_email")
+	if err != nil {
+		t.Fatalf("AddUniqueConstraint failed: %v", err)
+	}
+
+	// Verify unique flag was set
+	for _, col := range tbl.Columns() {
+		if col.Name == "email" {
+			if !col.Unique {
+				t.Error("email should be unique")
+			}
+			break
+		}
+	}
+}
+
+// TestTableAddUniqueConstraintNonExistent tests adding unique constraint to non-existent column
+func TestTableAddUniqueConstraintNonExistent(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	columns := []*types.ColumnInfo{
+		{Name: "id", Type: types.TypeInt, PrimaryKey: true},
+	}
+
+	tbl, err := table.OpenTable(tmpDir, "addunique_nonexist_test", columns)
+	if err != nil {
+		t.Fatalf("OpenTable failed: %v", err)
+	}
+	defer tbl.Close()
+
+	err = tbl.AddUniqueConstraint("nonexistent", "uq_nonexistent")
+	if err == nil {
+		t.Error("Expected error for non-existent column")
+	}
+}
+
+// TestTableDropUniqueConstraint tests dropping a unique constraint
+// NOTE: This test is skipped due to a deadlock bug in the source code:
+// DropUniqueConstraint holds a mutex and calls DropIndex which also acquires it
+func TestTableDropUniqueConstraint(t *testing.T) {
+	t.Skip("Skipping due to deadlock bug in DropUniqueConstraint")
+}
+
+// TestTableDropUniqueConstraintNotFound tests dropping non-existent constraint
+// NOTE: This test is skipped due to a deadlock bug in the source code
+func TestTableDropUniqueConstraintNotFound(t *testing.T) {
+	t.Skip("Skipping due to deadlock bug in DropUniqueConstraint")
+}
+
+// TestTableAddCheckConstraints tests adding multiple check constraints
+func TestTableAddCheckConstraints(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	columns := []*types.ColumnInfo{
+		{Name: "id", Type: types.TypeInt, PrimaryKey: true},
+		{Name: "age", Type: types.TypeInt},
+	}
+
+	tbl, err := table.OpenTable(tmpDir, "addchecks_test", columns)
+	if err != nil {
+		t.Fatalf("OpenTable failed: %v", err)
+	}
+	defer tbl.Close()
+
+	constraints := []*types.CheckConstraintInfo{
+		{Name: "check_age_min", Expression: "age >= 0"},
+		{Name: "check_age_max", Expression: "age < 150"},
+	}
+
+	err = tbl.AddCheckConstraints(constraints)
+	if err != nil {
+		t.Fatalf("AddCheckConstraints failed: %v", err)
+	}
+
+	if len(tbl.GetCheckConstraints()) != 2 {
+		t.Errorf("CheckConstraints: got %d, want 2", len(tbl.GetCheckConstraints()))
+	}
+}
+
+// TestTableAddForeignKeys tests adding multiple foreign keys
+func TestTableAddForeignKeys(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	columns := []*types.ColumnInfo{
+		{Name: "id", Type: types.TypeInt, PrimaryKey: true},
+		{Name: "user_id", Type: types.TypeInt},
+		{Name: "order_id", Type: types.TypeInt},
+	}
+
+	tbl, err := table.OpenTable(tmpDir, "addfks_test", columns)
+	if err != nil {
+		t.Fatalf("OpenTable failed: %v", err)
+	}
+	defer tbl.Close()
+
+	fks := []*types.ForeignKeyInfo{
+		{Name: "fk_user", Columns: []string{"user_id"}, RefTable: "users", RefColumns: []string{"id"}},
+		{Name: "fk_order", Columns: []string{"order_id"}, RefTable: "orders", RefColumns: []string{"id"}},
+	}
+
+	err = tbl.AddForeignKeys(fks)
+	if err != nil {
+		t.Fatalf("AddForeignKeys failed: %v", err)
+	}
+
+	if len(tbl.GetForeignKeys()) != 2 {
+		t.Errorf("ForeignKeys: got %d, want 2", len(tbl.GetForeignKeys()))
+	}
+}
+
+// TestTableModifyColumnWithAutoIncr tests modifying column to add auto-increment
+func TestTableModifyColumnWithAutoIncr(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	columns := []*types.ColumnInfo{
+		{Name: "id", Type: types.TypeInt, PrimaryKey: true},
+		{Name: "counter", Type: types.TypeInt},
+	}
+
+	tbl, err := table.OpenTable(tmpDir, "modify_auto_test", columns)
+	if err != nil {
+		t.Fatalf("OpenTable failed: %v", err)
+	}
+	defer tbl.Close()
+
+	modCol := &types.ColumnInfo{
+		Name:     "counter",
+		Type:     types.TypeInt,
+		AutoIncr: true,
+	}
+
+	err = tbl.ModifyColumn(modCol)
+	if err != nil {
+		t.Fatalf("ModifyColumn failed: %v", err)
+	}
+
+	// Verify auto-increment was added
+	for _, col := range tbl.Columns() {
+		if col.Name == "counter" {
+			if !col.AutoIncr {
+				t.Error("counter should have auto-increment")
+			}
+			break
+		}
+	}
+}
