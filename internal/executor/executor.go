@@ -4,6 +4,7 @@ package executor
 import (
 	"fmt"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -542,8 +543,93 @@ func (e *Executor) executeSelect(stmt *sql.SelectStmt) (*Result, error) {
 		result.Rows = append(result.Rows, resultRow)
 	}
 
+	// Apply ORDER BY if present
+	if len(stmt.OrderBy) > 0 {
+		result.Rows = e.sortRows(stmt.OrderBy, resultCols, result.Rows)
+	}
+
 	result.RowCount = len(result.Rows)
 	return result, nil
+}
+
+// sortRows sorts the result rows according to ORDER BY clause.
+func (e *Executor) sortRows(orderBy []*sql.OrderByItem, cols []ColumnInfo, rows [][]interface{}) [][]interface{} {
+	// Build column index map
+	colIndexMap := make(map[string]int)
+	for i, col := range cols {
+		colIndexMap[strings.ToLower(col.Name)] = i
+	}
+
+	// Determine sort indices and directions
+	type sortKey struct {
+		index     int
+		ascending bool
+	}
+	sortKeys := make([]sortKey, 0, len(orderBy))
+
+	for _, item := range orderBy {
+		var colName string
+		switch expr := item.Expr.(type) {
+		case *sql.ColumnRef:
+			colName = strings.ToLower(expr.Name)
+		case *sql.Literal:
+			// Handle numeric column reference (e.g., ORDER BY 1)
+			if expr.Type == sql.LiteralNumber {
+				var idx int
+				switch v := expr.Value.(type) {
+				case int:
+					idx = v - 1
+				case int64:
+					idx = int(v) - 1
+				case float64:
+					idx = int(v) - 1
+				default:
+					continue
+				}
+				if idx >= 0 && idx < len(cols) {
+					sortKeys = append(sortKeys, sortKey{index: idx, ascending: item.Ascending})
+				}
+			}
+			continue
+		default:
+			continue
+		}
+
+		idx, ok := colIndexMap[colName]
+		if !ok {
+			continue
+		}
+		sortKeys = append(sortKeys, sortKey{index: idx, ascending: item.Ascending})
+	}
+
+	if len(sortKeys) == 0 {
+		return rows
+	}
+
+	// Sort rows
+	sort.Slice(rows, func(i, j int) bool {
+		for _, key := range sortKeys {
+			if key.index >= len(rows[i]) || key.index >= len(rows[j]) {
+				continue
+			}
+
+			vi := rows[i][key.index]
+			vj := rows[j][key.index]
+
+			cmp := compareValues(vi, vj)
+			if cmp == 0 {
+				continue
+			}
+
+			if key.ascending {
+				return cmp < 0
+			}
+			return cmp > 0
+		}
+		return false
+	})
+
+	return rows
 }
 
 // executeUnion executes a UNION statement.
