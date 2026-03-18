@@ -2,9 +2,11 @@ package executor
 
 import (
 	"os"
+	"strings"
 	"testing"
 
 	"github.com/topxeq/xxsql/internal/storage"
+	"github.com/topxeq/xxsql/internal/storage/types"
 )
 
 // ============================================================================
@@ -1033,5 +1035,146 @@ func TestJoinOrderByNumericColumn(t *testing.T) {
 
 	if result.RowCount != 3 {
 		t.Errorf("Expected 3 rows, got %d", result.RowCount)
+	}
+}
+
+// ============================================================================
+// Helper Function Tests
+// ============================================================================
+
+func TestJoinTable_HasColumn(t *testing.T) {
+	tbl := &joinTable{
+		name:    "users",
+		columns: []*types.ColumnInfo{{Name: "id"}, {Name: "name"}},
+		colIndex: map[string]int{
+			"id":   0,
+			"name": 1,
+		},
+	}
+
+	if !tbl.hasColumn("id") {
+		t.Error("hasColumn should return true for 'id'")
+	}
+	if !tbl.hasColumn("name") {
+		t.Error("hasColumn should return true for 'name'")
+	}
+	if tbl.hasColumn("nonexistent") {
+		t.Error("hasColumn should return false for non-existent column")
+	}
+
+	// Test case insensitivity
+	if !tbl.hasColumn("ID") {
+		t.Error("hasColumn should be case insensitive")
+	}
+	if !tbl.hasColumn("NAME") {
+		t.Error("hasColumn should be case insensitive")
+	}
+}
+
+func TestJoinTable_LookupKey(t *testing.T) {
+	// With alias
+	tblWithAlias := &joinTable{
+		name:  "users",
+		alias: "u",
+	}
+	if tblWithAlias.lookupKey() != "u" {
+		t.Errorf("lookupKey with alias: got %q, want 'u'", tblWithAlias.lookupKey())
+	}
+
+	// Without alias
+	tblNoAlias := &joinTable{
+		name: "users",
+	}
+	if tblNoAlias.lookupKey() != "users" {
+		t.Errorf("lookupKey without alias: got %q, want 'users'", tblNoAlias.lookupKey())
+	}
+}
+
+func TestJoinedRow_GetTableValues(t *testing.T) {
+	tbl := &joinTable{
+		name:     "users",
+		startIdx: 2,
+		columns:  []*types.ColumnInfo{{Name: "id"}, {Name: "name"}},
+	}
+
+	row := &joinedRow{
+		values: []interface{}{"other1", "other2", 1, "Alice", "other3"},
+	}
+
+	result := row.getTableValues(tbl)
+	if len(result) != 2 {
+		t.Errorf("getTableValues length: got %d, want 2", len(result))
+	}
+	if result[0] != 1 {
+		t.Errorf("getTableValues[0]: got %v, want 1", result[0])
+	}
+	if result[1] != "Alice" {
+		t.Errorf("getTableValues[1]: got %v, want 'Alice'", result[1])
+	}
+}
+
+func TestCreateNullRow(t *testing.T) {
+	row := createNullRow(5)
+
+	if len(row.values) != 5 {
+		t.Errorf("values length: got %d, want 5", len(row.values))
+	}
+	if len(row.nullFlags) != 5 {
+		t.Errorf("nullFlags length: got %d, want 5", len(row.nullFlags))
+	}
+
+	// nullFlags are initialized to false by make()
+	for i, v := range row.nullFlags {
+		if v {
+			t.Errorf("nullFlags[%d]: got %v, want false", i, v)
+		}
+	}
+
+	// values should be nil (zero values)
+	for i, v := range row.values {
+		if v != nil {
+			t.Errorf("values[%d]: got %v, want nil", i, v)
+		}
+	}
+}
+
+func TestCompareInts(t *testing.T) {
+	tests := []struct {
+		a, b     int64
+		expected int
+	}{
+		{1, 2, -1},
+		{2, 1, 1},
+		{1, 1, 0},
+		{-1, 1, -1},
+		{1, -1, 1},
+		{0, 0, 0},
+	}
+
+	for _, tt := range tests {
+		result := compareInts(tt.a, tt.b)
+		if result != tt.expected {
+			t.Errorf("compareInts(%d, %d) = %d, want %d", tt.a, tt.b, result, tt.expected)
+		}
+	}
+}
+
+func TestJoinTableColumnsToLower(t *testing.T) {
+	// Test that column names are stored lowercase in colIndex
+	tbl := &joinTable{
+		name:    "Users",
+		columns: []*types.ColumnInfo{{Name: "ID"}, {Name: "Name"}},
+		colIndex: map[string]int{
+			strings.ToLower("ID"):   0,
+			strings.ToLower("Name"): 1,
+		},
+	}
+
+	// Both uppercase and lowercase lookups should work
+	if !tbl.hasColumn("ID") {
+		t.Error("hasColumn should find 'ID'")
+	}
+	if !tbl.hasColumn("id") {
+		t.Error("hasColumn should find 'id'")
 	}
 }
