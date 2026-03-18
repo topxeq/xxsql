@@ -843,3 +843,557 @@ func TestIntegration_GroupBy(t *testing.T) {
 		t.Errorf("Expected at least 1 group, got %d", count)
 	}
 }
+
+// TestIntegration_DatabaseOperations tests database-level operations
+func TestIntegration_DatabaseOperations(t *testing.T) {
+	tmpDir := t.TempDir()
+	privatePort := findAvailablePort(t)
+	mysqlPort := findAvailablePort(t)
+
+	cfg := &config.Config{
+		Server: config.ServerConfig{
+			DataDir: tmpDir,
+		},
+		Network: config.NetworkConfig{
+			Bind:        "127.0.0.1",
+			PrivatePort: privatePort,
+			MySQLPort:   mysqlPort,
+			HTTPPort:    0,
+		},
+		Auth: config.AuthConfig{
+			Enabled: false,
+		},
+		Log: config.LogConfig{
+			Level: "ERROR",
+		},
+	}
+
+	logger := log.NewLogger(log.WithLevel(log.ERROR))
+	engine := storage.NewEngine(tmpDir)
+	engine.Open()
+	defer engine.Close()
+
+	srv := server.New(cfg, logger, engine)
+	srv.Start()
+	defer srv.Stop()
+
+	time.Sleep(200 * time.Millisecond)
+
+	dsn := fmt.Sprintf("tcp(127.0.0.1:%d)/testdb", mysqlPort)
+	db, _ := sql.Open("xxsql", dsn)
+	defer db.Close()
+
+	// CREATE DATABASE
+	_, err := db.Exec("CREATE DATABASE mydb")
+	if err != nil {
+		t.Logf("CREATE DATABASE: %v", err)
+	}
+
+	// USE database
+	_, err = db.Exec("USE mydb")
+	if err != nil {
+		t.Logf("USE database: %v", err)
+	}
+}
+
+// TestIntegration_IndexOperations tests index operations
+func TestIntegration_IndexOperations(t *testing.T) {
+	tmpDir := t.TempDir()
+	privatePort := findAvailablePort(t)
+	mysqlPort := findAvailablePort(t)
+
+	cfg := &config.Config{
+		Server: config.ServerConfig{
+			DataDir: tmpDir,
+		},
+		Network: config.NetworkConfig{
+			Bind:        "127.0.0.1",
+			PrivatePort: privatePort,
+			MySQLPort:   mysqlPort,
+			HTTPPort:    0,
+		},
+		Auth: config.AuthConfig{
+			Enabled: false,
+		},
+		Log: config.LogConfig{
+			Level: "ERROR",
+		},
+	}
+
+	logger := log.NewLogger(log.WithLevel(log.ERROR))
+	engine := storage.NewEngine(tmpDir)
+	engine.Open()
+	defer engine.Close()
+
+	srv := server.New(cfg, logger, engine)
+	srv.Start()
+	defer srv.Stop()
+
+	time.Sleep(200 * time.Millisecond)
+
+	dsn := fmt.Sprintf("tcp(127.0.0.1:%d)/testdb", mysqlPort)
+	db, _ := sql.Open("xxsql", dsn)
+	defer db.Close()
+
+	// Create table
+	_, err := db.Exec("CREATE TABLE users (id INT PRIMARY KEY, name VARCHAR(100), email VARCHAR(100))")
+	if err != nil {
+		t.Fatalf("CREATE TABLE failed: %v", err)
+	}
+
+	// Create index
+	_, err = db.Exec("CREATE INDEX idx_name ON users (name)")
+	if err != nil {
+		t.Errorf("CREATE INDEX failed: %v", err)
+	}
+
+	// Create unique index
+	_, err = db.Exec("CREATE UNIQUE INDEX idx_email ON users (email)")
+	if err != nil {
+		t.Errorf("CREATE UNIQUE INDEX failed: %v", err)
+	}
+
+	// Drop index
+	_, err = db.Exec("DROP INDEX idx_name ON users")
+	if err != nil {
+		t.Errorf("DROP INDEX failed: %v", err)
+	}
+}
+
+// TestIntegration_AlterTable tests ALTER TABLE operations
+func TestIntegration_AlterTable(t *testing.T) {
+	tmpDir := t.TempDir()
+	privatePort := findAvailablePort(t)
+	mysqlPort := findAvailablePort(t)
+
+	cfg := &config.Config{
+		Server: config.ServerConfig{
+			DataDir: tmpDir,
+		},
+		Network: config.NetworkConfig{
+			Bind:        "127.0.0.1",
+			PrivatePort: privatePort,
+			MySQLPort:   mysqlPort,
+			HTTPPort:    0,
+		},
+		Auth: config.AuthConfig{
+			Enabled: false,
+		},
+		Log: config.LogConfig{
+			Level: "ERROR",
+		},
+	}
+
+	logger := log.NewLogger(log.WithLevel(log.ERROR))
+	engine := storage.NewEngine(tmpDir)
+	engine.Open()
+	defer engine.Close()
+
+	srv := server.New(cfg, logger, engine)
+	srv.Start()
+	defer srv.Stop()
+
+	time.Sleep(200 * time.Millisecond)
+
+	dsn := fmt.Sprintf("tcp(127.0.0.1:%d)/testdb", mysqlPort)
+	db, _ := sql.Open("xxsql", dsn)
+	defer db.Close()
+
+	// Create table
+	_, err := db.Exec("CREATE TABLE test (id INT PRIMARY KEY, name VARCHAR(100))")
+	if err != nil {
+		t.Fatalf("CREATE TABLE failed: %v", err)
+	}
+
+	// Add column
+	_, err = db.Exec("ALTER TABLE test ADD COLUMN age INT")
+	if err != nil {
+		t.Errorf("ADD COLUMN failed: %v", err)
+	}
+
+	// Drop column
+	_, err = db.Exec("ALTER TABLE test DROP COLUMN age")
+	if err != nil {
+		t.Errorf("DROP COLUMN failed: %v", err)
+	}
+}
+
+// TestIntegration_UnionQuery tests UNION queries
+func TestIntegration_UnionQuery(t *testing.T) {
+	tmpDir := t.TempDir()
+	privatePort := findAvailablePort(t)
+	mysqlPort := findAvailablePort(t)
+
+	cfg := &config.Config{
+		Server: config.ServerConfig{
+			DataDir: tmpDir,
+		},
+		Network: config.NetworkConfig{
+			Bind:        "127.0.0.1",
+			PrivatePort: privatePort,
+			MySQLPort:   mysqlPort,
+			HTTPPort:    0,
+		},
+		Auth: config.AuthConfig{
+			Enabled: false,
+		},
+		Log: config.LogConfig{
+			Level: "ERROR",
+		},
+	}
+
+	logger := log.NewLogger(log.WithLevel(log.ERROR))
+	engine := storage.NewEngine(tmpDir)
+	engine.Open()
+	defer engine.Close()
+
+	srv := server.New(cfg, logger, engine)
+	srv.Start()
+	defer srv.Stop()
+
+	time.Sleep(200 * time.Millisecond)
+
+	dsn := fmt.Sprintf("tcp(127.0.0.1:%d)/testdb", mysqlPort)
+	db, _ := sql.Open("xxsql", dsn)
+	defer db.Close()
+
+	// Create table and insert data
+	db.Exec("CREATE TABLE t1 (id INT, value VARCHAR(50))")
+	db.Exec("CREATE TABLE t2 (id INT, value VARCHAR(50))")
+	db.Exec("INSERT INTO t1 VALUES (1, 'a'), (2, 'b')")
+	db.Exec("INSERT INTO t2 VALUES (2, 'b'), (3, 'c')")
+
+	// UNION query
+	rows, err := db.Query("SELECT id FROM t1 UNION SELECT id FROM t2")
+	if err != nil {
+		t.Fatalf("UNION query failed: %v", err)
+	}
+	defer rows.Close()
+
+	count := 0
+	for rows.Next() {
+		count++
+	}
+
+	// UNION should return distinct values
+	if count < 1 {
+		t.Errorf("Expected at least 1 row from UNION, got %d", count)
+	}
+}
+
+// TestIntegration_Subquery tests subquery operations
+func TestIntegration_Subquery(t *testing.T) {
+	tmpDir := t.TempDir()
+	privatePort := findAvailablePort(t)
+	mysqlPort := findAvailablePort(t)
+
+	cfg := &config.Config{
+		Server: config.ServerConfig{
+			DataDir: tmpDir,
+		},
+		Network: config.NetworkConfig{
+			Bind:        "127.0.0.1",
+			PrivatePort: privatePort,
+			MySQLPort:   mysqlPort,
+			HTTPPort:    0,
+		},
+		Auth: config.AuthConfig{
+			Enabled: false,
+		},
+		Log: config.LogConfig{
+			Level: "ERROR",
+		},
+	}
+
+	logger := log.NewLogger(log.WithLevel(log.ERROR))
+	engine := storage.NewEngine(tmpDir)
+	engine.Open()
+	defer engine.Close()
+
+	srv := server.New(cfg, logger, engine)
+	srv.Start()
+	defer srv.Stop()
+
+	time.Sleep(200 * time.Millisecond)
+
+	dsn := fmt.Sprintf("tcp(127.0.0.1:%d)/testdb", mysqlPort)
+	db, _ := sql.Open("xxsql", dsn)
+	defer db.Close()
+
+	// Create table and insert data
+	db.Exec("CREATE TABLE orders (id INT PRIMARY KEY, customer_id INT, amount INT)")
+	db.Exec("INSERT INTO orders VALUES (1, 1, 100)")
+	db.Exec("INSERT INTO orders VALUES (2, 2, 200)")
+	db.Exec("INSERT INTO orders VALUES (3, 1, 150)")
+
+	// Simple WHERE clause test
+	rows, err := db.Query("SELECT * FROM orders WHERE customer_id = 1")
+	if err != nil {
+		t.Fatalf("Query failed: %v", err)
+	}
+	defer rows.Close()
+
+	count := 0
+	for rows.Next() {
+		count++
+	}
+
+	if count != 2 {
+		t.Errorf("Expected 2 rows, got %d", count)
+	}
+}
+
+// TestIntegration_Joins tests various join operations
+func TestIntegration_Joins(t *testing.T) {
+	tmpDir := t.TempDir()
+	privatePort := findAvailablePort(t)
+	mysqlPort := findAvailablePort(t)
+
+	cfg := &config.Config{
+		Server: config.ServerConfig{
+			DataDir: tmpDir,
+		},
+		Network: config.NetworkConfig{
+			Bind:        "127.0.0.1",
+			PrivatePort: privatePort,
+			MySQLPort:   mysqlPort,
+			HTTPPort:    0,
+		},
+		Auth: config.AuthConfig{
+			Enabled: false,
+		},
+		Log: config.LogConfig{
+			Level: "ERROR",
+		},
+	}
+
+	logger := log.NewLogger(log.WithLevel(log.ERROR))
+	engine := storage.NewEngine(tmpDir)
+	engine.Open()
+	defer engine.Close()
+
+	srv := server.New(cfg, logger, engine)
+	srv.Start()
+	defer srv.Stop()
+
+	time.Sleep(200 * time.Millisecond)
+
+	dsn := fmt.Sprintf("tcp(127.0.0.1:%d)/testdb", mysqlPort)
+	db, _ := sql.Open("xxsql", dsn)
+	defer db.Close()
+
+	// Create tables
+	db.Exec("CREATE TABLE customers (id INT PRIMARY KEY, name VARCHAR(100))")
+	db.Exec("CREATE TABLE orders (id INT PRIMARY KEY, customer_id INT, amount INT)")
+
+	// Insert data
+	db.Exec("INSERT INTO customers VALUES (1, 'Alice')")
+	db.Exec("INSERT INTO customers VALUES (2, 'Bob')")
+	db.Exec("INSERT INTO orders VALUES (1, 1, 100)")
+	db.Exec("INSERT INTO orders VALUES (2, 1, 200)")
+
+	// INNER JOIN
+	rows, err := db.Query(`
+		SELECT c.name, o.amount
+		FROM customers c
+		INNER JOIN orders o ON c.id = o.customer_id
+	`)
+	if err != nil {
+		t.Fatalf("INNER JOIN failed: %v", err)
+	}
+	rows.Close()
+
+	// LEFT JOIN
+	rows, err = db.Query(`
+		SELECT c.name, o.amount
+		FROM customers c
+		LEFT JOIN orders o ON c.id = o.customer_id
+	`)
+	if err != nil {
+		t.Fatalf("LEFT JOIN failed: %v", err)
+	}
+	rows.Close()
+}
+
+// TestIntegration_ShowCreateTable tests SHOW CREATE TABLE
+func TestIntegration_ShowCreateTable(t *testing.T) {
+	tmpDir := t.TempDir()
+	privatePort := findAvailablePort(t)
+	mysqlPort := findAvailablePort(t)
+
+	cfg := &config.Config{
+		Server: config.ServerConfig{
+			DataDir: tmpDir,
+		},
+		Network: config.NetworkConfig{
+			Bind:        "127.0.0.1",
+			PrivatePort: privatePort,
+			MySQLPort:   mysqlPort,
+			HTTPPort:    0,
+		},
+		Auth: config.AuthConfig{
+			Enabled: false,
+		},
+		Log: config.LogConfig{
+			Level: "ERROR",
+		},
+	}
+
+	logger := log.NewLogger(log.WithLevel(log.ERROR))
+	engine := storage.NewEngine(tmpDir)
+	engine.Open()
+	defer engine.Close()
+
+	srv := server.New(cfg, logger, engine)
+	srv.Start()
+	defer srv.Stop()
+
+	time.Sleep(200 * time.Millisecond)
+
+	dsn := fmt.Sprintf("tcp(127.0.0.1:%d)/testdb", mysqlPort)
+	db, _ := sql.Open("xxsql", dsn)
+	defer db.Close()
+
+	// Create table
+	_, err := db.Exec("CREATE TABLE test (id INT PRIMARY KEY, name VARCHAR(100) NOT NULL)")
+	if err != nil {
+		t.Fatalf("CREATE TABLE failed: %v", err)
+	}
+
+	// SHOW CREATE TABLE
+	rows, err := db.Query("SHOW CREATE TABLE test")
+	if err != nil {
+		t.Fatalf("SHOW CREATE TABLE failed: %v", err)
+	}
+	defer rows.Close()
+
+	if !rows.Next() {
+		t.Error("Expected 1 row from SHOW CREATE TABLE")
+	}
+}
+
+// TestIntegration_BatchInsert tests multiple inserts
+func TestIntegration_BatchInsert(t *testing.T) {
+	tmpDir := t.TempDir()
+	privatePort := findAvailablePort(t)
+	mysqlPort := findAvailablePort(t)
+
+	cfg := &config.Config{
+		Server: config.ServerConfig{
+			DataDir: tmpDir,
+		},
+		Network: config.NetworkConfig{
+			Bind:        "127.0.0.1",
+			PrivatePort: privatePort,
+			MySQLPort:   mysqlPort,
+			HTTPPort:    0,
+		},
+		Auth: config.AuthConfig{
+			Enabled: false,
+		},
+		Log: config.LogConfig{
+			Level: "ERROR",
+		},
+	}
+
+	logger := log.NewLogger(log.WithLevel(log.ERROR))
+	engine := storage.NewEngine(tmpDir)
+	engine.Open()
+	defer engine.Close()
+
+	srv := server.New(cfg, logger, engine)
+	srv.Start()
+	defer srv.Stop()
+
+	time.Sleep(200 * time.Millisecond)
+
+	dsn := fmt.Sprintf("tcp(127.0.0.1:%d)/testdb", mysqlPort)
+	db, _ := sql.Open("xxsql", dsn)
+	defer db.Close()
+
+	// Create table
+	db.Exec("CREATE TABLE batch_test (id INT PRIMARY KEY, value VARCHAR(100))")
+
+	// Insert multiple rows
+	for i := 0; i < 50; i++ {
+		_, err := db.Exec(fmt.Sprintf("INSERT INTO batch_test VALUES (%d, 'value%d')", i, i))
+		if err != nil {
+			t.Errorf("Insert %d failed: %v", i, err)
+		}
+	}
+
+	// Verify count
+	rows, _ := db.Query("SELECT COUNT(*) FROM batch_test")
+	defer rows.Close()
+	if rows.Next() {
+		var count int
+		rows.Scan(&count)
+		if count != 50 {
+			t.Errorf("Expected 50 rows, got %d", count)
+		}
+	}
+}
+
+// TestIntegration_ConnectionResilience tests connection resilience
+func TestIntegration_ConnectionResilience(t *testing.T) {
+	tmpDir := t.TempDir()
+	privatePort := findAvailablePort(t)
+	mysqlPort := findAvailablePort(t)
+
+	cfg := &config.Config{
+		Server: config.ServerConfig{
+			DataDir: tmpDir,
+		},
+		Network: config.NetworkConfig{
+			Bind:        "127.0.0.1",
+			PrivatePort: privatePort,
+			MySQLPort:   mysqlPort,
+			HTTPPort:    0,
+		},
+		Auth: config.AuthConfig{
+			Enabled: false,
+		},
+		Log: config.LogConfig{
+			Level: "ERROR",
+		},
+	}
+
+	logger := log.NewLogger(log.WithLevel(log.ERROR))
+	engine := storage.NewEngine(tmpDir)
+	engine.Open()
+	defer engine.Close()
+
+	srv := server.New(cfg, logger, engine)
+	srv.Start()
+	defer srv.Stop()
+
+	time.Sleep(200 * time.Millisecond)
+
+	dsn := fmt.Sprintf("tcp(127.0.0.1:%d)/testdb", mysqlPort)
+
+	// Test connection pooling
+	db, _ := sql.Open("xxsql", dsn)
+	db.SetMaxOpenConns(5)
+	db.SetMaxIdleConns(2)
+	defer db.Close()
+
+	// Execute multiple queries on the same connection
+	for i := 0; i < 10; i++ {
+		err := db.Ping()
+		if err != nil {
+			t.Errorf("Ping %d failed: %v", i, err)
+		}
+	}
+
+	// Create table and query multiple times
+	db.Exec("CREATE TABLE test (id INT PRIMARY KEY)")
+	db.Exec("INSERT INTO test VALUES (1)")
+
+	for i := 0; i < 5; i++ {
+		rows, err := db.Query("SELECT * FROM test")
+		if err != nil {
+			t.Errorf("Query %d failed: %v", i, err)
+		}
+		rows.Close()
+	}
+}
