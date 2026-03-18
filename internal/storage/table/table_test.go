@@ -1170,16 +1170,61 @@ func TestTableAddUniqueConstraintNonExistent(t *testing.T) {
 }
 
 // TestTableDropUniqueConstraint tests dropping a unique constraint
-// NOTE: This test is skipped due to a deadlock bug in the source code:
-// DropUniqueConstraint holds a mutex and calls DropIndex which also acquires it
 func TestTableDropUniqueConstraint(t *testing.T) {
-	t.Skip("Skipping due to deadlock bug in DropUniqueConstraint")
+	tmpDir := t.TempDir()
+
+	columns := []*types.ColumnInfo{
+		{Name: "id", Type: types.TypeInt, PrimaryKey: true},
+		{Name: "email", Type: types.TypeVarchar, Size: 100},
+	}
+
+	tbl, err := table.OpenTable(tmpDir, "dropunique_test", columns)
+	if err != nil {
+		t.Fatalf("OpenTable failed: %v", err)
+	}
+	defer tbl.Close()
+
+	// First add unique constraint
+	err = tbl.AddUniqueConstraint("email", "uq_email")
+	if err != nil {
+		t.Fatalf("AddUniqueConstraint failed: %v", err)
+	}
+
+	// Then drop it
+	err = tbl.DropUniqueConstraint("uq_email")
+	if err != nil {
+		t.Fatalf("DropUniqueConstraint failed: %v", err)
+	}
+
+	// Verify unique flag was removed
+	for _, col := range tbl.Columns() {
+		if col.Name == "email" {
+			if col.Unique {
+				t.Error("email should not be unique after drop")
+			}
+			break
+		}
+	}
 }
 
 // TestTableDropUniqueConstraintNotFound tests dropping non-existent constraint
-// NOTE: This test is skipped due to a deadlock bug in the source code
 func TestTableDropUniqueConstraintNotFound(t *testing.T) {
-	t.Skip("Skipping due to deadlock bug in DropUniqueConstraint")
+	tmpDir := t.TempDir()
+
+	columns := []*types.ColumnInfo{
+		{Name: "id", Type: types.TypeInt, PrimaryKey: true},
+	}
+
+	tbl, err := table.OpenTable(tmpDir, "dropunique_notfound_test", columns)
+	if err != nil {
+		t.Fatalf("OpenTable failed: %v", err)
+	}
+	defer tbl.Close()
+
+	err = tbl.DropUniqueConstraint("nonexistent")
+	if err == nil {
+		t.Error("Expected error for non-existent constraint")
+	}
 }
 
 // TestTableAddCheckConstraints tests adding multiple check constraints

@@ -1162,8 +1162,17 @@ func (t *Table) DropUniqueConstraint(constraintName string) error {
 		return fmt.Errorf("UNIQUE constraint %s not found", constraintName)
 	}
 
-	// Drop the index using table's DropIndex method
-	_ = t.DropIndex(constraintName)
+	// Drop the index directly (not via DropIndex to avoid deadlock)
+	// We already hold the lock, so we operate directly on indexMgr
+	_ = t.indexMgr.DropIndex(constraintName)
+
+	// Remove from metadata
+	for i, idx := range t.info.Indexes {
+		if idx.Name == constraintName {
+			t.info.Indexes = append(t.info.Indexes[:i], t.info.Indexes[i+1:]...)
+			break
+		}
+	}
 
 	t.info.ModifiedAt = time.Now()
 	return t.saveMeta()
