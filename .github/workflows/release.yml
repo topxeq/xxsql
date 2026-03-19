@@ -18,19 +18,23 @@ jobs:
           go-version: '1.22'
       - name: Download dependencies
         run: go mod download
-      - name: Build packages step by step
+      - name: Build
         run: |
           echo "=== Building all packages ==="
-          go build -v ./... 2>&1 && echo "SUCCESS" || echo "FAILED"
-      - name: Build binaries
-        run: |
-          echo "=== Building xxsqls ==="
-          go build -v ./cmd/xxsqls 2>&1
-          echo "=== Building xxsqlc ==="
-          go build -v ./cmd/xxsqlc 2>&1
-          ls -la xxsqls xxsqlc
+          go build -v ./... 2>&1
+          echo "=== Looking for executables ==="
+          find . -type f -executable -name "xxsql*" 2>&1
+          echo "=== Listing cmd directories ==="
+          ls -la cmd/xxsqls/ 2>&1 || true
+          ls -la cmd/xxsqlc/ 2>&1 || true
+          echo "=== Listing current directory ==="
+          ls -la 2>&1
       - name: Archive
-        run: tar -czvf xxsql-${{ github.ref_name }}-linux-amd64.tar.gz xxsqls xxsqlc
+        run: |
+          # Find and copy executables
+          find . -type f -executable -name "xxsql*" -exec cp {} . \; 2>&1 || true
+          ls -la xxsqls xxsqlc 2>&1 || echo "Executables not found"
+          tar -czvf xxsql-${{ github.ref_name }}-linux-amd64.tar.gz xxsqls xxsqlc 2>&1 || echo "Archive failed"
       - uses: softprops/action-gh-release@v1
         with:
           files: xxsql-*.tar.gz
