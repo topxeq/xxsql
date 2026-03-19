@@ -20,30 +20,14 @@ jobs:
         run: go mod download
       - name: Build packages step by step
         run: |
-          echo "=== Building pkg/errors ==="
-          go build -v ./pkg/errors 2>&1 && echo "SUCCESS" || echo "FAILED"
-          echo "=== Building internal/config ==="
-          go build -v ./internal/config 2>&1 && echo "SUCCESS" || echo "FAILED"
-          echo "=== Building internal/log ==="
-          go build -v ./internal/log 2>&1 && echo "SUCCESS" || echo "FAILED"
-          echo "=== Building internal/storage/types ==="
-          go build -v ./internal/storage/types 2>&1 && echo "SUCCESS" || echo "FAILED"
-          echo "=== Building internal/storage ==="
-          go build -v ./internal/storage 2>&1 && echo "SUCCESS" || echo "FAILED"
-          echo "=== Building internal/sql ==="
-          go build -v ./internal/sql 2>&1 && echo "SUCCESS" || echo "FAILED"
-          echo "=== Building internal/executor ==="
-          go build -v ./internal/executor 2>&1 && echo "SUCCESS" || echo "FAILED"
-          echo "=== Building internal/server ==="
-          go build -v ./internal/server 2>&1 && echo "SUCCESS" || echo "FAILED"
-          echo "=== Building cmd/xxsqls ==="
-          go build -v ./cmd/xxsqls 2>&1 && echo "SUCCESS" || echo "FAILED"
-          echo "=== Building cmd/xxsqlc ==="
-          go build -v ./cmd/xxsqlc 2>&1 && echo "SUCCESS" || echo "FAILED"
-      - name: Final build
+          echo "=== Building all packages ==="
+          go build -v ./... 2>&1 && echo "SUCCESS" || echo "FAILED"
+      - name: Build binaries
         run: |
-          go build -o xxsqls ./cmd/xxsqls 2>&1
-          go build -o xxsqlc ./cmd/xxsqlc 2>&1
+          echo "=== Building xxsqls ==="
+          go build -v ./cmd/xxsqls 2>&1
+          echo "=== Building xxsqlc ==="
+          go build -v ./cmd/xxsqlc 2>&1
           ls -la xxsqls xxsqlc
       - name: Archive
         run: tar -czvf xxsql-${{ github.ref_name }}-linux-amd64.tar.gz xxsqls xxsqlc
