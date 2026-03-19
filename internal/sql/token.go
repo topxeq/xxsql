@@ -158,6 +158,8 @@ const (
 	TokReturns
 	TokReturn
 	TokReplace
+	TokLet
+	TokBegin
 
 	// Identifiers and literals
 	TokIdent   // identifier
@@ -432,6 +434,10 @@ func (t TokenType) String() string {
 		return "RETURN"
 	case TokReplace:
 		return "REPLACE"
+	case TokLet:
+		return "LET"
+	case TokBegin:
+		return "BEGIN"
 	case TokDescribe:
 		return "DESCRIBE"
 	case TokBackup:
@@ -572,6 +578,8 @@ var keywords = map[string]TokenType{
 	"RETURNS":      TokReturns,
 	"RETURN":       TokReturn,
 	"REPLACE":      TokReplace,
+	"LET":          TokLet,
+	"BEGIN":        TokBegin,
 	"TRUE":         TokBoolLit,
 	"FALSE":        TokBoolLit,
 }

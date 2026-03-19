@@ -1477,6 +1477,13 @@ func (p *Parser) parsePrimaryExpr() Expression {
 	// Handle function keywords (COUNT, SUM, AVG, MIN, MAX, COALESCE, NULLIF)
 	case TokCount, TokSum, TokAvg, TokMin, TokMax, TokCoalesce, TokNullIf:
 		return p.parseFunctionKeyword()
+	// UDF expressions
+	case TokIf:
+		return p.parseIfExpr()
+	case TokLet:
+		return p.parseLetExpr()
+	case TokBegin:
+		return p.parseBlockExpr()
 	// Handle potential UDF names that are also keywords (data types, etc.)
 	// If followed by (, treat as function call
 	case TokDouble, TokFloat, TokInt, TokInteger, TokBigInt, TokChar, TokVarchar,
@@ -2283,6 +2290,16 @@ func (p *Parser) parseCreateFunction() *CreateFunctionStmt {
 			return nil
 		}
 
+		// Optional DEFAULT value
+		if p.curTokenIs(TokDefault) {
+			p.nextToken()
+			param.DefaultValue = p.parseExpression()
+			if param.DefaultValue == nil {
+				p.error("expected default value")
+				return nil
+			}
+		}
+
 		stmt.Parameters = append(stmt.Parameters, param)
 
 		if p.curTokenIs(TokComma) {
@@ -2306,15 +2323,24 @@ func (p *Parser) parseCreateFunction() *CreateFunctionStmt {
 		return nil
 	}
 
-	// RETURN
-	if !p.expect(TokReturn) {
-		return nil
-	}
-
-	// Parse body expression
-	stmt.Body = p.parseExpression()
-	if stmt.Body == nil {
-		p.error("expected function body expression")
+	// Function body: either RETURN expr or BEGIN ... END block
+	if p.curTokenIs(TokReturn) {
+		// Simple: RETURN expression
+		p.nextToken()
+		stmt.Body = p.parseExpression()
+		if stmt.Body == nil {
+			p.error("expected function body expression")
+			return nil
+		}
+	} else if p.curTokenIs(TokBegin) {
+		// BEGIN ... END block
+		stmt.Body = p.parseBlockExpr()
+		if stmt.Body == nil {
+			p.error("expected function body")
+			return nil
+		}
+	} else {
+		p.error("expected RETURN or BEGIN for function body")
 		return nil
 	}
 
@@ -2340,4 +2366,112 @@ func (p *Parser) parseDropFunction() *DropFunctionStmt {
 	p.nextToken()
 
 	return stmt
+}
+
+// ============================================================================
+// UDF Expression Parsing
+// ============================================================================
+
+// parseIfExpr parses an IF expression.
+// Syntax: IF condition THEN expr [ELSE expr] END
+func (p *Parser) parseIfExpr() *IfExpr {
+	p.nextToken() // consume IF
+
+	expr := &IfExpr{}
+
+	// Parse condition
+	expr.Condition = p.parseExpression()
+	if expr.Condition == nil {
+		p.error("expected condition after IF")
+		return nil
+	}
+
+	// THEN
+	if !p.expect(TokThen) {
+		return nil
+	}
+
+	// Parse THEN expression
+	expr.ThenExpr = p.parseExpression()
+	if expr.ThenExpr == nil {
+		p.error("expected expression after THEN")
+		return nil
+	}
+
+	// Optional ELSE
+	if p.curTokenIs(TokElse) {
+		p.nextToken()
+		expr.ElseExpr = p.parseExpression()
+		if expr.ElseExpr == nil {
+			p.error("expected expression after ELSE")
+			return nil
+		}
+	}
+
+	// END
+	if !p.expect(TokEnd) {
+		return nil
+	}
+
+	return expr
+}
+
+// parseLetExpr parses a LET expression.
+// Syntax: LET name = expr
+func (p *Parser) parseLetExpr() *LetExpr {
+	p.nextToken() // consume LET
+
+	if !p.curTokenIs(TokIdent) {
+		p.error("expected variable name after LET")
+		return nil
+	}
+
+	expr := &LetExpr{
+		Name: p.currTok.Value,
+	}
+	p.nextToken()
+
+	// =
+	if !p.expect(TokEq) {
+		return nil
+	}
+
+	// Parse value expression
+	expr.Value = p.parseExpression()
+	if expr.Value == nil {
+		p.error("expected expression after =")
+		return nil
+	}
+
+	return expr
+}
+
+// parseBlockExpr parses a BEGIN ... END block.
+// Syntax: BEGIN expr [; expr]* END
+func (p *Parser) parseBlockExpr() *BlockExpr {
+	p.nextToken() // consume BEGIN
+
+	expr := &BlockExpr{}
+
+	for !p.curTokenIs(TokEnd) && p.err == nil {
+		e := p.parseExpression()
+		if e == nil {
+			break
+		}
+		expr.Expressions = append(expr.Expressions, e)
+
+		// Optional semicolon separator
+		if p.curTokenIs(TokSemi) {
+			p.nextToken()
+		} else if !p.curTokenIs(TokEnd) {
+			// If no semicolon and not END, it's an error
+			break
+		}
+	}
+
+	if !p.expect(TokEnd) {
+		return nil
+	}
+
+	return expr
 }

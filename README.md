@@ -1122,18 +1122,36 @@ See [docs/TESTING.md](docs/TESTING.md) for testing guidelines.
   - `SUBSTRING(str, start, len)` - Substring extraction
 
 - **User-Defined Functions (UDF)**:
-  - Create simple SQL functions with `CREATE FUNCTION`
-  - Support for single-expression functions
+  - Create SQL functions with `CREATE FUNCTION`
+  - Support for IF expressions, LET variables, and BEGIN/END blocks
+  - Default parameter values
   - Automatic persistence to disk
   ```sql
-  -- Create a UDF
+  -- Simple UDF
   CREATE FUNCTION double(x INT) RETURNS INT RETURN x * 2;
-  CREATE FUNCTION greeting(name VARCHAR) RETURNS VARCHAR
+
+  -- UDF with IF expression
+  CREATE FUNCTION abs_val(x INT) RETURNS INT
+      RETURN IF x < 0 THEN -x ELSE x END;
+
+  -- UDF with LET and BEGIN/END block
+  CREATE FUNCTION complex_calc(x INT, y INT) RETURNS INT
+  BEGIN
+      LET a = x * 2;
+      LET b = y + 1;
+      RETURN a + b;
+  END;
+
+  -- UDF with default parameter
+  CREATE FUNCTION greet(name VARCHAR DEFAULT 'World') RETURNS VARCHAR
       RETURN CONCAT('Hello, ', name);
 
   -- Use in queries
-  SELECT double(5);           -- Returns 10
-  SELECT greeting('World');   -- Returns 'Hello, World'
+  SELECT double(5);        -- Returns 10
+  SELECT abs_val(-5);      -- Returns 5
+  SELECT complex_calc(3, 4);  -- Returns 11
+  SELECT greet();          -- Returns 'Hello, World'
+  SELECT greet('Alice');   -- Returns 'Hello, Alice'
 
   -- Drop a UDF
   DROP FUNCTION double;

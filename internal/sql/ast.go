@@ -1392,20 +1392,94 @@ func (s *RestoreStmt) String() string {
 }
 
 // ============================================================================
+// UDF Expression Types
+// ============================================================================
+
+// IfExpr represents an IF expression.
+// Syntax: IF condition THEN expr [ELSE expr] END
+type IfExpr struct {
+	Condition Expression
+	ThenExpr  Expression
+	ElseExpr  Expression // may be nil
+}
+
+func (e *IfExpr) node()       {}
+func (e *IfExpr) expression() {}
+func (e *IfExpr) String() string {
+	var sb strings.Builder
+	sb.WriteString("IF ")
+	sb.WriteString(e.Condition.String())
+	sb.WriteString(" THEN ")
+	sb.WriteString(e.ThenExpr.String())
+	if e.ElseExpr != nil {
+		sb.WriteString(" ELSE ")
+		sb.WriteString(e.ElseExpr.String())
+	}
+	sb.WriteString(" END")
+	return sb.String()
+}
+
+// LetExpr represents a LET variable assignment.
+// Syntax: LET name = expr
+type LetExpr struct {
+	Name  string
+	Value Expression
+}
+
+func (e *LetExpr) node()       {}
+func (e *LetExpr) expression() {}
+func (e *LetExpr) String() string {
+	return fmt.Sprintf("LET %s = %s", e.Name, e.Value.String())
+}
+
+// BlockExpr represents a block of expressions.
+// Syntax: BEGIN expr; expr; ... END or (expr, expr, ...)
+// The result is the value of the last expression.
+type BlockExpr struct {
+	Expressions []Expression
+}
+
+func (e *BlockExpr) node()       {}
+func (e *BlockExpr) expression() {}
+func (e *BlockExpr) String() string {
+	if len(e.Expressions) == 0 {
+		return "BEGIN END"
+	}
+	var sb strings.Builder
+	sb.WriteString("BEGIN ")
+	for i, expr := range e.Expressions {
+		if i > 0 {
+			sb.WriteString("; ")
+		}
+		sb.WriteString(expr.String())
+	}
+	sb.WriteString(" END")
+	return sb.String()
+}
+
+// ============================================================================
 // User Defined Function Statements
 // ============================================================================
 
 // FunctionParameter represents a parameter in a UDF.
 type FunctionParameter struct {
-	Name string
-	Type *DataType
+	Name         string
+	Type         *DataType
+	DefaultValue Expression // optional default value
 }
 
 func (p *FunctionParameter) String() string {
+	var sb strings.Builder
+	sb.WriteString(p.Name)
 	if p.Type != nil {
-		return fmt.Sprintf("%s %s", p.Name, p.Type.String())
+		sb.WriteString(" ")
+		sb.WriteString(p.Type.String())
 	}
-	return p.Name
+	if p.DefaultValue != nil {
+		sb.WriteString(" DEFAULT ")
+		sb.WriteString(p.DefaultValue.String())
+	}
+	return sb.String()
 }
 
 // CreateFunctionStmt represents a CREATE FUNCTION statement.

@@ -357,3 +357,280 @@ func TestParseDropFunction(t *testing.T) {
 		})
 	}
 }
+
+// ============================================================================
+// Enhanced UDF Tests
+// ============================================================================
+
+func TestParseIfExpr(t *testing.T) {
+	tests := []struct {
+		input    string
+		hasElse  bool
+	}{
+		{"IF x > 0 THEN x ELSE -x END", true},
+		{"IF x > 0 THEN 1 END", false},
+		{"IF a = b THEN 'yes' ELSE 'no' END", true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.input, func(t *testing.T) {
+			// Wrap in SELECT to parse as expression
+			stmt, err := sql.Parse("SELECT " + tt.input)
+			if err != nil {
+				t.Fatalf("Parse failed: %v", err)
+			}
+
+			sel, ok := stmt.(*sql.SelectStmt)
+			if !ok {
+				t.Fatalf("Expected *SelectStmt, got %T", stmt)
+			}
+
+			ifExpr, ok := sel.Columns[0].(*sql.IfExpr)
+			if !ok {
+				t.Fatalf("Expected *IfExpr, got %T", sel.Columns[0])
+			}
+
+			if ifExpr.Condition == nil {
+				t.Error("Condition should not be nil")
+			}
+			if ifExpr.ThenExpr == nil {
+				t.Error("ThenExpr should not be nil")
+			}
+			if tt.hasElse && ifExpr.ElseExpr == nil {
+				t.Error("ElseExpr should not be nil")
+			}
+			if !tt.hasElse && ifExpr.ElseExpr != nil {
+				t.Error("ElseExpr should be nil")
+			}
+		})
+	}
+}
+
+func TestParseLetExpr(t *testing.T) {
+	stmt, err := sql.Parse("SELECT LET x = 5")
+	if err != nil {
+		t.Fatalf("Parse failed: %v", err)
+	}
+
+	sel, ok := stmt.(*sql.SelectStmt)
+	if !ok {
+		t.Fatalf("Expected *SelectStmt, got %T", stmt)
+	}
+
+	letExpr, ok := sel.Columns[0].(*sql.LetExpr)
+	if !ok {
+		t.Fatalf("Expected *LetExpr, got %T", sel.Columns[0])
+	}
+
+	if letExpr.Name != "x" {
+		t.Errorf("Name = %q, want 'x'", letExpr.Name)
+	}
+	if letExpr.Value == nil {
+		t.Error("Value should not be nil")
+	}
+}
+
+func TestParseBlockExpr(t *testing.T) {
+	stmt, err := sql.Parse("SELECT BEGIN LET x = 1; LET y = 2; x + y END")
+	if err != nil {
+		t.Fatalf("Parse failed: %v", err)
+	}
+
+	sel, ok := stmt.(*sql.SelectStmt)
+	if !ok {
+		t.Fatalf("Expected *SelectStmt, got %T", stmt)
+	}
+
+	blockExpr, ok := sel.Columns[0].(*sql.BlockExpr)
+	if !ok {
+		t.Fatalf("Expected *BlockExpr, got %T", sel.Columns[0])
+	}
+
+	if len(blockExpr.Expressions) != 3 {
+		t.Errorf("Expressions count = %d, want 3", len(blockExpr.Expressions))
+	}
+}
+
+func TestParseFunctionWithDefault(t *testing.T) {
+	stmt, err := sql.Parse("CREATE FUNCTION test(x INT DEFAULT 10, y VARCHAR DEFAULT 'hello') RETURNS INT RETURN x")
+	if err != nil {
+		t.Fatalf("Parse failed: %v", err)
+	}
+
+	cf, ok := stmt.(*sql.CreateFunctionStmt)
+	if !ok {
+		t.Fatalf("Expected *CreateFunctionStmt, got %T", stmt)
+	}
+
+	if len(cf.Parameters) != 2 {
+		t.Fatalf("Parameters count = %d, want 2", len(cf.Parameters))
+	}
+
+	if cf.Parameters[0].DefaultValue == nil {
+		t.Error("First parameter should have default value")
+	}
+	if cf.Parameters[1].DefaultValue == nil {
+		t.Error("Second parameter should have default value")
+	}
+}
+
+func TestParseFunctionWithBeginBlock(t *testing.T) {
+	stmt, err := sql.Parse("CREATE FUNCTION complex(x INT, y INT) RETURNS INT BEGIN LET a = x * 2; LET b = y + 1; a + b END")
+	if err != nil {
+		t.Fatalf("Parse failed: %v", err)
+	}
+
+	cf, ok := stmt.(*sql.CreateFunctionStmt)
+	if !ok {
+		t.Fatalf("Expected *CreateFunctionStmt, got %T", stmt)
+	}
+
+	blockExpr, ok := cf.Body.(*sql.BlockExpr)
+	if !ok {
+		t.Fatalf("Expected body to be *BlockExpr, got %T", cf.Body)
+	}
+
+	if len(blockExpr.Expressions) != 3 {
+		t.Errorf("Expressions count = %d, want 3", len(blockExpr.Expressions))
+	}
+}
+
+func TestExecutor_UDFWithIf(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "udf_test")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	engine := storage.NewEngine(tmpDir)
+	exec := NewExecutor(engine)
+	udfMgr := NewUDFManager(tmpDir)
+	exec.SetUDFManager(udfMgr)
+
+	// First, let's test parsing
+	stmt, err := sql.Parse("CREATE FUNCTION abs_val(x INT) RETURNS INT RETURN IF x < 0 THEN -x ELSE x END")
+	if err != nil {
+		t.Fatalf("Parse failed: %v", err)
+	}
+	cf := stmt.(*sql.CreateFunctionStmt)
+	t.Logf("Function body: %s", cf.Body.String())
+	if ifExpr, ok := cf.Body.(*sql.IfExpr); ok {
+		t.Logf("Condition: %s", ifExpr.Condition.String())
+		t.Logf("Then: %s", ifExpr.ThenExpr.String())
+		t.Logf("Else: %s", ifExpr.ElseExpr.String())
+	}
+
+	// Create function with IF
+	_, err = exec.Execute("CREATE FUNCTION abs_val(x INT) RETURNS INT RETURN IF x < 0 THEN -x ELSE x END")
+	if err != nil {
+		t.Fatalf("CREATE FUNCTION failed: %v", err)
+	}
+
+	// Test with positive value
+	result, err := exec.Execute("SELECT abs_val(5)")
+	if err != nil {
+		t.Fatalf("SELECT abs_val(5) failed: %v", err)
+	}
+	if len(result.Rows) == 0 {
+		t.Fatal("Expected rows for abs_val(5)")
+	}
+	t.Logf("abs_val(5) = %v (type %T)", result.Rows[0][0], result.Rows[0][0])
+
+	// Test with negative value
+	result, err = exec.Execute("SELECT abs_val(-5)")
+	if err != nil {
+		t.Fatalf("SELECT abs_val(-5) failed: %v", err)
+	}
+	if len(result.Rows) == 0 {
+		t.Fatal("Expected rows for abs_val(-5)")
+	}
+	t.Logf("abs_val(-5) = %v (type %T)", result.Rows[0][0], result.Rows[0][0])
+
+	// Check results
+	if result.Rows[0][0] == nil {
+		t.Error("Expected non-nil result for abs_val(-5)")
+	}
+}
+
+func TestExecutor_UDFWithLet(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "udf_test")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	engine := storage.NewEngine(tmpDir)
+	exec := NewExecutor(engine)
+	udfMgr := NewUDFManager(tmpDir)
+	exec.SetUDFManager(udfMgr)
+
+	// Create function with LET
+	_, err = exec.Execute("CREATE FUNCTION complex_calc(x INT, y INT) RETURNS INT BEGIN LET a = x * 2; LET b = y + 1; a + b END")
+	if err != nil {
+		t.Fatalf("CREATE FUNCTION failed: %v", err)
+	}
+
+	// Test the function
+	result, err := exec.Execute("SELECT complex_calc(3, 4)")
+	if err != nil {
+		t.Fatalf("SELECT failed: %v", err)
+	}
+
+	if len(result.Rows) == 0 || result.Rows[0][0] == nil {
+		t.Fatal("Expected non-nil result")
+	}
+
+	// (3 * 2) + (4 + 1) = 6 + 5 = 11
+	var got int
+	switch v := result.Rows[0][0].(type) {
+	case int:
+		got = v
+	case int64:
+		got = int(v)
+	case float64:
+		got = int(v)
+	default:
+		t.Fatalf("Unexpected type %T", result.Rows[0][0])
+	}
+
+	if got != 11 {
+		t.Errorf("complex_calc(3, 4) = %d, want 11", got)
+	}
+}
+
+func TestExecutor_UDFWithDefaultParam(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "udf_test")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	engine := storage.NewEngine(tmpDir)
+	exec := NewExecutor(engine)
+	udfMgr := NewUDFManager(tmpDir)
+	exec.SetUDFManager(udfMgr)
+
+	// Create function with default parameter
+	_, err = exec.Execute("CREATE FUNCTION greet(name VARCHAR DEFAULT 'World') RETURNS VARCHAR RETURN CONCAT('Hello, ', name)")
+	if err != nil {
+		t.Fatalf("CREATE FUNCTION failed: %v", err)
+	}
+
+	// Test with explicit value
+	result, err := exec.Execute("SELECT greet('Alice')")
+	if err != nil {
+		t.Fatalf("SELECT failed: %v", err)
+	}
+	if result.Rows[0][0] != "Hello, Alice" {
+		t.Errorf("greet('Alice') = %v, want 'Hello, Alice'", result.Rows[0][0])
+	}
+
+	// Test with default value
+	result, err = exec.Execute("SELECT greet()")
+	if err != nil {
+		t.Fatalf("SELECT failed: %v", err)
+	}
+	if result.Rows[0][0] != "Hello, World" {
+		t.Errorf("greet() = %v, want 'Hello, World'", result.Rows[0][0])
+	}
+}

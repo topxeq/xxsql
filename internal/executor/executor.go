@@ -625,6 +625,41 @@ func (e *Executor) evaluateBinaryOp(left interface{}, op sql.BinaryOp, right int
 		if leftOk && rightOk && rightFloat != 0 {
 			return leftFloat / rightFloat, nil
 		}
+	case sql.OpMod:
+		if leftOk && rightOk && rightFloat != 0 {
+			return float64(int(leftFloat) % int(rightFloat)), nil
+		}
+	// Comparison operators
+	case sql.OpLt:
+		if leftOk && rightOk {
+			return leftFloat < rightFloat, nil
+		}
+		return fmt.Sprintf("%v", left) < fmt.Sprintf("%v", right), nil
+	case sql.OpLe:
+		if leftOk && rightOk {
+			return leftFloat <= rightFloat, nil
+		}
+		return fmt.Sprintf("%v", left) <= fmt.Sprintf("%v", right), nil
+	case sql.OpGt:
+		if leftOk && rightOk {
+			return leftFloat > rightFloat, nil
+		}
+		return fmt.Sprintf("%v", left) > fmt.Sprintf("%v", right), nil
+	case sql.OpGe:
+		if leftOk && rightOk {
+			return leftFloat >= rightFloat, nil
+		}
+		return fmt.Sprintf("%v", left) >= fmt.Sprintf("%v", right), nil
+	case sql.OpEq:
+		if leftOk && rightOk {
+			return leftFloat == rightFloat, nil
+		}
+		return fmt.Sprintf("%v", left) == fmt.Sprintf("%v", right), nil
+	case sql.OpNe:
+		if leftOk && rightOk {
+			return leftFloat != rightFloat, nil
+		}
+		return fmt.Sprintf("%v", left) != fmt.Sprintf("%v", right), nil
 	}
 	return nil, fmt.Errorf("cannot evaluate binary operation")
 }
@@ -2615,7 +2650,8 @@ func (e *Executor) evaluateFunction(fc *sql.FunctionCall, r *row.Row, columnMap 
 	funcName := strings.ToUpper(fc.Name)
 
 	// Helper to evaluate expression when row might be nil
-	evalExpr := func(expr sql.Expression) (interface{}, error) {
+	var evalExpr func(expr sql.Expression) (interface{}, error)
+	evalExpr = func(expr sql.Expression) (interface{}, error) {
 		if r == nil {
 			// No row context, evaluate directly
 			switch ex := expr.(type) {
@@ -2627,6 +2663,22 @@ func (e *Executor) evaluateFunction(fc *sql.FunctionCall, r *row.Row, columnMap 
 				return e.castValueFromExpr(ex)
 			case *sql.FunctionCall:
 				return e.evaluateFunction(ex, nil, nil, nil)
+			case *sql.UnaryExpr:
+				val, err := evalExpr(ex.Right)
+				if err != nil {
+					return nil, err
+				}
+				return e.evaluateUnaryExpr(ex.Op, val)
+			case *sql.BinaryExpr:
+				left, err := evalExpr(ex.Left)
+				if err != nil {
+					return nil, err
+				}
+				right, err := evalExpr(ex.Right)
+				if err != nil {
+					return nil, err
+				}
+				return e.evaluateBinaryOp(left, ex.Op, right)
 			default:
 				return nil, nil
 			}
@@ -2825,7 +2877,14 @@ func (e *Executor) evaluateUDF(udf *sql.UserFunction, args []sql.Expression, eva
 			if err != nil {
 				return nil, err
 			}
-			paramValues[param.Name] = val
+			paramValues[strings.ToLower(param.Name)] = val
+		} else if param.DefaultValue != nil {
+			// Use default value
+			val, err := e.evaluateExpressionWithParams(param.DefaultValue, paramValues)
+			if err != nil {
+				return nil, err
+			}
+			paramValues[strings.ToLower(param.Name)] = val
 		}
 	}
 
@@ -2840,7 +2899,7 @@ func (e *Executor) evaluateExpressionWithParams(expr sql.Expression, params map[
 		return ex.Value, nil
 	case *sql.ColumnRef:
 		// Check if it's a parameter
-		if val, ok := params[ex.Name]; ok {
+		if val, ok := params[strings.ToLower(ex.Name)]; ok {
 			return val, nil
 		}
 		return nil, nil
@@ -2863,9 +2922,85 @@ func (e *Executor) evaluateExpressionWithParams(expr sql.Expression, params map[
 			return nil, err
 		}
 		return e.evaluateUnaryExpr(ex.Op, val)
+	case *sql.IfExpr:
+		return e.evaluateIfExpr(ex, params)
+	case *sql.LetExpr:
+		return e.evaluateLetExpr(ex, params)
+	case *sql.BlockExpr:
+		return e.evaluateBlockExpr(ex, params)
+	case *sql.CastExpr:
+		return e.evaluateCastExprWithParams(ex, params)
 	default:
 		return nil, fmt.Errorf("unsupported expression type in UDF: %T", expr)
 	}
+}
+
+// evaluateIfExpr evaluates an IF expression.
+func (e *Executor) evaluateIfExpr(expr *sql.IfExpr, params map[string]interface{}) (interface{}, error) {
+	cond, err := e.evaluateExpressionWithParams(expr.Condition, params)
+	if err != nil {
+		return nil, err
+	}
+
+	// Check if condition is true
+	isTrue := false
+	switch v := cond.(type) {
+	case bool:
+		isTrue = v
+	case int, int64, float64:
+		isTrue = v != 0
+	case string:
+		isTrue = v != ""
+	default:
+		isTrue = cond != nil
+	}
+
+	if isTrue {
+		return e.evaluateExpressionWithParams(expr.ThenExpr, params)
+	} else if expr.ElseExpr != nil {
+		return e.evaluateExpressionWithParams(expr.ElseExpr, params)
+	}
+
+	return nil, nil
+}
+
+// evaluateLetExpr evaluates a LET expression.
+func (e *Executor) evaluateLetExpr(expr *sql.LetExpr, params map[string]interface{}) (interface{}, error) {
+	val, err := e.evaluateExpressionWithParams(expr.Value, params)
+	if err != nil {
+		return nil, err
+	}
+
+	// Store the value in params
+	params[strings.ToLower(expr.Name)] = val
+	return val, nil
+}
+
+// evaluateBlockExpr evaluates a BEGIN ... END block.
+func (e *Executor) evaluateBlockExpr(expr *sql.BlockExpr, params map[string]interface{}) (interface{}, error) {
+	var result interface{}
+	var err error
+
+	for _, subExpr := range expr.Expressions {
+		result, err = e.evaluateExpressionWithParams(subExpr, params)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	return result, nil
+}
+
+// evaluateCastExprWithParams evaluates a CAST expression with parameter support.
+func (e *Executor) evaluateCastExprWithParams(expr *sql.CastExpr, params map[string]interface{}) (interface{}, error) {
+	val, err := e.evaluateExpressionWithParams(expr.Expr, params)
+	if err != nil {
+		return nil, err
+	}
+	if expr.Type != nil {
+		return e.castValue(val, expr.Type.Name)
+	}
+	return val, nil
 }
 
 // evaluateUDFFunctionCall evaluates a function call within a UDF body.
