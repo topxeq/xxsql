@@ -195,8 +195,8 @@ func (m *APIKeyManager) RevokeKey(keyID string) error {
 		}
 	}
 
-	// Persist
-	go m.Save()
+	// Persist synchronously to avoid race conditions during cleanup
+	_ = m.saveLocked()
 
 	return nil
 }
@@ -212,7 +212,8 @@ func (m *APIKeyManager) EnableKey(keyID string, enabled bool) error {
 	}
 
 	key.Enabled = enabled
-	go m.Save()
+	// Persist synchronously to avoid race conditions during cleanup
+	_ = m.saveLocked()
 
 	return nil
 }
@@ -228,7 +229,7 @@ func (m *APIKeyManager) DeleteUserKeys(username string) {
 	}
 	delete(m.keysByUser, username)
 
-	go m.Save()
+	_ = m.saveLocked()
 }
 
 // apiKeyPersistData is the JSON structure for persistence.
@@ -236,14 +237,12 @@ type apiKeyPersistData struct {
 	Keys []*APIKey `json:"keys"`
 }
 
-// Save saves API keys to the persistence file.
-func (m *APIKeyManager) Save() error {
+// saveLocked saves API keys to the persistence file.
+// It must be called with m.mu held (either RLock or Lock).
+func (m *APIKeyManager) saveLocked() error {
 	if m.dataDir == "" {
 		return nil
 	}
-
-	m.mu.RLock()
-	defer m.mu.RUnlock()
 
 	// Ensure directory exists
 	if err := os.MkdirAll(m.dataDir, 0755); err != nil {
@@ -268,6 +267,13 @@ func (m *APIKeyManager) Save() error {
 	}
 
 	return nil
+}
+
+// Save saves API keys to the persistence file.
+func (m *APIKeyManager) Save() error {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.saveLocked()
 }
 
 // Load loads API keys from the persistence file.
