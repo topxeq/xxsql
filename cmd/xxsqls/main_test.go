@@ -426,7 +426,7 @@ func TestRun_WithValidConfig(t *testing.T) {
 	// Create minimal valid config
 	validConfig := `{
 		"server": {"data_dir": "` + tmpDir + `"},
-		"network": {"private_port": 19601, "mysql_port": 0, "http_port": 0},
+		"network": {"private_port": 19601, "mysql_port": 0, "http_port": 0, "mysql_enabled": false, "http_enabled": false},
 		"log": {"level": "INFO"},
 		"auth": {"enabled": false}
 	}`
@@ -461,7 +461,7 @@ func TestRun_SIGHUP(t *testing.T) {
 
 	validConfig := `{
 		"server": {"data_dir": "` + tmpDir + `"},
-		"network": {"private_port": 19602, "mysql_port": 0, "http_port": 0},
+		"network": {"private_port": 19602, "mysql_port": 0, "http_port": 0, "mysql_enabled": false, "http_enabled": false},
 		"log": {"level": "INFO"},
 		"auth": {"enabled": false}
 	}`
@@ -503,7 +503,7 @@ func TestRun_SIGHUP_ConfigError(t *testing.T) {
 
 	validConfig := `{
 		"server": {"data_dir": "` + tmpDir + `"},
-		"network": {"private_port": 19603, "mysql_port": 0, "http_port": 0},
+		"network": {"private_port": 19603, "mysql_port": 0, "http_port": 0, "mysql_enabled": false, "http_enabled": false},
 		"log": {"level": "INFO"},
 		"auth": {"enabled": false}
 	}`
@@ -548,7 +548,7 @@ func TestRun_PIDFileError(t *testing.T) {
 
 	validConfig := `{
 		"server": {"data_dir": "` + tmpDir + `", "pid_file": "/nonexistent/path/xxsql.pid"},
-		"network": {"private_port": 19604, "mysql_port": 0, "http_port": 0},
+		"network": {"private_port": 19604, "mysql_port": 0, "http_port": 0, "mysql_enabled": false, "http_enabled": false},
 		"log": {"level": "INFO"},
 		"auth": {"enabled": false}
 	}`
@@ -589,7 +589,7 @@ func TestRun_DataDirError(t *testing.T) {
 
 	validConfig := `{
 		"server": {"data_dir": "` + dataDirPath + `/subdir"},
-		"network": {"private_port": 19605, "mysql_port": 0, "http_port": 0},
+		"network": {"private_port": 19605, "mysql_port": 0, "http_port": 0, "mysql_enabled": false, "http_enabled": false},
 		"log": {"level": "INFO"},
 		"auth": {"enabled": false}
 	}`
@@ -619,7 +619,7 @@ func TestRun_DataDirPermissionError(t *testing.T) {
 
 	validConfig := `{
 		"server": {"data_dir": "` + readOnlyDir + `/subdir"},
-		"network": {"private_port": 19606, "mysql_port": 0, "http_port": 0},
+		"network": {"private_port": 19606, "mysql_port": 0, "http_port": 0, "mysql_enabled": false, "http_enabled": false},
 		"log": {"level": "INFO"},
 		"auth": {"enabled": false}
 	}`
