@@ -26,10 +26,18 @@ jobs:
 
       - name: Build
         run: |
+          echo "=== Current directory ==="
+          pwd
+          echo "=== Files ==="
+          ls -la
+          echo "=== Go env ==="
+          /usr/local/go/bin/go env
+          echo "=== Downloading dependencies ==="
+          /usr/local/go/bin/go mod download
           echo "=== Building xxsqls ==="
-          /usr/local/go/bin/go build -v -o xxsqls ./cmd/xxsqls
+          /usr/local/go/bin/go build -v -x -o xxsqls ./cmd/xxsqls 2>&1
           echo "=== Building xxsqlc ==="
-          /usr/local/go/bin/go build -v -o xxsqlc ./cmd/xxsqlc
+          /usr/local/go/bin/go build -v -x -o xxsqlc ./cmd/xxsqlc 2>&1
           ls -la xxsqls xxsqlc
 
       - name: Create archive
