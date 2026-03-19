@@ -19,17 +19,18 @@ jobs:
         uses: actions/setup-go@v5
         with:
           go-version: '1.22'
+          cache: false
 
-      - name: Verify checkout
+      - name: Debug
         run: |
-          echo "=== Current directory ==="
+          echo "=== pwd ==="
           pwd
-          echo "=== Files ==="
+          echo "=== ls -la ==="
           ls -la
           echo "=== go.mod ==="
           cat go.mod
-          echo "=== internal directories ==="
-          ls -la internal/ || true
+          echo "=== go list packages ==="
+          go list ./... || true
 
       - name: Build server
         run: go build -v -o xxsqls ./cmd/xxsqls

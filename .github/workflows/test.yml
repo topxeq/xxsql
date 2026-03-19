@@ -8,17 +8,8 @@ on:
 
 jobs:
   test:
-    name: Test on ${{ matrix.os }}
-    runs-on: ${{ matrix.os }}
-    strategy:
-      matrix:
-        os: [ubuntu-latest]
-        go: ['1.22']
-      fail-fast: false
-
-    defaults:
-      run:
-        working-directory: .
+    name: Test
+    runs-on: ubuntu-latest
 
     steps:
       - name: Checkout code
@@ -27,21 +18,19 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: ${{ matrix.go }}
+          go-version: '1.22'
+          cache: false
 
-      - name: Verify go.mod
+      - name: Debug
         run: |
-          echo "=== Current directory ==="
+          echo "=== pwd ==="
           pwd
-          echo "=== Files ==="
+          echo "=== ls -la ==="
           ls -la
           echo "=== go.mod ==="
           cat go.mod
           echo "=== internal directories ==="
           ls -la internal/ || true
-
-      - name: Download dependencies
-        run: go mod download
 
       - name: Run tests
         run: go test ./... -v -race -count=1
@@ -58,15 +47,10 @@ jobs:
         uses: actions/setup-go@v5
         with:
           go-version: '1.22'
+          cache: false
 
       - name: Build server
         run: go build -v -o bin/xxsqls ./cmd/xxsqls
 
       - name: Build client
         run: go build -v -o bin/xxsqlc ./cmd/xxsqlc
-
-      - name: Upload artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: binaries
-          path: bin/
