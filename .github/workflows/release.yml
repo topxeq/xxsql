@@ -16,29 +16,27 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version: '1.22'
+      - name: Debug environment
+        run: |
+          echo "=== Current directory ==="
+          pwd
+          echo "=== Go version ==="
+          go version
+          echo "=== Go environment ==="
+          go env
+          echo "=== Files ==="
+          ls -la
+          echo "=== go.mod ==="
+          cat go.mod
       - name: Download dependencies
         run: go mod download
-      - name: Build with go install
+      - name: Build
         run: |
-          echo "=== Installing xxsqls ==="
-          go install -v ./cmd/xxsqls 2>&1
-          echo "=== Installing xxsqlc ==="
-          go install -v ./cmd/xxsqlc 2>&1
-          echo "=== Checking GOPATH/bin ==="
-          ls -la $(go env GOPATH)/bin/ 2>&1 || true
-          echo "=== Copying binaries ==="
-          cp $(go env GOPATH)/bin/xxsqls . 2>&1 || echo "xxsqls not found"
-          cp $(go env GOPATH)/bin/xxsqlc . 2>&1 || echo "xxsqlc not found"
-          ls -la xxsqls xxsqlc 2>&1 || echo "Binaries not found"
+          go build -v -o xxsqls ./cmd/xxsqls
+          go build -v -o xxsqlc ./cmd/xxsqlc
+          ls -la xxsqls xxsqlc
       - name: Archive
-        run: |
-          if [ -f xxsqls ] && [ -f xxsqlc ]; then
-            tar -czvf xxsql-${{ github.ref_name }}-linux-amd64.tar.gz xxsqls xxsqlc
-            ls -la xxsql-*.tar.gz
-          else
-            echo "Binaries not found"
-            exit 1
-          fi
+        run: tar -czvf xxsql-${{ github.ref_name }}-linux-amd64.tar.gz xxsqls xxsqlc
       - uses: softprops/action-gh-release@v1
         with:
           files: xxsql-*.tar.gz
