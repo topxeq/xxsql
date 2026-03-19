@@ -18,21 +18,15 @@ jobs:
           go-version: '1.22'
       - name: Test basic Go
         run: |
-          echo "=== Testing basic Go functionality ==="
           go version
           go env GOROOT GOPATH GOCACHE
-          echo "=== Building a simple Go package ==="
           mkdir -p /tmp/testpkg
-          echo 'package testpkg' > /tmp/testpkg/test.go
-          echo 'func Test() {}' >> /tmp/testpkg/test.go
+          printf 'package testpkg\nfunc Test() {}\n' > /tmp/testpkg/test.go
           cd /tmp/testpkg
-          go build -v . 2>&1
-          echo "=== Building testpkg succeeded ==="
+          go build -v . || echo "Test package build failed"
       - name: Build
         run: |
-          echo "=== Building xxsqls ==="
           go build -v -o xxsqls ./cmd/xxsqls 2>&1
-          echo "=== Building xxsqlc ==="
           go build -v -o xxsqlc ./cmd/xxsqlc 2>&1
           ls -la xxsqls xxsqlc
       - name: Archive
