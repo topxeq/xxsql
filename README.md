@@ -377,6 +377,9 @@ func main() {
 
 ### DSN Format
 
+XxSql driver supports two DSN formats:
+
+**1. MySQL-style DSN:**
 ```
 [username[:password]@][protocol[(address)]]/dbname[?options]
 ```
@@ -385,6 +388,26 @@ Examples:
 - `admin:password@tcp(localhost:3306)/testdb`
 - `root@tcp(127.0.0.1:3306)/mydb`
 - `/testdb`
+
+**2. URL-style DSN:**
+```
+xxsql://[username[:password]@]host[:port]/dbname[?options]
+```
+
+Examples:
+- `xxsql://admin:password@localhost:3306/testdb`
+- `xxsql://root@127.0.0.1:3306/mydb`
+- `xxsql://localhost/testdb`
+
+**Supported Options:**
+
+| Parameter | Description | Default |
+|-----------|-------------|---------|
+| `timeout` | Connection timeout | `10s` |
+| `readTimeout` | Read timeout | `30s` |
+| `writeTimeout` | Write timeout | `30s` |
+| `charset` | Character set | `utf8mb4` |
+| `parseTime` | Parse DATE/DATETIME to time.Time | `false` |
 
 ## CLI Client
 
