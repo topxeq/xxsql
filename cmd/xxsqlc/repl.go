@@ -244,6 +244,11 @@ func printHelp() {
 	fmt.Println("    clear       Clear screen")
 	fmt.Println("    version     Show version")
 	fmt.Println()
+	fmt.Println("  File Execution (command line):")
+	fmt.Println("    -f <file>   Execute SQL from file")
+	fmt.Println("    -progress   Show progress during file execution")
+	fmt.Println("    -e <sql>    Execute single SQL statement")
+	fmt.Println()
 }
 
 // clearScreen clears the terminal screen.
