@@ -26,11 +26,10 @@ jobs:
 
       - name: Build
         run: |
-          export PATH=$PATH:/usr/local/go/bin
           echo "=== Building xxsqls ==="
-          go build -v -o xxsqls ./cmd/xxsqls
+          /usr/local/go/bin/go build -v -o xxsqls ./cmd/xxsqls
           echo "=== Building xxsqlc ==="
-          go build -v -o xxsqlc ./cmd/xxsqlc
+          /usr/local/go/bin/go build -v -o xxsqlc ./cmd/xxsqlc
           ls -la xxsqls xxsqlc
 
       - name: Create archive
