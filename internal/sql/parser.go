@@ -628,8 +628,75 @@ func (p *Parser) parseCreate() Statement {
 		return nil
 	case TokUser:
 		return p.parseCreateUser()
+	case TokOr:
+		// CREATE OR REPLACE FUNCTION
+		p.nextToken()
+		if !p.expect(TokReplace) {
+			return nil
+		}
+		if !p.expect(TokFunction) {
+			return nil
+		}
+		// FUNCTION already consumed, parse rest
+		stmt := &CreateFunctionStmt{
+			Name:    p.currTok.Value,
+			Replace: true,
+		}
+		p.nextToken() // consume function name
+
+		// Parse parameters and rest
+		if !p.expect(TokLParen) {
+			return nil
+		}
+
+		for !p.curTokenIs(TokRParen) && p.err == nil {
+			param := &FunctionParameter{
+				Name: p.currTok.Value,
+			}
+			p.nextToken()
+
+			param.Type = p.parseDataType()
+			if param.Type == nil {
+				p.error("expected data type for parameter %s", param.Name)
+				return nil
+			}
+
+			stmt.Parameters = append(stmt.Parameters, param)
+
+			if p.curTokenIs(TokComma) {
+				p.nextToken()
+			}
+		}
+
+		if !p.expect(TokRParen) {
+			return nil
+		}
+
+		if !p.expect(TokReturns) {
+			return nil
+		}
+
+		stmt.ReturnType = p.parseDataType()
+		if stmt.ReturnType == nil {
+			p.error("expected return type")
+			return nil
+		}
+
+		if !p.expect(TokReturn) {
+			return nil
+		}
+
+		stmt.Body = p.parseExpression()
+		if stmt.Body == nil {
+			p.error("expected function body expression")
+			return nil
+		}
+
+		return stmt
+	case TokFunction:
+		return p.parseCreateFunction()
 	default:
-		p.error("expected TABLE, INDEX or USER after CREATE")
+		p.error("expected TABLE, INDEX, USER or FUNCTION after CREATE")
 		return nil
 	}
 }
@@ -969,8 +1036,10 @@ func (p *Parser) parseDrop() Statement {
 		return p.parseDropIndex()
 	case TokUser:
 		return p.parseDropUser()
+	case TokFunction:
+		return p.parseDropFunction()
 	default:
-		p.error("expected TABLE, INDEX or USER after DROP")
+		p.error("expected TABLE, INDEX, USER or FUNCTION after DROP")
 		return nil
 	}
 }
@@ -1408,6 +1477,18 @@ func (p *Parser) parsePrimaryExpr() Expression {
 	// Handle function keywords (COUNT, SUM, AVG, MIN, MAX, COALESCE, NULLIF)
 	case TokCount, TokSum, TokAvg, TokMin, TokMax, TokCoalesce, TokNullIf:
 		return p.parseFunctionKeyword()
+	// Handle potential UDF names that are also keywords (data types, etc.)
+	// If followed by (, treat as function call
+	case TokDouble, TokFloat, TokInt, TokInteger, TokBigInt, TokChar, TokVarchar,
+		TokText, TokDate, TokTime, TokDateTime, TokBool, TokBoolean, TokBlob,
+		TokDecimal, TokNumeric, TokSmallInt, TokTinyInt, TokSeq:
+		name := p.currTok.Value
+		p.nextToken()
+		if p.curTokenIs(TokLParen) {
+			return p.parseFunctionCall(name)
+		}
+		// Otherwise it's an identifier
+		return &ColumnRef{Name: name}
 	default:
 		p.error("unexpected token in expression: %s", p.currTok.Type)
 		return nil
@@ -2165,6 +2246,98 @@ func (p *Parser) parseShowGrants() *ShowGrantsStmt {
 			p.nextToken()
 		}
 	}
+
+	return stmt
+}
+
+// ============================================================================
+// User Defined Function Parsing
+// ============================================================================
+
+// parseCreateFunction parses a CREATE FUNCTION statement.
+// Syntax: CREATE FUNCTION name(param1 TYPE, param2 TYPE) RETURNS TYPE RETURN expression
+// Current token should be FUNCTION keyword.
+func (p *Parser) parseCreateFunction() *CreateFunctionStmt {
+	p.nextToken() // consume FUNCTION keyword
+
+	stmt := &CreateFunctionStmt{
+		Name: p.currTok.Value,
+	}
+	p.nextToken() // consume function name
+
+	// Parameters
+	if !p.expect(TokLParen) {
+		return nil
+	}
+
+	for !p.curTokenIs(TokRParen) && p.err == nil {
+		param := &FunctionParameter{
+			Name: p.currTok.Value,
+		}
+		p.nextToken()
+
+		// Parse type
+		param.Type = p.parseDataType()
+		if param.Type == nil {
+			p.error("expected data type for parameter %s", param.Name)
+			return nil
+		}
+
+		stmt.Parameters = append(stmt.Parameters, param)
+
+		if p.curTokenIs(TokComma) {
+			p.nextToken()
+		}
+	}
+
+	if !p.expect(TokRParen) {
+		return nil
+	}
+
+	// RETURNS
+	if !p.expect(TokReturns) {
+		return nil
+	}
+
+	// Return type
+	stmt.ReturnType = p.parseDataType()
+	if stmt.ReturnType == nil {
+		p.error("expected return type")
+		return nil
+	}
+
+	// RETURN
+	if !p.expect(TokReturn) {
+		return nil
+	}
+
+	// Parse body expression
+	stmt.Body = p.parseExpression()
+	if stmt.Body == nil {
+		p.error("expected function body expression")
+		return nil
+	}
+
+	return stmt
+}
+
+// parseDropFunction parses a DROP FUNCTION statement.
+func (p *Parser) parseDropFunction() *DropFunctionStmt {
+	p.nextToken() // consume FUNCTION
+
+	stmt := &DropFunctionStmt{}
+
+	// IF EXISTS
+	if p.curTokenIs(TokIf) {
+		p.nextToken()
+		if !p.expect(TokExists) {
+			return nil
+		}
+		stmt.IfExists = true
+	}
+
+	stmt.Name = p.currTok.Value
+	p.nextToken()
 
 	return stmt
 }

@@ -153,6 +153,12 @@ const (
 	TokAt
 	TokFor
 
+	// Keywords - UDF
+	TokFunction
+	TokReturns
+	TokReturn
+	TokReplace
+
 	// Identifiers and literals
 	TokIdent   // identifier
 	TokNumber  // numeric literal
@@ -418,6 +424,14 @@ func (t TokenType) String() string {
 		return "@"
 	case TokFor:
 		return "FOR"
+	case TokFunction:
+		return "FUNCTION"
+	case TokReturns:
+		return "RETURNS"
+	case TokReturn:
+		return "RETURN"
+	case TokReplace:
+		return "REPLACE"
 	case TokDescribe:
 		return "DESCRIBE"
 	case TokBackup:
@@ -554,6 +568,10 @@ var keywords = map[string]TokenType{
 	"OPTION":       TokOption,
 	"WITH":         TokWith,
 	"FOR":          TokFor,
+	"FUNCTION":     TokFunction,
+	"RETURNS":      TokReturns,
+	"RETURN":       TokReturn,
+	"REPLACE":      TokReplace,
 	"TRUE":         TokBoolLit,
 	"FALSE":        TokBoolLit,
 }

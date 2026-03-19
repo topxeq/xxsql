@@ -1121,6 +1121,24 @@ See [docs/TESTING.md](docs/TESTING.md) for testing guidelines.
   - `CONCAT(str1, str2, ...)` - String concatenation
   - `SUBSTRING(str, start, len)` - Substring extraction
 
+- **User-Defined Functions (UDF)**:
+  - Create simple SQL functions with `CREATE FUNCTION`
+  - Support for single-expression functions
+  - Automatic persistence to disk
+  ```sql
+  -- Create a UDF
+  CREATE FUNCTION double(x INT) RETURNS INT RETURN x * 2;
+  CREATE FUNCTION greeting(name VARCHAR) RETURNS VARCHAR
+      RETURN CONCAT('Hello, ', name);
+
+  -- Use in queries
+  SELECT double(5);           -- Returns 10
+  SELECT greeting('World');   -- Returns 'Hello, World'
+
+  -- Drop a UDF
+  DROP FUNCTION double;
+  ```
+
 - **SQL Syntax Improvements**:
   - `IS NULL` / `IS NOT NULL` expressions
   - Proper `AND` / `OR` operator handling in WHERE clauses

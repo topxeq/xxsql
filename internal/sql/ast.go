@@ -1390,3 +1390,80 @@ func (s *RestoreStmt) statement() {}
 func (s *RestoreStmt) String() string {
 	return fmt.Sprintf("RESTORE DATABASE FROM '%s'", s.Path)
 }
+
+// ============================================================================
+// User Defined Function Statements
+// ============================================================================
+
+// FunctionParameter represents a parameter in a UDF.
+type FunctionParameter struct {
+	Name string
+	Type *DataType
+}
+
+func (p *FunctionParameter) String() string {
+	if p.Type != nil {
+		return fmt.Sprintf("%s %s", p.Name, p.Type.String())
+	}
+	return p.Name
+}
+
+// CreateFunctionStmt represents a CREATE FUNCTION statement.
+type CreateFunctionStmt struct {
+	Name       string
+	Parameters []*FunctionParameter
+	ReturnType *DataType
+	Body       Expression
+	Replace    bool // CREATE OR REPLACE
+}
+
+func (s *CreateFunctionStmt) node()      {}
+func (s *CreateFunctionStmt) statement() {}
+func (s *CreateFunctionStmt) String() string {
+	var sb strings.Builder
+	if s.Replace {
+		sb.WriteString("CREATE OR REPLACE ")
+	} else {
+		sb.WriteString("CREATE ")
+	}
+	sb.WriteString("FUNCTION ")
+	sb.WriteString(s.Name)
+	sb.WriteString("(")
+	for i, p := range s.Parameters {
+		if i > 0 {
+			sb.WriteString(", ")
+		}
+		sb.WriteString(p.String())
+	}
+	sb.WriteString(") RETURNS ")
+	sb.WriteString(s.ReturnType.String())
+	sb.WriteString(" RETURN ")
+	sb.WriteString(s.Body.String())
+	return sb.String()
+}
+
+// DropFunctionStmt represents a DROP FUNCTION statement.
+type DropFunctionStmt struct {
+	Name     string
+	IfExists bool
+}
+
+func (s *DropFunctionStmt) node()      {}
+func (s *DropFunctionStmt) statement() {}
+func (s *DropFunctionStmt) String() string {
+	var sb strings.Builder
+	sb.WriteString("DROP FUNCTION ")
+	if s.IfExists {
+		sb.WriteString("IF EXISTS ")
+	}
+	sb.WriteString(s.Name)
+	return sb.String()
+}
+
+// UserFunction represents a stored user-defined function.
+type UserFunction struct {
+	Name       string
+	Parameters []*FunctionParameter
+	ReturnType *DataType
+	Body       Expression
+}

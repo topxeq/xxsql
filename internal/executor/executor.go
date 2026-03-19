@@ -80,10 +80,11 @@ type ColumnInfo struct {
 
 // Executor executes SQL queries against the storage engine.
 type Executor struct {
-	engine   *storage.Engine
-	database string
-	perms    PermissionChecker
-	authMgr  AuthManager
+	engine     *storage.Engine
+	database   string
+	perms      PermissionChecker
+	authMgr    AuthManager
+	udfManager *UDFManager
 }
 
 // AuthManager interface for auth operations.
@@ -106,6 +107,11 @@ func NewExecutor(engine *storage.Engine) *Executor {
 	return &Executor{
 		engine: engine,
 	}
+}
+
+// SetUDFManager sets the UDF manager for the executor.
+func (e *Executor) SetUDFManager(m *UDFManager) {
+	e.udfManager = m
 }
 
 // SetDatabase sets the current database.
@@ -257,6 +263,10 @@ func (e *Executor) ExecuteWithPerms(sqlStr string, checker PermissionChecker) (*
 			return nil, err
 		}
 		return e.executeRestore(s)
+	case *sql.CreateFunctionStmt:
+		return e.executeCreateFunction(s)
+	case *sql.DropFunctionStmt:
+		return e.executeDropFunction(s)
 	default:
 		return nil, fmt.Errorf("unsupported statement type: %T", stmt)
 	}
@@ -636,6 +646,43 @@ func toFloat(v interface{}) (float64, bool) {
 			return f, true
 		}
 		return 0, false
+	}
+}
+
+// evaluateUnaryExpr evaluates a unary expression.
+func (e *Executor) evaluateUnaryExpr(op sql.UnaryOp, val interface{}) (interface{}, error) {
+	if val == nil {
+		return nil, nil
+	}
+
+	switch op {
+	case sql.OpNeg:
+		switch v := val.(type) {
+		case int:
+			return -v, nil
+		case int64:
+			return -v, nil
+		case float64:
+			return -v, nil
+		case float32:
+			return -float64(v), nil
+		default:
+			if f, ok := toFloat(v); ok {
+				return -f, nil
+			}
+			return nil, fmt.Errorf("cannot negate value of type %T", val)
+		}
+	case sql.OpNot:
+		switch v := val.(type) {
+		case bool:
+			return !v, nil
+		case int, int64, float64:
+			return v == 0, nil
+		default:
+			return nil, fmt.Errorf("cannot apply NOT to type %T", val)
+		}
+	default:
+		return val, nil
 	}
 }
 
@@ -2141,6 +2188,57 @@ func (e *Executor) executeRestore(stmt *sql.RestoreStmt) (*Result, error) {
 	}, nil
 }
 
+// executeCreateFunction executes a CREATE FUNCTION statement.
+func (e *Executor) executeCreateFunction(stmt *sql.CreateFunctionStmt) (*Result, error) {
+	if e.udfManager == nil {
+		return nil, fmt.Errorf("UDF manager not initialized")
+	}
+
+	fn := &sql.UserFunction{
+		Name:       strings.ToUpper(stmt.Name),
+		Parameters: stmt.Parameters,
+		ReturnType: stmt.ReturnType,
+		Body:       stmt.Body,
+	}
+
+	if err := e.udfManager.CreateFunction(fn, stmt.Replace); err != nil {
+		return nil, err
+	}
+
+	// Save to disk
+	if err := e.udfManager.Save(); err != nil {
+		return nil, fmt.Errorf("failed to save function: %w", err)
+	}
+
+	return &Result{
+		Message: fmt.Sprintf("Function %s created", stmt.Name),
+	}, nil
+}
+
+// executeDropFunction executes a DROP FUNCTION statement.
+func (e *Executor) executeDropFunction(stmt *sql.DropFunctionStmt) (*Result, error) {
+	if e.udfManager == nil {
+		return nil, fmt.Errorf("UDF manager not initialized")
+	}
+
+	name := strings.ToUpper(stmt.Name)
+	if err := e.udfManager.DropFunction(name); err != nil {
+		if stmt.IfExists {
+			return &Result{Message: "OK"}, nil
+		}
+		return nil, err
+	}
+
+	// Save to disk
+	if err := e.udfManager.Save(); err != nil {
+		return nil, fmt.Errorf("failed to save functions: %w", err)
+	}
+
+	return &Result{
+		Message: fmt.Sprintf("Function %s dropped", stmt.Name),
+	}, nil
+}
+
 // executeTruncate executes a TRUNCATE TABLE statement.
 func (e *Executor) executeTruncate(stmt *sql.TruncateTableStmt) (*Result, error) {
 	// Check if table exists
@@ -2705,7 +2803,132 @@ func (e *Executor) evaluateFunction(fc *sql.FunctionCall, r *row.Row, columnMap 
 		return "", nil
 
 	default:
+		// Check for user-defined function
+		if e.udfManager != nil {
+			if udf, exists := e.udfManager.GetFunction(funcName); exists {
+				return e.evaluateUDF(udf, fc.Args, evalExpr)
+			}
+		}
 		// Unknown function - return nil (NULL)
+		return nil, nil
+	}
+}
+
+// evaluateUDF evaluates a user-defined function.
+func (e *Executor) evaluateUDF(udf *sql.UserFunction, args []sql.Expression, evalExpr func(sql.Expression) (interface{}, error)) (interface{}, error) {
+	// Create parameter value map
+	paramValues := make(map[string]interface{})
+
+	for i, param := range udf.Parameters {
+		if i < len(args) {
+			val, err := evalExpr(args[i])
+			if err != nil {
+				return nil, err
+			}
+			paramValues[param.Name] = val
+		}
+	}
+
+	// Evaluate body with parameter substitution
+	return e.evaluateExpressionWithParams(udf.Body, paramValues)
+}
+
+// evaluateExpressionWithParams evaluates an expression with parameter substitution.
+func (e *Executor) evaluateExpressionWithParams(expr sql.Expression, params map[string]interface{}) (interface{}, error) {
+	switch ex := expr.(type) {
+	case *sql.Literal:
+		return ex.Value, nil
+	case *sql.ColumnRef:
+		// Check if it's a parameter
+		if val, ok := params[ex.Name]; ok {
+			return val, nil
+		}
+		return nil, nil
+	case *sql.BinaryExpr:
+		left, err := e.evaluateExpressionWithParams(ex.Left, params)
+		if err != nil {
+			return nil, err
+		}
+		right, err := e.evaluateExpressionWithParams(ex.Right, params)
+		if err != nil {
+			return nil, err
+		}
+		return e.evaluateBinaryOp(left, ex.Op, right)
+	case *sql.FunctionCall:
+		// Nested function call - need to evaluate with params
+		return e.evaluateUDFFunctionCall(ex, params)
+	case *sql.UnaryExpr:
+		val, err := e.evaluateExpressionWithParams(ex.Right, params)
+		if err != nil {
+			return nil, err
+		}
+		return e.evaluateUnaryExpr(ex.Op, val)
+	default:
+		return nil, fmt.Errorf("unsupported expression type in UDF: %T", expr)
+	}
+}
+
+// evaluateUDFFunctionCall evaluates a function call within a UDF body.
+func (e *Executor) evaluateUDFFunctionCall(fc *sql.FunctionCall, params map[string]interface{}) (interface{}, error) {
+	// Evaluate arguments
+	args := make([]interface{}, len(fc.Args))
+	for i, arg := range fc.Args {
+		val, err := e.evaluateExpressionWithParams(arg, params)
+		if err != nil {
+			return nil, err
+		}
+		args[i] = val
+	}
+
+	funcName := strings.ToUpper(fc.Name)
+
+	// Built-in functions
+	switch funcName {
+	case "UPPER", "UCASE":
+		if len(args) == 0 || args[0] == nil {
+			return nil, nil
+		}
+		return strings.ToUpper(fmt.Sprintf("%v", args[0])), nil
+	case "LOWER", "LCASE":
+		if len(args) == 0 || args[0] == nil {
+			return nil, nil
+		}
+		return strings.ToLower(fmt.Sprintf("%v", args[0])), nil
+	case "LENGTH", "OCTET_LENGTH":
+		if len(args) == 0 || args[0] == nil {
+			return nil, nil
+		}
+		switch v := args[0].(type) {
+		case string:
+			return int64(len(v)), nil
+		case []byte:
+			return int64(len(v)), nil
+		default:
+			return int64(len(fmt.Sprintf("%v", v))), nil
+		}
+	case "CONCAT":
+		var result strings.Builder
+		for _, arg := range args {
+			if arg == nil {
+				return nil, nil
+			}
+			result.WriteString(fmt.Sprintf("%v", arg))
+		}
+		return result.String(), nil
+	case "NOW", "CURRENT_TIMESTAMP":
+		return time.Now().Format("2006-01-02 15:04:05"), nil
+	default:
+		// Check for nested UDF
+		if e.udfManager != nil {
+			if udf, exists := e.udfManager.GetFunction(funcName); exists {
+				// Convert args back to expressions for nested call
+				exprArgs := make([]sql.Expression, len(fc.Args))
+				copy(exprArgs, fc.Args)
+				return e.evaluateUDF(udf, exprArgs, func(expr sql.Expression) (interface{}, error) {
+					return e.evaluateExpressionWithParams(expr, params)
+				})
+			}
+		}
 		return nil, nil
 	}
 }
