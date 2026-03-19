@@ -16,37 +16,36 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
           go-version: '1.23'
+          cache: false
 
-      - name: Debug environment
+      - name: Verify checkout
         run: |
-          echo "=== Go version ==="
-          go version
-          echo "=== Go environment ==="
-          go env
-          echo "=== Working directory ==="
+          echo "=== Current directory ==="
           pwd
+          echo "=== Git status ==="
+          git status
+          echo "=== Git log ==="
+          git log --oneline -3
           echo "=== Files ==="
-          ls -la
-          echo "=== cmd/xxsqls ==="
-          ls -la cmd/xxsqls || echo "cmd/xxsqls not found"
+          find . -name "*.go" | head -20
           echo "=== go.mod ==="
           cat go.mod
-
-      - name: Download dependencies
-        run: go mod download
+          echo "=== Try list packages ==="
+          go list ./... 2>&1 || echo "go list failed"
 
       - name: Build
         run: |
-          echo "=== Building xxsqls ==="
-          go build -v -x -o xxsqls ./cmd/xxsqls 2>&1
-          echo "=== Building xxsqlc ==="
-          go build -v -x -o xxsqlc ./cmd/xxsqlc 2>&1
-          ls -la xxsqls xxsqlc
+          set -x
+          go build -v ./cmd/xxsqls 2>&1
+          go build -v ./cmd/xxsqlc 2>&1
+          ls -la
 
       - name: Create archive
         run: |
