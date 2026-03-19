@@ -27,26 +27,24 @@ jobs:
       - name: Build
         shell: bash
         run: |
-          set +e
           echo "=== Current directory ==="
           pwd
-          echo "=== Files ==="
+          echo "=== Listing files ==="
           ls -la
-          echo "=== Go env ==="
-          /usr/local/go/bin/go env
+          echo "=== cmd directory ==="
+          ls -la cmd/ || echo "cmd not found"
+          echo "=== go.mod ==="
+          cat go.mod
           echo "=== Downloading dependencies ==="
           /usr/local/go/bin/go mod download
+          echo "=== Listing packages ==="
+          /usr/local/go/bin/go list ./... 2>&1
           echo "=== Building xxsqls ==="
-          /usr/local/go/bin/go build -v -o xxsqls ./cmd/xxsqls
-          BUILD_STATUS=$?
-          echo "Build status: $BUILD_STATUS"
-          if [ $BUILD_STATUS -ne 0 ]; then
-            echo "Build failed with status $BUILD_STATUS"
-            exit 1
-          fi
+          /usr/local/go/bin/go build -v github.com/topxeq/xxsql/cmd/xxsqls -o xxsqls 2>&1
           echo "=== Building xxsqlc ==="
-          /usr/local/go/bin/go build -v -o xxsqlc ./cmd/xxsqlc
-          ls -la xxsqls xxsqlc
+          /usr/local/go/bin/go build -v github.com/topxeq/xxsql/cmd/xxsqlc -o xxsqlc 2>&1
+          echo "=== Checking output ==="
+          ls -la xxsqls xxsqlc 2>&1 || echo "Build files not found"
 
       - name: Create archive
         if: startsWith(github.ref, 'refs/tags/')
