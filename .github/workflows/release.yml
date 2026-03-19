@@ -16,27 +16,25 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version: '1.22'
-      - name: Test
+      - name: Test basic Go
         run: |
-          echo "Testing basic Go functionality"
+          echo "=== Testing basic Go functionality ==="
           go version
-          go env
-          echo "Files in current directory:"
-          ls -la
-          echo "Files in cmd directory:"
-          ls -la cmd/
-          echo "Go module info:"
-          cat go.mod
-          echo "Listing all packages:"
-          go list ./... 2>&1 || true
-          echo "Attempting to build a test file..."
-          echo 'package main; import "fmt"; func main() { fmt.Println("test") }' > /tmp/test.go
-          go build -o /tmp/test /tmp/test.go 2>&1 || true
-          /tmp/test 2>&1 || true
+          go env GOROOT GOPATH GOCACHE
+          echo "=== Building a simple Go package ==="
+          mkdir -p /tmp/testpkg
+          echo 'package testpkg' > /tmp/testpkg/test.go
+          echo 'func Test() {}' >> /tmp/testpkg/test.go
+          cd /tmp/testpkg
+          go build -v . 2>&1
+          echo "=== Building testpkg succeeded ==="
       - name: Build
         run: |
-          go build -v -o xxsqls ./cmd/xxsqls 2>&1 || exit 1
-          go build -v -o xxsqlc ./cmd/xxsqlc 2>&1 || exit 1
+          echo "=== Building xxsqls ==="
+          go build -v -o xxsqls ./cmd/xxsqls 2>&1
+          echo "=== Building xxsqlc ==="
+          go build -v -o xxsqlc ./cmd/xxsqlc 2>&1
+          ls -la xxsqls xxsqlc
       - name: Archive
         run: tar -czvf xxsql-${{ github.ref_name }}-linux-amd64.tar.gz xxsqls xxsqlc
       - uses: softprops/action-gh-release@v1
