@@ -93,18 +93,24 @@ Then XxSql might be the right choice.
 
 Download from [GitHub Releases](https://github.com/topxeq/xxsql/releases):
 
+**Latest Release: v0.0.4**
+
 | Platform | Architecture | Download |
 |----------|-------------|----------|
-| Linux | amd64 | `xxsql-vX.X.X-linux-amd64.tar.gz` |
-| Linux | arm64 | `xxsql-vX.X.X-linux-arm64.tar.gz` |
-| macOS | amd64 (Intel) | `xxsql-vX.X.X-darwin-amd64.tar.gz` |
-| macOS | arm64 (Apple Silicon) | `xxsql-vX.X.X-darwin-arm64.tar.gz` |
-| Windows | amd64 | `xxsql-vX.X.X-windows-amd64.zip` |
+| Linux | amd64 | [xxsql-v0.0.4-linux-amd64.tar.gz](https://github.com/topxeq/xxsql/releases/download/v0.0.4/xxsql-v0.0.4-linux-amd64.tar.gz) |
+| Linux | arm64 | [xxsql-v0.0.4-linux-arm64.tar.gz](https://github.com/topxeq/xxsql/releases/download/v0.0.4/xxsql-v0.0.4-linux-arm64.tar.gz) |
+| macOS | amd64 (Intel) | [xxsql-v0.0.4-darwin-amd64.tar.gz](https://github.com/topxeq/xxsql/releases/download/v0.0.4/xxsql-v0.0.4-darwin-amd64.tar.gz) |
+| macOS | arm64 (Apple Silicon) | [xxsql-v0.0.4-darwin-arm64.tar.gz](https://github.com/topxeq/xxsql/releases/download/v0.0.4/xxsql-v0.0.4-darwin-arm64.tar.gz) |
+| Windows | amd64 | [xxsql-v0.0.4-windows-amd64.zip](https://github.com/topxeq/xxsql/releases/download/v0.0.4/xxsql-v0.0.4-windows-amd64.zip) |
 
 ```bash
 # Linux/macOS example
 tar -xzf xxsql-v0.0.4-linux-amd64.tar.gz
 ./xxsqls -data-dir ./data
+
+# Windows example (PowerShell)
+Expand-Archive xxsql-v0.0.4-windows-amd64.zip
+.\xxsqls.exe -data-dir .\data
 ```
 
 ### Build from Source
@@ -747,16 +753,56 @@ See [docs/TESTING.md](docs/TESTING.md) for testing guidelines.
 
 ### v0.0.4 (Current Release) ✅
 
-- [x] All v0.0.1 features
-- [x] Enhanced Go SQL Driver with DSN parsing
-- [x] Multi-platform binary releases (Linux, macOS, Windows)
-- [x] Automated GitHub Actions release workflow
-- [x] Improved SQL executor
-- [x] **BLOB type support** with hex notation (X'...', 0x...)
-- [x] **CAST expressions** (INT, FLOAT, VARCHAR, BLOB, BOOL)
-- [x] **BLOB functions** (HEX, UNHEX, LENGTH, OCTET_LENGTH)
-- [x] **IS NULL / IS NOT NULL** syntax support
-- [x] Improved WHERE clause handling (AND, OR operators)
+**New Features:**
+- **BLOB Type Support** - Full binary large object support with hex notation
+  - Hex literals: `X'48656c6c6f'` and `0xdeadbeef`
+  - BLOB storage with 4-byte length prefix
+  - Byte-by-byte comparison operations
+
+- **CAST Expressions** - Type conversion between data types
+  - `CAST(expr AS INT)` - Convert to integer
+  - `CAST(expr AS FLOAT)` - Convert to floating point
+  - `CAST(expr AS VARCHAR/CHAR/TEXT)` - Convert to string
+  - `CAST(expr AS BLOB)` - Convert to binary
+  - `CAST(expr AS BOOL)` - Convert to boolean
+
+- **Built-in Functions**:
+  - `HEX(value)` - Convert BLOB/string to hexadecimal string
+  - `UNHEX(string)` - Convert hexadecimal string to BLOB
+  - `LENGTH(value)` / `OCTET_LENGTH(value)` - Get byte length
+  - `UPPER(string)` / `LOWER(string)` - Case conversion
+  - `CONCAT(str1, str2, ...)` - String concatenation
+  - `SUBSTRING(str, start, len)` - Substring extraction
+
+- **SQL Syntax Improvements**:
+  - `IS NULL` / `IS NOT NULL` expressions
+  - Proper `AND` / `OR` operator handling in WHERE clauses
+  - SEQ type now automatically enables auto-increment
+
+- **Multi-platform Builds**:
+  - Linux (amd64, arm64)
+  - macOS (amd64 Intel, arm64 Apple Silicon)
+  - Windows (amd64)
+  - Automated GitHub Actions release workflow
+
+**Example Usage:**
+```sql
+-- Create a table with BLOB column
+CREATE TABLE files (
+    id SEQ PRIMARY KEY,
+    name VARCHAR(255),
+    data BLOB
+);
+
+-- Insert BLOB data with hex notation
+INSERT INTO files (name, data) VALUES ('hello', X'48656c6c6f');
+
+-- Query with functions
+SELECT id, name, HEX(data) AS hex_data, LENGTH(data) AS size FROM files;
+
+-- Use CAST expressions
+SELECT CAST('123' AS INT), CAST(0xdeadbeef AS BLOB);
+```
 
 ### v0.0.1 ✅
 
