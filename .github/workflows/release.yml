@@ -22,11 +22,30 @@ jobs:
         with:
           go-version: '1.23'
 
+      - name: Debug environment
+        run: |
+          echo "=== Go version ==="
+          go version
+          echo "=== Go environment ==="
+          go env
+          echo "=== Working directory ==="
+          pwd
+          echo "=== Files ==="
+          ls -la
+          echo "=== cmd/xxsqls ==="
+          ls -la cmd/xxsqls || echo "cmd/xxsqls not found"
+          echo "=== go.mod ==="
+          cat go.mod
+
+      - name: Download dependencies
+        run: go mod download
+
       - name: Build
         run: |
-          go version
-          go build -v -o xxsqls ./cmd/xxsqls
-          go build -v -o xxsqlc ./cmd/xxsqlc
+          echo "=== Building xxsqls ==="
+          go build -v -x -o xxsqls ./cmd/xxsqls 2>&1
+          echo "=== Building xxsqlc ==="
+          go build -v -x -o xxsqlc ./cmd/xxsqlc 2>&1
           ls -la xxsqls xxsqlc
 
       - name: Create archive
