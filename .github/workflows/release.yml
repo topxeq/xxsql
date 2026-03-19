@@ -12,22 +12,39 @@ jobs:
   build:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - name: Install Go manually
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+
+      - name: Verify checkout
         run: |
-          wget -q https://go.dev/dl/go1.22.0.linux-amd64.tar.gz
-          sudo tar -C /usr/local -xzf go1.22.0.linux-amd64.tar.gz
-          /usr/local/go/bin/go version
-      - name: Download dependencies
-        run: /usr/local/go/bin/go mod download
-      - name: Build
-        run: |
-          /usr/local/go/bin/go build -v -o xxsqls ./cmd/xxsqls
-          /usr/local/go/bin/go build -v -o xxsqlc ./cmd/xxsqlc
-          ls -la xxsqls xxsqlc
-      - name: Archive
+          echo "=== Current directory ==="
+          pwd
+          echo "=== Files ==="
+          ls -la
+          echo "=== go.mod ==="
+          cat go.mod
+          echo "=== internal directories ==="
+          ls -la internal/ || true
+
+      - name: Build server
+        run: go build -v -o xxsqls ./cmd/xxsqls
+
+      - name: Build client
+        run: go build -v -o xxsqlc ./cmd/xxsqlc
+
+      - name: Verify binaries
+        run: ls -la xxsqls xxsqlc
+
+      - name: Create archive
         run: tar -czvf xxsql-${{ github.ref_name }}-linux-amd64.tar.gz xxsqls xxsqlc
-      - uses: softprops/action-gh-release@v1
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v1
         with:
           files: xxsql-*.tar.gz
           generate_release_notes: true
