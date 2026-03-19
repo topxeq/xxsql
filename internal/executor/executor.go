@@ -7,6 +7,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/topxeq/xxsql/internal/backup"
 	"github.com/topxeq/xxsql/internal/sql"
@@ -303,6 +304,7 @@ func (e *Executor) executeSelect(stmt *sql.SelectStmt) (*Result, error) {
 	// Determine result columns
 	var resultCols []ColumnInfo
 	var colIndices []int
+	var funcExprs []sql.Expression // Non-aggregate function expressions
 	var aggregateFuncs []struct {
 		name  string
 		arg   string // column name for the aggregate argument
@@ -319,6 +321,7 @@ func (e *Executor) executeSelect(stmt *sql.SelectStmt) (*Result, error) {
 					Type: col.Type.String(),
 				})
 				colIndices = append(colIndices, i)
+				funcExprs = append(funcExprs, nil)
 			}
 		case *sql.ColumnRef:
 			colName := strings.ToLower(expr.Name)
@@ -341,6 +344,7 @@ func (e *Executor) executeSelect(stmt *sql.SelectStmt) (*Result, error) {
 				return nil, fmt.Errorf("unknown column: %s", expr.Name)
 			}
 			colIndices = append(colIndices, idx)
+			funcExprs = append(funcExprs, nil)
 		case *sql.FunctionCall:
 			funcName := strings.ToUpper(expr.Name)
 			colName := ""
@@ -352,28 +356,42 @@ func (e *Executor) executeSelect(stmt *sql.SelectStmt) (*Result, error) {
 				}
 			}
 
+			// Check if it's an aggregate function
+			isAggregate := funcName == "COUNT" || funcName == "SUM" || funcName == "AVG" || funcName == "MIN" || funcName == "MAX"
+
 			// Determine result type
-			resultType := "INT"
-			if funcName == "AVG" {
-				resultType = "FLOAT"
+			resultType := "VARCHAR"
+			if isAggregate {
+				resultType = "INT"
+				if funcName == "AVG" {
+					resultType = "FLOAT"
+				}
 			}
 
 			resultCols = append(resultCols, ColumnInfo{
 				Name: expr.Name + "()",
 				Type: resultType,
 			})
-			aggregateFuncs = append(aggregateFuncs, struct {
-				name  string
-				arg   string
-				index int
-			}{funcName, colName, len(resultCols) - 1})
+			if isAggregate {
+				aggregateFuncs = append(aggregateFuncs, struct {
+					name  string
+					arg   string
+					index int
+				}{funcName, colName, len(resultCols) - 1})
+				colIndices = append(colIndices, -1)
+				funcExprs = append(funcExprs, nil)
+			} else {
+				// Non-aggregate function - will be evaluated per row
+				colIndices = append(colIndices, -1)
+				funcExprs = append(funcExprs, expr)
+			}
 		}
 	}
 
 	// If there are aggregate functions, compute aggregates
 	if len(aggregateFuncs) > 0 || len(stmt.GroupBy) > 0 {
 		// Handle GROUP BY with aggregates
-		return e.executeGroupBy(stmt, rows, resultCols, colIndices, aggregateFuncs, tblInfo, columnMap, columnOrder)
+		return e.executeGroupBy(stmt, rows, resultCols, colIndices, funcExprs, aggregateFuncs, tblInfo, columnMap, columnOrder)
 	}
 
 	// Build result rows
@@ -397,7 +415,14 @@ func (e *Executor) executeSelect(stmt *sql.SelectStmt) (*Result, error) {
 		// Build result row
 		resultRow := make([]interface{}, len(colIndices))
 		for i, idx := range colIndices {
-			if idx < len(r.Values) {
+			if funcExprs[i] != nil {
+				// Evaluate function expression
+				val, err := e.evaluateExpression(funcExprs[i], r, columnMap, columnOrder)
+				if err != nil {
+					return nil, err
+				}
+				resultRow[i] = val
+			} else if idx >= 0 && idx < len(r.Values) {
 				resultRow[i] = e.valueToInterface(r.Values[idx])
 			} else {
 				resultRow[i] = nil
@@ -615,7 +640,7 @@ func toFloat(v interface{}) (float64, bool) {
 }
 
 // executeGroupBy handles GROUP BY and aggregate functions.
-func (e *Executor) executeGroupBy(stmt *sql.SelectStmt, rows []*row.Row, resultCols []ColumnInfo, colIndices []int, aggregateFuncs []struct {
+func (e *Executor) executeGroupBy(stmt *sql.SelectStmt, rows []*row.Row, resultCols []ColumnInfo, colIndices []int, funcExprs []sql.Expression, aggregateFuncs []struct {
 	name  string
 	arg   string
 	index int
@@ -687,8 +712,15 @@ func (e *Executor) executeGroupBy(stmt *sql.SelectStmt, rows []*row.Row, resultC
 		if len(groupRows) > 0 {
 			firstRow := groupRows[0]
 			for i, idx := range colIndices {
-				if idx < len(firstRow.Values) {
+				if idx >= 0 && idx < len(firstRow.Values) {
 					resultRow[i] = e.valueToInterface(firstRow.Values[idx])
+				} else if funcExprs[i] != nil {
+					// Evaluate function expression for the first row in group
+					val, err := e.evaluateExpression(funcExprs[i], firstRow, columnMap, columnOrder)
+					if err != nil {
+						return nil, err
+					}
+					resultRow[i] = val
 				}
 			}
 		}
@@ -902,7 +934,7 @@ func (e *Executor) executeSelectWithoutFrom(stmt *sql.SelectStmt) (*Result, erro
 					Name: colName + "()",
 					Type: "DATETIME",
 				})
-				row = append(row, "2024-01-01 00:00:00")
+				row = append(row, time.Now().Format("2006-01-02 15:04:05"))
 			} else if strings.ToUpper(colName) == "DATABASE" {
 				result.Columns = append(result.Columns, ColumnInfo{
 					Name: "DATABASE()",
@@ -916,12 +948,39 @@ func (e *Executor) executeSelectWithoutFrom(stmt *sql.SelectStmt) (*Result, erro
 				})
 				row = append(row, "5.7.0-XxSql")
 			} else {
+				// Evaluate function using evaluateFunction
+				val, err := e.evaluateFunction(expr, nil, nil, nil)
+				if err != nil {
+					return nil, err
+				}
 				result.Columns = append(result.Columns, ColumnInfo{
 					Name: colName + "()",
-					Type: "INT",
+					Type: "VARCHAR",
 				})
-				row = append(row, nil)
+				row = append(row, val)
 			}
+		case *sql.CastExpr:
+			// Evaluate the cast expression
+			val, err := e.castValueFromExpr(expr)
+			if err != nil {
+				return nil, err
+			}
+			result.Columns = append(result.Columns, ColumnInfo{
+				Name: "CAST",
+				Type: strings.ToUpper(expr.Type.Name),
+			})
+			row = append(row, val)
+		case *sql.BinaryExpr:
+			// Evaluate binary expression
+			val, err := e.evaluateBinaryExprWithoutRow(expr)
+			if err != nil {
+				return nil, err
+			}
+			result.Columns = append(result.Columns, ColumnInfo{
+				Name: "expr",
+				Type: "VARCHAR",
+			})
+			row = append(row, val)
 		case *sql.StarExpr:
 			// SELECT * without FROM is invalid, return 1
 			result.Columns = append(result.Columns, ColumnInfo{
@@ -929,12 +988,65 @@ func (e *Executor) executeSelectWithoutFrom(stmt *sql.SelectStmt) (*Result, erro
 				Type: "INT",
 			})
 			row = append(row, 1)
+		default:
+			// Try to handle as a general expression
+			result.Columns = append(result.Columns, ColumnInfo{
+				Name: fmt.Sprintf("%d", len(result.Columns)+1),
+				Type: "VARCHAR",
+			})
+			row = append(row, nil)
 		}
 	}
 
 	result.Rows = append(result.Rows, row)
 	result.RowCount = 1
 	return result, nil
+}
+
+// castValueFromExpr evaluates a cast expression without a row context.
+func (e *Executor) castValueFromExpr(expr *sql.CastExpr) (interface{}, error) {
+	var val interface{}
+	switch inner := expr.Expr.(type) {
+	case *sql.Literal:
+		val = inner.Value
+	case *sql.ColumnRef:
+		val = inner.Name
+	default:
+		return nil, fmt.Errorf("unsupported expression in CAST")
+	}
+	return e.castValue(val, expr.Type.Name)
+}
+
+// evaluateBinaryExprWithoutRow evaluates a binary expression without a row context.
+func (e *Executor) evaluateBinaryExprWithoutRow(expr *sql.BinaryExpr) (interface{}, error) {
+	var left, right interface{}
+	var err error
+
+	switch l := expr.Left.(type) {
+	case *sql.Literal:
+		left = l.Value
+	case *sql.CastExpr:
+		left, err = e.castValueFromExpr(l)
+		if err != nil {
+			return nil, err
+		}
+	default:
+		left = nil
+	}
+
+	switch r := expr.Right.(type) {
+	case *sql.Literal:
+		right = r.Value
+	case *sql.CastExpr:
+		right, err = e.castValueFromExpr(r)
+		if err != nil {
+			return nil, err
+		}
+	default:
+		right = nil
+	}
+
+	return e.evaluateBinaryOp(left, expr.Op, right)
 }
 
 // executeInsert executes an INSERT statement.
@@ -1007,10 +1119,11 @@ func (e *Executor) executeInsert(stmt *sql.InsertStmt) (*Result, error) {
 			}
 		}
 
-		// Handle auto-increment columns
+		// Handle auto-increment columns - mark as NULL so table layer can generate value
 		for i, col := range tblInfo.Columns {
 			if col.AutoIncr && values[i].Null {
-				values[i] = types.Value{Null: false, Type: types.TypeSeq}
+				// Keep as NULL - table layer will generate the sequence value
+				// Don't set a placeholder value here
 			}
 		}
 
@@ -1368,7 +1481,7 @@ func (e *Executor) executeCreateTable(stmt *sql.CreateTableStmt) (*Result, error
 			Scale:      colDef.Type.Scale,
 			Nullable:   colDef.Nullable,
 			PrimaryKey: colDef.PrimaryKey,
-			AutoIncr:   colDef.AutoIncr,
+			AutoIncr:   colDef.AutoIncr || colType == types.TypeSeq, // SEQ type is auto-increment
 			Unique:     colDef.Unique,
 		}
 
@@ -2057,6 +2170,28 @@ func (e *Executor) executeTruncate(stmt *sql.TruncateTableStmt) (*Result, error)
 func (e *Executor) evaluateWhere(expr sql.Expression, r *row.Row, columnMap map[string]*types.ColumnInfo, columnOrder []*types.ColumnInfo) (bool, error) {
 	switch ex := expr.(type) {
 	case *sql.BinaryExpr:
+		// Handle logical operators
+		if ex.Op == sql.OpAnd {
+			left, err := e.evaluateWhere(ex.Left, r, columnMap, columnOrder)
+			if err != nil {
+				return false, err
+			}
+			if !left {
+				return false, nil // Short-circuit
+			}
+			return e.evaluateWhere(ex.Right, r, columnMap, columnOrder)
+		}
+		if ex.Op == sql.OpOr {
+			left, err := e.evaluateWhere(ex.Left, r, columnMap, columnOrder)
+			if err != nil {
+				return false, err
+			}
+			if left {
+				return true, nil // Short-circuit
+			}
+			return e.evaluateWhere(ex.Right, r, columnMap, columnOrder)
+		}
+
 		// Handle IN operator specially (right side could be a subquery)
 		if ex.Op == sql.OpIn {
 			left, err := e.evaluateExpression(ex.Left, r, columnMap, columnOrder)
@@ -2212,8 +2347,367 @@ func (e *Executor) evaluateExpression(expr sql.Expression, r *row.Row, columnMap
 			}
 		}
 		return nil, nil
+
+	case *sql.CastExpr:
+		// Evaluate the inner expression
+		val, err := e.evaluateExpression(ex.Expr, r, columnMap, columnOrder)
+		if err != nil {
+			return nil, err
+		}
+		// Cast to the target type
+		return e.castValue(val, ex.Type.Name)
+
+	case *sql.BinaryExpr:
+		left, err := e.evaluateExpression(ex.Left, r, columnMap, columnOrder)
+		if err != nil {
+			return nil, err
+		}
+		right, err := e.evaluateExpression(ex.Right, r, columnMap, columnOrder)
+		if err != nil {
+			return nil, err
+		}
+		return e.evaluateBinaryOp(left, ex.Op, right)
+
+	case *sql.UnaryExpr:
+		val, err := e.evaluateExpression(ex.Right, r, columnMap, columnOrder)
+		if err != nil {
+			return nil, err
+		}
+		if val == nil {
+			return nil, nil
+		}
+		if ex.Op == sql.OpNeg {
+			switch v := val.(type) {
+			case int:
+				return -v, nil
+			case int64:
+				return -v, nil
+			case float64:
+				return -v, nil
+			}
+		}
+		return val, nil
+
+	case *sql.FunctionCall:
+		return e.evaluateFunction(ex, r, columnMap, columnOrder)
 	}
 	return nil, nil
+}
+
+// castValue casts a value to the target type.
+func (e *Executor) castValue(val interface{}, targetType string) (interface{}, error) {
+	if val == nil {
+		return nil, nil
+	}
+
+	targetType = strings.ToUpper(targetType)
+
+	switch targetType {
+	case "INT", "INTEGER", "BIGINT", "SMALLINT", "TINYINT":
+		switch v := val.(type) {
+		case int, int32, int64:
+			return v, nil
+		case float64:
+			return int64(v), nil
+		case string:
+			i, err := strconv.ParseInt(v, 10, 64)
+			if err != nil {
+				return nil, fmt.Errorf("cannot cast '%s' to INT", v)
+			}
+			return i, nil
+		case []byte:
+			// Try to interpret as string first
+			i, err := strconv.ParseInt(string(v), 10, 64)
+			if err != nil {
+				return nil, fmt.Errorf("cannot cast BLOB to INT")
+			}
+			return i, nil
+		case bool:
+			if v {
+				return int64(1), nil
+			}
+			return int64(0), nil
+		}
+
+	case "FLOAT", "DOUBLE":
+		switch v := val.(type) {
+		case float64:
+			return v, nil
+		case int, int32, int64:
+			return float64(v.(int64)), nil
+		case string:
+			f, err := strconv.ParseFloat(v, 64)
+			if err != nil {
+				return nil, fmt.Errorf("cannot cast '%s' to FLOAT", v)
+			}
+			return f, nil
+		case []byte:
+			f, err := strconv.ParseFloat(string(v), 64)
+			if err != nil {
+				return nil, fmt.Errorf("cannot cast BLOB to FLOAT")
+			}
+			return f, nil
+		}
+
+	case "VARCHAR", "CHAR", "TEXT":
+		switch v := val.(type) {
+		case string:
+			return v, nil
+		case []byte:
+			return string(v), nil
+		case int, int32, int64, float64, bool:
+			return fmt.Sprintf("%v", v), nil
+		default:
+			return fmt.Sprintf("%v", v), nil
+		}
+
+	case "BLOB":
+		switch v := val.(type) {
+		case []byte:
+			return v, nil
+		case string:
+			// Check if it's a hex string
+			if len(v) >= 2 && (v[0:2] == "0x" || v[0:2] == "0X") {
+				blob, err := types.HexToBlob(v)
+				if err != nil {
+					return nil, err
+				}
+				return blob.Data, nil
+			}
+			// Otherwise convert string to bytes
+			return []byte(v), nil
+		case int, int32, int64:
+			// Convert integer to bytes
+			i := v.(int64)
+			return []byte(strconv.FormatInt(i, 10)), nil
+		case float64:
+			return []byte(strconv.FormatFloat(v, 'f', -1, 64)), nil
+		case bool:
+			if v {
+				return []byte("1"), nil
+			}
+			return []byte("0"), nil
+		default:
+			return nil, fmt.Errorf("cannot cast to BLOB")
+		}
+
+	case "BOOL", "BOOLEAN":
+		switch v := val.(type) {
+		case bool:
+			return v, nil
+		case int, int32, int64:
+			return v.(int64) != 0, nil
+		case float64:
+			return v != 0, nil
+		case string:
+			lower := strings.ToLower(v)
+			return lower == "true" || lower == "1" || lower == "t", nil
+		case []byte:
+			lower := strings.ToLower(string(v))
+			return lower == "true" || lower == "1" || lower == "t", nil
+		}
+	}
+
+	// Default: return as-is
+	return val, nil
+}
+
+// evaluateFunction evaluates a function call.
+func (e *Executor) evaluateFunction(fc *sql.FunctionCall, r *row.Row, columnMap map[string]*types.ColumnInfo, columnOrder []*types.ColumnInfo) (interface{}, error) {
+	funcName := strings.ToUpper(fc.Name)
+
+	// Helper to evaluate expression when row might be nil
+	evalExpr := func(expr sql.Expression) (interface{}, error) {
+		if r == nil {
+			// No row context, evaluate directly
+			switch ex := expr.(type) {
+			case *sql.Literal:
+				return ex.Value, nil
+			case *sql.ColumnRef:
+				return nil, nil
+			case *sql.CastExpr:
+				return e.castValueFromExpr(ex)
+			case *sql.FunctionCall:
+				return e.evaluateFunction(ex, nil, nil, nil)
+			default:
+				return nil, nil
+			}
+		}
+		return e.evaluateExpression(expr, r, columnMap, columnOrder)
+	}
+
+	switch funcName {
+	case "HEX":
+		if len(fc.Args) == 0 {
+			return nil, fmt.Errorf("HEX requires 1 argument")
+		}
+		arg, err := evalExpr(fc.Args[0])
+		if err != nil {
+			return nil, err
+		}
+		if arg == nil {
+			return nil, nil
+		}
+		switch v := arg.(type) {
+		case []byte:
+			return fmt.Sprintf("%x", v), nil
+		case string:
+			return fmt.Sprintf("%x", v), nil
+		case int:
+			return fmt.Sprintf("%x", v), nil
+		case int32:
+			return fmt.Sprintf("%x", v), nil
+		case int64:
+			return fmt.Sprintf("%x", v), nil
+		default:
+			return fmt.Sprintf("%x", v), nil
+		}
+
+	case "UNHEX":
+		if len(fc.Args) == 0 {
+			return nil, fmt.Errorf("UNHEX requires 1 argument")
+		}
+		arg, err := evalExpr(fc.Args[0])
+		if err != nil {
+			return nil, err
+		}
+		if arg == nil {
+			return nil, nil
+		}
+		strVal, ok := arg.(string)
+		if !ok {
+			strVal = fmt.Sprintf("%v", arg)
+		}
+		blob, err := types.HexToBlob(strVal)
+		if err != nil {
+			return nil, err
+		}
+		return blob.Data, nil
+
+	case "LENGTH", "OCTET_LENGTH":
+		if len(fc.Args) == 0 {
+			return nil, fmt.Errorf("%s requires 1 argument", funcName)
+		}
+		arg, err := evalExpr(fc.Args[0])
+		if err != nil {
+			return nil, err
+		}
+		if arg == nil {
+			return nil, nil
+		}
+		switch v := arg.(type) {
+		case []byte:
+			return int64(len(v)), nil
+		case string:
+			return int64(len(v)), nil
+		default:
+			return int64(len(fmt.Sprintf("%v", v))), nil
+		}
+
+	case "UPPER", "UCASE":
+		if len(fc.Args) == 0 {
+			return nil, fmt.Errorf("%s requires 1 argument", funcName)
+		}
+		arg, err := evalExpr(fc.Args[0])
+		if err != nil {
+			return nil, err
+		}
+		if arg == nil {
+			return nil, nil
+		}
+		return strings.ToUpper(fmt.Sprintf("%v", arg)), nil
+
+	case "LOWER", "LCASE":
+		if len(fc.Args) == 0 {
+			return nil, fmt.Errorf("%s requires 1 argument", funcName)
+		}
+		arg, err := evalExpr(fc.Args[0])
+		if err != nil {
+			return nil, err
+		}
+		if arg == nil {
+			return nil, nil
+		}
+		return strings.ToLower(fmt.Sprintf("%v", arg)), nil
+
+	case "CONCAT":
+		var result strings.Builder
+		for _, argExpr := range fc.Args {
+			arg, err := evalExpr(argExpr)
+			if err != nil {
+				return nil, err
+			}
+			if arg == nil {
+				return nil, nil // CONCAT with NULL returns NULL
+			}
+			result.WriteString(fmt.Sprintf("%v", arg))
+		}
+		return result.String(), nil
+
+	case "SUBSTRING", "SUBSTR":
+		if len(fc.Args) < 2 {
+			return nil, fmt.Errorf("%s requires at least 2 arguments", funcName)
+		}
+		str, err := evalExpr(fc.Args[0])
+		if err != nil {
+			return nil, err
+		}
+		if str == nil {
+			return nil, nil
+		}
+		strVal := fmt.Sprintf("%v", str)
+
+		start, err := evalExpr(fc.Args[1])
+		if err != nil {
+			return nil, err
+		}
+		startIdx := 0
+		switch v := start.(type) {
+		case int:
+			startIdx = v - 1 // SQL is 1-indexed
+		case int64:
+			startIdx = int(v) - 1
+		case float64:
+			startIdx = int(v) - 1
+		}
+		if startIdx < 0 {
+			startIdx = 0
+		}
+
+		if len(fc.Args) >= 3 {
+			length, err := evalExpr(fc.Args[2])
+			if err != nil {
+				return nil, err
+			}
+			var lengthVal int
+			switch v := length.(type) {
+			case int:
+				lengthVal = v
+			case int64:
+				lengthVal = int(v)
+			case float64:
+				lengthVal = int(v)
+			}
+			if startIdx+lengthVal > len(strVal) {
+				return strVal[startIdx:], nil
+			}
+			return strVal[startIdx : startIdx+lengthVal], nil
+		}
+		return strVal[startIdx:], nil
+
+	case "NOW", "CURRENT_TIMESTAMP":
+		return time.Now().Format("2006-01-02 15:04:05"), nil
+
+	case "DATABASE":
+		if e.database != "" {
+			return e.database, nil
+		}
+		return "", nil
+
+	default:
+		// Unknown function - return nil (NULL)
+		return nil, nil
+	}
 }
 
 // compareValues compares two values with an operator.
@@ -2227,6 +2721,59 @@ func (e *Executor) compareValues(left interface{}, op sql.BinaryOp, right interf
 			return !(left == nil && right == nil), nil
 		}
 		return false, nil
+	}
+
+	// Handle BLOB comparisons
+	leftBytes, leftIsBytes := left.([]byte)
+	rightBytes, rightIsBytes := right.([]byte)
+
+	if leftIsBytes || rightIsBytes {
+		// At least one is a byte slice
+		// Try to convert string to bytes if needed
+		if leftIsBytes && !rightIsBytes {
+			rightStr := fmt.Sprintf("%v", right)
+			// Check if it's a hex string (0x...)
+			if len(rightStr) >= 2 && (rightStr[0:2] == "0x" || rightStr[0:2] == "0X") {
+				blob, err := types.HexToBlob(rightStr)
+				if err == nil {
+					rightBytes = blob.Data
+					rightIsBytes = true
+				}
+			} else {
+				rightBytes = []byte(rightStr)
+				rightIsBytes = true
+			}
+		} else if !leftIsBytes && rightIsBytes {
+			leftStr := fmt.Sprintf("%v", left)
+			if len(leftStr) >= 2 && (leftStr[0:2] == "0x" || leftStr[0:2] == "0X") {
+				blob, err := types.HexToBlob(leftStr)
+				if err == nil {
+					leftBytes = blob.Data
+					leftIsBytes = true
+				}
+			} else {
+				leftBytes = []byte(leftStr)
+				leftIsBytes = true
+			}
+		}
+
+		if leftIsBytes && rightIsBytes {
+			// Compare as byte slices
+			switch op {
+			case sql.OpEq:
+				return e.bytesEqual(leftBytes, rightBytes), nil
+			case sql.OpNe:
+				return !e.bytesEqual(leftBytes, rightBytes), nil
+			case sql.OpLt:
+				return e.bytesCompare(leftBytes, rightBytes) < 0, nil
+			case sql.OpLe:
+				return e.bytesCompare(leftBytes, rightBytes) <= 0, nil
+			case sql.OpGt:
+				return e.bytesCompare(leftBytes, rightBytes) > 0, nil
+			case sql.OpGe:
+				return e.bytesCompare(leftBytes, rightBytes) >= 0, nil
+			}
+		}
 	}
 
 	// Convert to comparable values
@@ -2258,6 +2805,42 @@ func (e *Executor) compareValues(left interface{}, op sql.BinaryOp, right interf
 	}
 }
 
+// bytesEqual compares two byte slices for equality.
+func (e *Executor) bytesEqual(a, b []byte) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}
+
+// bytesCompare compares two byte slices (like strings.Compare).
+func (e *Executor) bytesCompare(a, b []byte) int {
+	minLen := len(a)
+	if len(b) < minLen {
+		minLen = len(b)
+	}
+	for i := 0; i < minLen; i++ {
+		if a[i] < b[i] {
+			return -1
+		}
+		if a[i] > b[i] {
+			return 1
+		}
+	}
+	if len(a) < len(b) {
+		return -1
+	}
+	if len(a) > len(b) {
+		return 1
+	}
+	return 0
+}
+
 // expressionToValue converts an expression to a storage value.
 func (e *Executor) expressionToValue(expr sql.Expression, col *types.ColumnInfo) (types.Value, error) {
 	switch ex := expr.(type) {
@@ -2267,6 +2850,28 @@ func (e *Executor) expressionToValue(expr sql.Expression, col *types.ColumnInfo)
 		}
 		if ex.Type == sql.LiteralNumber {
 			// Check target column type first
+			if col != nil && col.Type == types.TypeBlob {
+				// Convert integer to BLOB - store as big-endian bytes
+				var i int64
+				switch v := ex.Value.(type) {
+				case int:
+					i = int64(v)
+				case int64:
+					i = v
+				case float64:
+					i = int64(v)
+				}
+				// Convert to variable-length big-endian bytes
+				data := make([]byte, 0)
+				for i > 0 {
+					data = append([]byte{byte(i & 0xff)}, data...)
+					i >>= 8
+				}
+				if len(data) == 0 {
+					data = []byte{0}
+				}
+				return types.NewBlobValue(data), nil
+			}
 			if col != nil && col.Type == types.TypeDecimal {
 				// Store as DECIMAL
 				return types.NewDecimalFromString(fmt.Sprintf("%v", ex.Value))
@@ -2290,6 +2895,19 @@ func (e *Executor) expressionToValue(expr sql.Expression, col *types.ColumnInfo)
 			// Check if target column is DECIMAL
 			if col != nil && col.Type == types.TypeDecimal {
 				return types.NewDecimalFromString(fmt.Sprintf("%v", ex.Value))
+			}
+			// Check if target column is BLOB
+			if col != nil && col.Type == types.TypeBlob {
+				// Try to parse as hex string if it starts with 0x or X'...'
+				strVal := fmt.Sprintf("%v", ex.Value)
+				if len(strVal) >= 2 && (strVal[0:2] == "0x" || strVal[0:2] == "0X") {
+					return types.HexToBlob(strVal)
+				}
+				if len(strVal) >= 3 && (strVal[0] == 'x' || strVal[0] == 'X') && strVal[1] == '\'' {
+					return types.HexToBlob(strVal)
+				}
+				// Otherwise store as raw bytes
+				return types.NewBlobValue([]byte(strVal)), nil
 			}
 			return types.NewStringValue(fmt.Sprintf("%v", ex.Value), col.Type), nil
 		}
@@ -2341,6 +2959,8 @@ func (e *Executor) valueToInterface(v types.Value) interface{} {
 		return v.AsBool()
 	case types.TypeChar, types.TypeVarchar, types.TypeText:
 		return v.AsString()
+	case types.TypeBlob:
+		return v.AsBytes()
 	default:
 		return v.AsString()
 	}

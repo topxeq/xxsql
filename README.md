@@ -752,6 +752,11 @@ See [docs/TESTING.md](docs/TESTING.md) for testing guidelines.
 - [x] Multi-platform binary releases (Linux, macOS, Windows)
 - [x] Automated GitHub Actions release workflow
 - [x] Improved SQL executor
+- [x] **BLOB type support** with hex notation (X'...', 0x...)
+- [x] **CAST expressions** (INT, FLOAT, VARCHAR, BLOB, BOOL)
+- [x] **BLOB functions** (HEX, UNHEX, LENGTH, OCTET_LENGTH)
+- [x] **IS NULL / IS NOT NULL** syntax support
+- [x] Improved WHERE clause handling (AND, OR operators)
 
 ### v0.0.1 ✅
 

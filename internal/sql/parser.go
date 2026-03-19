@@ -1307,6 +1307,23 @@ func (p *Parser) parseBinaryExpr(minPrec int) Expression {
 			break
 		}
 
+		// Special handling for IS NULL / IS NOT NULL
+		if p.curTokenIs(TokIs) {
+			p.nextToken() // consume IS
+			notNull := false
+			if p.curTokenIs(TokNot) {
+				p.nextToken() // consume NOT
+				notNull = true
+			}
+			if !p.curTokenIs(TokNull) {
+				p.error("expected NULL after IS")
+				return nil
+			}
+			p.nextToken() // consume NULL
+			left = &IsNullExpr{Expr: left, Not: notNull}
+			continue
+		}
+
 		// Check if current token is a binary operator
 		if !p.isBinaryOpToken() {
 			break
@@ -1466,6 +1483,17 @@ func (p *Parser) parseFunctionCall(name string) *FunctionCall {
 func (p *Parser) parseNumber() *Literal {
 	val := p.currTok.Value
 	p.nextToken()
+
+	// Check for hexadecimal format (0x...)
+	if len(val) >= 2 && val[0] == '0' && (val[1] == 'x' || val[1] == 'X') {
+		// Parse as hexadecimal
+		hexStr := val[2:]
+		if i, err := strconv.ParseInt(hexStr, 16, 64); err == nil {
+			return &Literal{Type: LiteralNumber, Value: i}
+		}
+		p.error("invalid hexadecimal number: %s", val)
+		return nil
+	}
 
 	// Try to parse as integer first
 	if i, err := strconv.ParseInt(val, 10, 64); err == nil {

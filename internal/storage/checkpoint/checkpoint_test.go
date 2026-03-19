@@ -275,7 +275,7 @@ func TestManager_SetWALManager(t *testing.T) {
 	defer os.RemoveAll(tmpDir)
 
 	m := NewManager(ManagerConfig{
-		DataDir:     os.TempDir(),
+		DataDir:     tmpDir,
 		AutoEnabled: false,
 	})
 
@@ -308,7 +308,7 @@ func TestManager_SetBufferPool(t *testing.T) {
 	defer os.RemoveAll(tmpDir)
 
 	m := NewManager(ManagerConfig{
-		DataDir:     os.TempDir(),
+		DataDir:     tmpDir,
 		AutoEnabled: false,
 	})
 

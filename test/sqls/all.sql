@@ -106,6 +106,26 @@ CREATE TABLE audit_log (
     created_at DATETIME
 );
 
+-- Create files table with BLOB column for binary data storage
+CREATE TABLE files (
+    id SEQ PRIMARY KEY,
+    name VARCHAR(255) NOT NULL,
+    mime_type VARCHAR(100),
+    size INT DEFAULT 0,
+    data BLOB,
+    created_at DATETIME
+);
+
+-- Create images table for storing image thumbnails
+CREATE TABLE images (
+    id SEQ PRIMARY KEY,
+    filename VARCHAR(255) NOT NULL,
+    width INT DEFAULT 0,
+    height INT DEFAULT 0,
+    thumbnail BLOB,
+    full_image BLOB
+);
+
 -- ============================================================
 -- Part 3: CREATE INDEX
 -- ============================================================
@@ -234,6 +254,15 @@ INSERT INTO audit_log (table_name, action, record_id, created_at) VALUES ('order
 INSERT INTO audit_log (table_name, action, record_id, created_at) VALUES ('users', 'UPDATE', 2, '2024-03-02 11:00:00');
 INSERT INTO audit_log (table_name, action, record_id, created_at) VALUES ('products', 'UPDATE', 5, '2024-03-03 09:00:00');
 
+-- Insert files with BLOB data (using hex notation)
+INSERT INTO files (name, mime_type, size, data, created_at) VALUES ('test.txt', 'text/plain', 12, X'48656c6c6f20576f726c6421', '2024-03-01 10:00:00');
+INSERT INTO files (name, mime_type, size, data, created_at) VALUES ('config.bin', 'application/octet-stream', 8, X'deadbeef01020304', '2024-03-02 11:30:00');
+INSERT INTO files (name, mime_type, size, data, created_at) VALUES ('small.dat', 'application/octet-stream', 4, X'cafebabe', '2024-03-03 14:00:00');
+
+-- Insert images with BLOB thumbnails
+INSERT INTO images (filename, width, height, thumbnail, full_image) VALUES ('photo1.jpg', 800, 600, X'89504e470d0a1a0a', X'ffd8ffe000104a464946');
+INSERT INTO images (filename, width, height, thumbnail, full_image) VALUES ('logo.png', 100, 100, X'89504e47', X'89504e470d0a1a0a0000000d');
+
 -- ============================================================
 -- Part 5: SELECT - Basic Queries
 -- ============================================================
@@ -280,6 +309,12 @@ SELECT * FROM orders WHERE status IN ('completed', 'shipped');
 SELECT * FROM users WHERE age BETWEEN 25 AND 35;
 SELECT * FROM products WHERE price BETWEEN 50 AND 200;
 SELECT * FROM orders WHERE order_date BETWEEN '2024-03-01' AND '2024-03-05';
+
+-- Select BLOB data
+SELECT id, name, mime_type, size FROM files;
+SELECT id, filename, width, height FROM images;
+SELECT id, name, size, data FROM files WHERE id = 1;
+SELECT * FROM files WHERE name LIKE '%.txt';
 
 -- ============================================================
 -- Part 6: Aggregate Functions
@@ -660,6 +695,8 @@ DROP INDEX idx_users_username ON users;
 DROP INDEX idx_products_sku ON products;
 
 -- Drop tables (at the end for cleanup if needed)
+-- DROP TABLE IF EXISTS images;
+-- DROP TABLE IF EXISTS files;
 -- DROP TABLE IF EXISTS order_items;
 -- DROP TABLE IF EXISTS orders;
 -- DROP TABLE IF EXISTS products;

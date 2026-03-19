@@ -269,6 +269,62 @@ func TestLexer_LineColumn(t *testing.T) {
 	}
 }
 
+// TestLexer_BlobLiteral tests BLOB literal X'...' parsing
+func TestLexer_BlobLiteral(t *testing.T) {
+	tests := []struct {
+		input    string
+		expected string
+	}{
+		{"X'1234'", "0x1234"},
+		{"x'deadbeef'", "0xdeadbeef"},
+		{"X'ABCD'", "0xABCD"},
+		{"x'00'", "0x00"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.input, func(t *testing.T) {
+			l := NewLexer(tt.input)
+			tok := l.NextToken()
+			if tok.Type != TokString {
+				t.Errorf("Expected TokString for %q, got %v", tt.input, tok.Type)
+			}
+			if tok.Value != tt.expected {
+				t.Errorf("Blob literal value: got %q, want %q", tok.Value, tt.expected)
+			}
+		})
+	}
+}
+
+// TestLexer_BlobLiteralUnterminated tests unterminated BLOB literal
+func TestLexer_BlobLiteralUnterminated(t *testing.T) {
+	l := NewLexer("X'dead")
+	tok := l.NextToken()
+	if tok.Type != TokError {
+		t.Errorf("Expected TokError for unterminated blob literal, got %v", tok.Type)
+	}
+}
+
+// TestLexer_BlobLiteralInvalidHex tests invalid hex in BLOB literal
+func TestLexer_BlobLiteralInvalidHex(t *testing.T) {
+	l := NewLexer("X'GGGG'")
+	tok := l.NextToken()
+	if tok.Type != TokError {
+		t.Errorf("Expected TokError for invalid hex in blob literal, got %v", tok.Type)
+	}
+}
+
+// TestLexer_BlobKeyword tests BLOB keyword parsing
+func TestLexer_BlobKeyword(t *testing.T) {
+	l := NewLexer("BLOB")
+	tok := l.NextToken()
+	if tok.Type != TokBlob {
+		t.Errorf("Expected TokBlob, got %v", tok.Type)
+	}
+	if tok.Value != "BLOB" {
+		t.Errorf("BLOB keyword value: got %q, want %q", tok.Value, "BLOB")
+	}
+}
+
 // ============================================================================
 // Parser Tests - Join Types
 // ============================================================================

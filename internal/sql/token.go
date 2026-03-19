@@ -300,6 +300,8 @@ func (t TokenType) String() string {
 		return "DATETIME"
 	case TokBoolean, TokBool:
 		return "BOOLEAN"
+	case TokBlob:
+		return "BLOB"
 	case TokIdent:
 		return "IDENT"
 	case TokNumber:

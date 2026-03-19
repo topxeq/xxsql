@@ -22,6 +22,7 @@ func TestTypeIDString(t *testing.T) {
 		{TypeTime, "TIME"},
 		{TypeDatetime, "DATETIME"},
 		{TypeBool, "BOOL"},
+		{TypeBlob, "BLOB"},
 		{TypeBytes, "BYTES"},
 		{TypeID(99), "UNKNOWN(99)"},
 	}
@@ -57,6 +58,8 @@ func TestParseTypeID(t *testing.T) {
 		{"TIMESTAMP", TypeDatetime},
 		{"BOOL", TypeBool},
 		{"BOOLEAN", TypeBool},
+		{"BLOB", TypeBlob},
+		{"blob", TypeBlob},
 		{"unknown", TypeNull},
 	}
 
@@ -465,5 +468,199 @@ func TestNewTimeValue(t *testing.T) {
 	}
 	if v.Type != TypeTime {
 		t.Errorf("Type: got %v, want TypeTime", v.Type)
+	}
+}
+
+func TestBlobTypeID(t *testing.T) {
+	// Test String()
+	if TypeBlob.String() != "BLOB" {
+		t.Errorf("Expected 'BLOB', got '%s'", TypeBlob.String())
+	}
+
+	// Test ParseTypeID
+	blobTests := []struct {
+		input    string
+		expected TypeID
+	}{
+		{"BLOB", TypeBlob},
+		{"blob", TypeBlob},
+		{"TINYBLOB", TypeBlob},
+		{"tinyblob", TypeBlob},
+		{"MEDIUMBLOB", TypeBlob},
+		{"mediumblob", TypeBlob},
+		{"LONGBLOB", TypeBlob},
+		{"longblob", TypeBlob},
+	}
+
+	for _, tt := range blobTests {
+		t.Run(tt.input, func(t *testing.T) {
+			if got := ParseTypeID(tt.input); got != tt.expected {
+				t.Errorf("ParseTypeID(%s) = %d, expected %d", tt.input, got, tt.expected)
+			}
+		})
+	}
+}
+
+func TestNewBlobValue(t *testing.T) {
+	data := []byte{0x01, 0x02, 0x03, 0x04, 0xDE, 0xAD, 0xBE, 0xEF}
+	v := NewBlobValue(data)
+
+	if v.Null {
+		t.Error("Blob value should not be null")
+	}
+	if v.Type != TypeBlob {
+		t.Errorf("Type: got %v, want TypeBlob", v.Type)
+	}
+	if len(v.Data) != len(data) {
+		t.Errorf("Data length: got %d, want %d", len(v.Data), len(data))
+	}
+	for i, b := range v.Data {
+		if b != data[i] {
+			t.Errorf("Data[%d]: got %02x, want %02x", i, b, data[i])
+		}
+	}
+}
+
+func TestBlobAsBytes(t *testing.T) {
+	data := []byte{0xAA, 0xBB, 0xCC}
+	v := NewBlobValue(data)
+
+	if string(v.AsBytes()) != string(data) {
+		t.Errorf("AsBytes(): got %v, want %v", v.AsBytes(), data)
+	}
+}
+
+func TestBlobLen(t *testing.T) {
+	data := []byte{0x01, 0x02, 0x03, 0x04, 0x05}
+	v := NewBlobValue(data)
+
+	if v.BlobLen() != 5 {
+		t.Errorf("BlobLen(): got %d, want 5", v.BlobLen())
+	}
+
+	// Null blob
+	vNull := Value{Type: TypeBlob, Null: true}
+	if vNull.BlobLen() != 0 {
+		t.Errorf("Null BlobLen(): got %d, want 0", vNull.BlobLen())
+	}
+}
+
+func TestBlobString(t *testing.T) {
+	tests := []struct {
+		name     string
+		data     []byte
+		expected string
+	}{
+		{"empty", []byte{}, "X''"},
+		{"single", []byte{0x41}, "X'41'"},
+		{"multi", []byte{0xDE, 0xAD, 0xBE, 0xEF}, "X'deadbeef'"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			v := NewBlobValue(tt.data)
+			if got := v.String(); got != tt.expected {
+				t.Errorf("String(): got %q, want %q", got, tt.expected)
+			}
+		})
+	}
+
+	// Null blob
+	vNull := Value{Type: TypeBlob, Null: true}
+	if vNull.String() != "NULL" {
+		t.Errorf("Null blob String(): got %q, want 'NULL'", vNull.String())
+	}
+}
+
+func TestAsBlobString(t *testing.T) {
+	data := []byte{0x12, 0x34, 0xAB, 0xCD}
+	v := NewBlobValue(data)
+
+	expected := "X'1234abcd'"
+	if got := v.AsBlobString(); got != expected {
+		t.Errorf("AsBlobString(): got %q, want %q", got, expected)
+	}
+}
+
+func TestHexToBlob(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		expected []byte
+	}{
+		{"simple", "0x1234", []byte{0x12, 0x34}},
+		{"uppercase X", "X'deadbeef'", []byte{0xDE, 0xAD, 0xBE, 0xEF}},
+		{"lowercase x", "x'cafe'", []byte{0xCA, 0xFE}},
+		{"plain hex", "aabbcc", []byte{0xAA, 0xBB, 0xCC}},
+		{"odd length", "abc", []byte{0x0A, 0xBC}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			v, err := HexToBlob(tt.input)
+			if err != nil {
+				t.Fatalf("HexToBlob error: %v", err)
+			}
+			if string(v.Data) != string(tt.expected) {
+				t.Errorf("HexToBlob data: got %x, want %x", v.Data, tt.expected)
+			}
+		})
+	}
+
+	// Invalid hex
+	_, err := HexToBlob("0xGG")
+	if err == nil {
+		t.Error("Expected error for invalid hex string")
+	}
+}
+
+func TestBlobCompare(t *testing.T) {
+	tests := []struct {
+		name     string
+		a, b     Value
+		expected int
+	}{
+		{"equal", NewBlobValue([]byte{0x01, 0x02}), NewBlobValue([]byte{0x01, 0x02}), 0},
+		{"less", NewBlobValue([]byte{0x01, 0x01}), NewBlobValue([]byte{0x01, 0x02}), -1},
+		{"greater", NewBlobValue([]byte{0x01, 0x03}), NewBlobValue([]byte{0x01, 0x02}), 1},
+		{"shorter", NewBlobValue([]byte{0x01}), NewBlobValue([]byte{0x01, 0x02}), -1},
+		{"longer", NewBlobValue([]byte{0x01, 0x02}), NewBlobValue([]byte{0x01}), 1},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := tt.a.Compare(tt.b); got != tt.expected {
+				t.Errorf("Compare(): got %d, want %d", got, tt.expected)
+			}
+		})
+	}
+}
+
+func TestBlobSize(t *testing.T) {
+	data := []byte{0x01, 0x02, 0x03, 0x04}
+	v := NewBlobValue(data)
+
+	// Size = 1 (null flag) + 4 (length) + len(data)
+	expected := 1 + 4 + len(data)
+	if got := v.Size(); got != expected {
+		t.Errorf("Size(): got %d, want %d", got, expected)
+	}
+}
+
+func TestBlobMarshalUnmarshal(t *testing.T) {
+	data := []byte{0xDE, 0xAD, 0xBE, 0xEF, 0x12, 0x34}
+	original := NewBlobValue(data)
+
+	marshaled := original.Marshal()
+	result, bytesRead := UnmarshalValue(marshaled, TypeBlob)
+
+	if result.Null {
+		t.Error("Unmarshaled value should not be null")
+	}
+	if bytesRead != len(marshaled) {
+		t.Errorf("bytesRead: got %d, want %d", bytesRead, len(marshaled))
+	}
+	if string(result.Data) != string(data) {
+		t.Errorf("Data: got %x, want %x", result.Data, data)
 	}
 }

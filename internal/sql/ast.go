@@ -738,6 +738,7 @@ const (
 	LiteralString
 	LiteralNumber
 	LiteralBool
+	LiteralBlob
 )
 
 func (l *Literal) node()       {}
@@ -752,6 +753,8 @@ func (l *Literal) String() string {
 		return fmt.Sprintf("%v", l.Value)
 	case LiteralBool:
 		return fmt.Sprintf("%v", l.Value)
+	case LiteralBlob:
+		return fmt.Sprintf("X'%x'", l.Value)
 	}
 	return fmt.Sprintf("%v", l.Value)
 }

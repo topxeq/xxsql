@@ -24,7 +24,8 @@ const (
 	TypeTime
 	TypeDatetime
 	TypeBool
-	TypeBytes // For internal use
+	TypeBlob   // Binary Large Object
+	TypeBytes  // For internal use
 )
 
 // String returns the string representation of the type.
@@ -54,6 +55,8 @@ func (t TypeID) String() string {
 		return "DATETIME"
 	case TypeBool:
 		return "BOOL"
+	case TypeBlob:
+		return "BLOB"
 	case TypeBytes:
 		return "BYTES"
 	default:
@@ -86,6 +89,8 @@ func ParseTypeID(name string) TypeID {
 		return TypeDatetime
 	case "BOOL", "bool", "BOOLEAN", "boolean":
 		return TypeBool
+	case "BLOB", "blob", "TINYBLOB", "tinyblob", "MEDIUMBLOB", "mediumblob", "LONGBLOB", "longblob":
+		return TypeBlob
 	default:
 		return TypeNull
 	}
@@ -259,6 +264,11 @@ func NewBoolValue(v bool) Value {
 // NewBytesValue creates a bytes value.
 func NewBytesValue(v []byte) Value {
 	return Value{Type: TypeBytes, Data: v, Null: false}
+}
+
+// NewBlobValue creates a BLOB value.
+func NewBlobValue(v []byte) Value {
+	return Value{Type: TypeBlob, Data: v, Null: false}
 }
 
 // AsInt returns the value as int64.
@@ -459,6 +469,26 @@ func (v Value) Compare(other Value) int {
 		}
 		return 0
 
+	case TypeBlob, TypeBytes:
+		// Byte-by-byte comparison for binary types
+		minLen := len(v.Data)
+		if len(other.Data) < minLen {
+			minLen = len(other.Data)
+		}
+		for i := 0; i < minLen; i++ {
+			if v.Data[i] < other.Data[i] {
+				return -1
+			} else if v.Data[i] > other.Data[i] {
+				return 1
+			}
+		}
+		if len(v.Data) < len(other.Data) {
+			return -1
+		} else if len(v.Data) > len(other.Data) {
+			return 1
+		}
+		return 0
+
 	default:
 		// Byte comparison for other types
 		minLen := len(v.Data)
@@ -491,7 +521,7 @@ func (v Value) Size() int {
 	switch v.Type {
 	case TypeChar, TypeVarchar:
 		return 1 + 2 + len(v.Data) // NULL flag + length + data
-	case TypeText:
+	case TypeText, TypeBlob:
 		return 1 + 4 + len(v.Data) // NULL flag + length + data
 	default:
 		return 1 + len(v.Data) // NULL flag + data
@@ -515,6 +545,14 @@ func (v Value) Marshal() []byte {
 		return buf
 
 	case TypeText:
+		// NULL flag (1) + length (4) + data
+		buf := make([]byte, 1+4+len(v.Data))
+		buf[0] = 0x00 // Not NULL
+		binary.LittleEndian.PutUint32(buf[1:5], uint32(len(v.Data)))
+		copy(buf[5:], v.Data)
+		return buf
+
+	case TypeBlob:
 		// NULL flag (1) + length (4) + data
 		buf := make([]byte, 1+4+len(v.Data))
 		buf[0] = 0x00 // Not NULL
@@ -571,6 +609,12 @@ func UnmarshalValue(data []byte, typ TypeID) (Value, int) {
 		}
 		dataLen = int(binary.LittleEndian.Uint32(data[1:5]))
 		offset = 5
+	case TypeBlob:
+		if len(data) < 5 {
+			return NewNullValue(), 1
+		}
+		dataLen = int(binary.LittleEndian.Uint32(data[1:5]))
+		offset = 5
 	default:
 		dataLen = len(data) - 1
 		offset = 1
@@ -609,6 +653,8 @@ func (v Value) String() string {
 		return fmt.Sprintf("%v", v.AsBool())
 	case TypeDatetime:
 		return v.AsDatetime().Format("2006-01-02 15:04:05")
+	case TypeBlob:
+		return v.AsBlobString()
 	default:
 		return fmt.Sprintf("%v", v.Data)
 	}
@@ -625,4 +671,60 @@ func daysInYear(year int) int {
 // isLeapYear checks if a year is a leap year.
 func isLeapYear(year int) bool {
 	return year%4 == 0 && (year%100 != 0 || year%400 == 0)
+}
+
+// AsBytes returns the value as []byte (for BLOB/Bytes types).
+func (v Value) AsBytes() []byte {
+	if v.Null {
+		return nil
+	}
+	return v.Data
+}
+
+// AsBlobString returns the BLOB value as a hex string (X'...' format).
+func (v Value) AsBlobString() string {
+	if v.Null {
+		return "NULL"
+	}
+	if len(v.Data) == 0 {
+		return "X''"
+	}
+	return fmt.Sprintf("X'%x'", v.Data)
+}
+
+// BlobLen returns the length of a BLOB value.
+func (v Value) BlobLen() int {
+	if v.Null {
+		return 0
+	}
+	return len(v.Data)
+}
+
+// HexToBlob converts a hex string to BLOB value.
+func HexToBlob(hexStr string) (Value, error) {
+	// Remove 0x or X'...' prefix if present
+	if len(hexStr) >= 2 {
+		if hexStr[0] == '0' && (hexStr[1] == 'x' || hexStr[1] == 'X') {
+			hexStr = hexStr[2:]
+		} else if (hexStr[0] == 'x' || hexStr[0] == 'X') && hexStr[1] == '\'' && hexStr[len(hexStr)-1] == '\'' {
+			hexStr = hexStr[2 : len(hexStr)-1]
+		}
+	}
+
+	// Pad with leading zero if odd length
+	if len(hexStr)%2 != 0 {
+		hexStr = "0" + hexStr
+	}
+
+	data := make([]byte, len(hexStr)/2)
+	for i := 0; i < len(hexStr); i += 2 {
+		var b byte
+		_, err := fmt.Sscanf(hexStr[i:i+2], "%02x", &b)
+		if err != nil {
+			return NewNullValue(), fmt.Errorf("invalid hex string: %s", hexStr)
+		}
+		data[i/2] = b
+	}
+
+	return NewBlobValue(data), nil
 }

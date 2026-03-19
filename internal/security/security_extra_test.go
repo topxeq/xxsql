@@ -636,7 +636,12 @@ func TestAuditFilter_SourceIP(t *testing.T) {
 }
 
 func TestAuditLogger_QueryFileNotExist(t *testing.T) {
-	al, _ := NewAuditLogger(&AuditConfig{Enabled: true, FilePath: "/nonexistent/audit.log"})
+	al, err := NewAuditLogger(&AuditConfig{Enabled: true, FilePath: "/nonexistent/audit.log"})
+	if err != nil {
+		// Expected: can't create logger for non-existent file
+		t.Logf("NewAuditLogger correctly returned error: %v", err)
+		return
+	}
 	defer al.Close()
 
 	events, err := al.Query(nil)

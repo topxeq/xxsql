@@ -465,10 +465,17 @@ func TestTLSConfigDisabled(t *testing.T) {
 // ============================================================================
 
 func TestSecurityManager(t *testing.T) {
+	tmpFile, err := os.CreateTemp("", "audit-*.log")
+	if err != nil {
+		t.Fatalf("Failed to create temp file: %v", err)
+	}
+	tmpFile.Close()
+	defer os.Remove(tmpFile.Name())
+
 	cfg := &SecurityConfig{
 		Audit: &AuditConfig{
 			Enabled:  true,
-			FilePath: os.TempDir() + "/test-audit.log",
+			FilePath: tmpFile.Name(),
 		},
 		RateLimit: &RateLimitConfig{
 			Enabled:     true,

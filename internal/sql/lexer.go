@@ -37,6 +37,11 @@ func (l *Lexer) NextToken() Token {
 	line, col := l.line, l.column
 	r := l.peek()
 
+	// BLOB literal X'...' - check before identifiers since x/X are also alpha
+	if (r == 'x' || r == 'X') && l.peekAt(1) == '\'' {
+		return l.scanBlobLiteral()
+	}
+
 	// Identifiers and keywords
 	if isAlpha(r) || r == '_' || r == '`' {
 		return l.scanIdentOrKeyword()
@@ -323,6 +328,32 @@ func (l *Lexer) scanParameter() Token {
 	}
 
 	return Token{Type: TokParameter, Value: sb.String(), Line: line, Column: col}
+}
+
+// scanBlobLiteral scans a BLOB literal X'...' or x'...'
+func (l *Lexer) scanBlobLiteral() Token {
+	line, col := l.line, l.column
+	l.next() // consume 'x' or 'X'
+	l.next() // consume opening quote
+
+	var sb strings.Builder
+	for {
+		r := l.peek()
+		if r == 0 {
+			return Token{Type: TokError, Value: "unterminated blob literal", Line: line, Column: col}
+		}
+		if r == '\'' {
+			l.next()
+			break
+		}
+		if !isHexDigit(r) {
+			return Token{Type: TokError, Value: "invalid hex digit in blob literal", Line: line, Column: col}
+		}
+		sb.WriteRune(r)
+		l.next()
+	}
+
+	return Token{Type: TokString, Value: "0x" + sb.String(), Line: line, Column: col}
 }
 
 // skipWhitespace skips whitespace characters.
