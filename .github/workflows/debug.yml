@@ -14,21 +14,17 @@ jobs:
           echo "Hello from GitHub Actions"
           echo "PWD: $(pwd)"
           echo "USER: $(whoami)"
-          echo "SHELL: $SHELL"
-          echo "PATH: $PATH"
           which go || echo "go not found in PATH"
           go version || echo "go command failed"
 
       - name: Install Go manually
         run: |
-          curl -OL https://go.dev/dl/go1.22.0.linux-amd64.tar.gz
-          tar -C /usr/local -xzf go1.22.0.linux-amd64.tar.gz || sudo tar -C /usr/local -xzf go1.22.0.linux-amd64.tar.gz
-          export PATH=$PATH:/usr/local/go/bin
-          go version
+          wget -q https://go.dev/dl/go1.22.0.linux-amd64.tar.gz
+          sudo tar -C /usr/local -xzf go1.22.0.linux-amd64.tar.gz
+          /usr/local/go/bin/go version
 
       - name: Create and build simple Go program
         run: |
-          export PATH=$PATH:/usr/local/go/bin
           mkdir -p /tmp/testgo
           cd /tmp/testgo
           cat > main.go << 'EOF'
@@ -38,5 +34,5 @@ jobs:
               fmt.Println("Hello, World!")
           }
           EOF
-          go build -v -o testapp .
+          /usr/local/go/bin/go build -v -o testapp .
           ./testapp
