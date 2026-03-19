@@ -18,33 +18,19 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Set up Go
-        uses: actions/setup-go@v5
-        with:
-          go-version: '1.22'
-
-      - name: Verify Go
+      - name: Install Go
         run: |
-          echo "=== Go location ==="
-          which go
-          echo "=== Go version ==="
-          go version
-          echo "=== Go env ==="
-          go env
-
-      - name: List files
-        run: |
-          echo "=== Files ==="
-          ls -la
-          echo "=== cmd/xxsqls ==="
-          ls -la cmd/xxsqls || echo "cmd/xxsqls not found"
+          wget -q https://go.dev/dl/go1.22.0.linux-amd64.tar.gz
+          sudo tar -C /usr/local -xzf go1.22.0.linux-amd64.tar.gz
+          /usr/local/go/bin/go version
 
       - name: Build
         run: |
+          export PATH=$PATH:/usr/local/go/bin
           echo "=== Building xxsqls ==="
-          go build -v -o xxsqls ./cmd/xxsqls 2>&1
+          go build -v -o xxsqls ./cmd/xxsqls
           echo "=== Building xxsqlc ==="
-          go build -v -o xxsqlc ./cmd/xxsqlc 2>&1
+          go build -v -o xxsqlc ./cmd/xxsqlc
           ls -la xxsqls xxsqlc
 
       - name: Create archive
