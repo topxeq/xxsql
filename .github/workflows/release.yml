@@ -25,7 +25,9 @@ jobs:
           /usr/local/go/bin/go version
 
       - name: Build
+        shell: bash
         run: |
+          set +e
           echo "=== Current directory ==="
           pwd
           echo "=== Files ==="
@@ -35,9 +37,15 @@ jobs:
           echo "=== Downloading dependencies ==="
           /usr/local/go/bin/go mod download
           echo "=== Building xxsqls ==="
-          /usr/local/go/bin/go build -v -x -o xxsqls ./cmd/xxsqls 2>&1
+          /usr/local/go/bin/go build -v -o xxsqls ./cmd/xxsqls
+          BUILD_STATUS=$?
+          echo "Build status: $BUILD_STATUS"
+          if [ $BUILD_STATUS -ne 0 ]; then
+            echo "Build failed with status $BUILD_STATUS"
+            exit 1
+          fi
           echo "=== Building xxsqlc ==="
-          /usr/local/go/bin/go build -v -x -o xxsqlc ./cmd/xxsqlc 2>&1
+          /usr/local/go/bin/go build -v -o xxsqlc ./cmd/xxsqlc
           ls -la xxsqls xxsqlc
 
       - name: Create archive
