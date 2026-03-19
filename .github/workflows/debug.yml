@@ -11,28 +11,35 @@ jobs:
     steps:
       - name: Check environment
         run: |
-          echo "Hello from GitHub Actions"
+          echo "=== Starting ==="
           echo "PWD: $(pwd)"
           echo "USER: $(whoami)"
-          which go || echo "go not found in PATH"
-          go version || echo "go command failed"
+          df -h
+          free -m
 
       - name: Install Go manually
         run: |
-          wget -q https://go.dev/dl/go1.22.0.linux-amd64.tar.gz
+          echo "=== Downloading Go ==="
+          wget --progress=bar:force https://go.dev/dl/go1.22.0.linux-amd64.tar.gz 2>&1
+          echo "=== Extracting Go ==="
+          ls -la go1.22.0.linux-amd64.tar.gz
           sudo tar -C /usr/local -xzf go1.22.0.linux-amd64.tar.gz
+          echo "=== Verifying Go ==="
+          ls -la /usr/local/go/bin/
           /usr/local/go/bin/go version
 
       - name: Create and build simple Go program
         run: |
+          echo "=== Creating test program ==="
           mkdir -p /tmp/testgo
           cd /tmp/testgo
-          cat > main.go << 'EOF'
-          package main
-          import "fmt"
-          func main() {
-              fmt.Println("Hello, World!")
-          }
-          EOF
-          /usr/local/go/bin/go build -v -o testapp .
-          ./testapp
+          echo 'package main' > main.go
+          echo 'import "fmt"' >> main.go
+          echo 'func main() {' >> main.go
+          echo '    fmt.Println("Hello, World!")' >> main.go
+          echo '}' >> main.go
+          cat main.go
+          echo "=== Building ==="
+          /usr/local/go/bin/go build -v -x -o testapp . 2>&1 || echo "Build failed"
+          echo "=== Running ==="
+          ./testapp || echo "Run failed"
