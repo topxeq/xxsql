@@ -46,7 +46,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v5
         with:
-          go-version: '1.23'
+          go-version: '1.22'
           cache: true
 
       - name: Download dependencies
@@ -66,9 +66,14 @@ jobs:
           GOOS: ${{ matrix.goos }}
           GOARCH: ${{ matrix.goarch }}
           CGO_ENABLED: 0
+          VERSION: ${{ steps.version.outputs.VERSION }}
+          SHORT_SHA: ${{ steps.version.outputs.SHORT_SHA }}
+          BUILD_TIME: ${{ steps.version.outputs.BUILD_TIME }}
         run: |
           mkdir -p build
-          go build -buildvcs=false -ldflags="-s -w -X main.Version=${{ steps.version.outputs.VERSION }} -X main.GitCommit=${{ steps.version.outputs.SHORT_SHA }} -X main.BuildTime=${{ steps.version.outputs.BUILD_TIME }}" -o build/xxsqls${{ matrix.ext }} ./cmd/xxsqls
+          echo "Building xxsqls for $GOOS/$GOARCH..."
+          echo "Version: $VERSION, SHA: $SHORT_SHA, Time: $BUILD_TIME"
+          go build -buildvcs=false -ldflags="-s -w -X main.Version=$VERSION -X main.GitCommit=$SHORT_SHA -X main.BuildTime=$BUILD_TIME" -o build/xxsqls${{ matrix.ext }} ./cmd/xxsqls
 
       - name: Build client
         shell: bash
@@ -76,8 +81,12 @@ jobs:
           GOOS: ${{ matrix.goos }}
           GOARCH: ${{ matrix.goarch }}
           CGO_ENABLED: 0
+          VERSION: ${{ steps.version.outputs.VERSION }}
+          SHORT_SHA: ${{ steps.version.outputs.SHORT_SHA }}
+          BUILD_TIME: ${{ steps.version.outputs.BUILD_TIME }}
         run: |
-          go build -buildvcs=false -ldflags="-s -w -X main.Version=${{ steps.version.outputs.VERSION }} -X main.GitCommit=${{ steps.version.outputs.SHORT_SHA }} -X main.BuildTime=${{ steps.version.outputs.BUILD_TIME }}" -o build/xxsqlc${{ matrix.ext }} ./cmd/xxsqlc
+          echo "Building xxsqlc for $GOOS/$GOARCH..."
+          go build -buildvcs=false -ldflags="-s -w -X main.Version=$VERSION -X main.GitCommit=$SHORT_SHA -X main.BuildTime=$BUILD_TIME" -o build/xxsqlc${{ matrix.ext }} ./cmd/xxsqlc
 
       - name: Create archive
         shell: bash
