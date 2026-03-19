@@ -31,16 +31,21 @@ jobs:
           ls -la xxsqls xxsqlc 2>&1 || echo "Executables not found"
           file xxsqls xxsqlc 2>&1 || echo "file command failed"
       - name: Archive
+        id: archive
         run: |
           if [ -f xxsqls ] && [ -f xxsqlc ]; then
             tar -czvf xxsql-${{ github.ref_name }}-linux-amd64.tar.gz xxsqls xxsqlc
             ls -la xxsql-*.tar.gz
+            echo "archive_created=true" >> $GITHUB_OUTPUT
           else
-            echo "Executables not found, creating empty archive"
-            touch xxsql-${{ github.ref_name }}-linux-amd64.tar.gz
+            echo "Executables not found, skipping release"
+            echo "archive_created=false" >> $GITHUB_OUTPUT
           fi
-      - uses: softprops/action-gh-release@v1
+      - name: Create Release
+        if: steps.archive.outputs.archive_created == 'true'
+        uses: softprops/action-gh-release@v1
         with:
           files: xxsql-*.tar.gz
+          generate_release_notes: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
