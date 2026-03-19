@@ -16,14 +16,10 @@ jobs:
       - uses: actions/setup-go@v5
         with:
           go-version: '1.22'
-      - name: Test basic Go
-        run: |
-          go version
-          go env GOROOT GOPATH GOCACHE
-          mkdir -p /tmp/testpkg
-          printf 'package testpkg\nfunc Test() {}\n' > /tmp/testpkg/test.go
-          cd /tmp/testpkg
-          go build -v . || echo "Test package build failed"
+      - name: Download dependencies
+        run: go mod download
+      - name: List packages
+        run: go list ./... 2>&1
       - name: Build
         run: |
           go build -v -o xxsqls ./cmd/xxsqls 2>&1
