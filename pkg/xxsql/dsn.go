@@ -54,18 +54,71 @@ func NewConfig() *Config {
 	}
 }
 
-// ParseDSN parses a MySQL-style DSN string into a Config.
-// DSN format: [username[:password]@][protocol[(address)]]/dbname[?param1=value1&...&paramN=valueN]
+// ParseDSN parses a DSN string into a Config.
+// Supports two formats:
 //
-// Examples:
-//   - root@tcp(localhost:3306)/testdb
-//   - admin:secret@tcp(127.0.0.1:3306)/mydb?charset=utf8mb4&timeout=10s
-//   - user:pass@/dbname
+// 1. MySQL-style DSN: [username[:password]@][protocol[(address)]]/dbname[?param1=value1&...]
+//    Examples:
+//      - root@tcp(localhost:3306)/testdb
+//      - admin:secret@tcp(127.0.0.1:3306)/mydb?charset=utf8mb4
+//      - user:pass@/dbname
+//
+// 2. URL format: xxsql://[username[:password]@]host[:port]/dbname[?param1=value1&...]
+//    Examples:
+//      - xxsql://root@localhost:3306/testdb
+//      - xxsql://admin:secret@127.0.0.1:3306/mydb?timeout=10s
+//      - xxsql://localhost/testdb
 func ParseDSN(dsn string) (*Config, error) {
 	if dsn == "" {
 		return nil, errors.New("empty DSN")
 	}
 
+	// Check for URL format (xxsql://...)
+	if strings.HasPrefix(dsn, "xxsql://") {
+		return parseURLDSN(dsn)
+	}
+
+	// Parse MySQL-style DSN
+	return parseMySQLDSN(dsn)
+}
+
+// parseURLDSN parses a URL-style DSN string.
+func parseURLDSN(dsn string) (*Config, error) {
+	cfg := NewConfig()
+
+	u, err := url.Parse(dsn)
+	if err != nil {
+		return nil, fmt.Errorf("invalid URL format: %w", err)
+	}
+
+	// Parse user info
+	if u.User != nil {
+		cfg.User = u.User.Username()
+		cfg.Passwd, _ = u.User.Password()
+	}
+
+	// Parse host:port
+	if u.Host != "" {
+		cfg.Addr = u.Host
+		// Add default port if not specified
+		if !strings.Contains(u.Host, ":") {
+			cfg.Addr = u.Host + ":3306"
+		}
+	}
+
+	// Parse database name (remove leading /)
+	cfg.DBName = strings.TrimPrefix(u.Path, "/")
+
+	// Parse query parameters
+	if err := parseParams(cfg, u.RawQuery); err != nil {
+		return nil, err
+	}
+
+	return cfg, nil
+}
+
+// parseMySQLDSN parses a MySQL-style DSN string.
+func parseMySQLDSN(dsn string) (*Config, error) {
 	cfg := NewConfig()
 
 	// Split into user part and rest

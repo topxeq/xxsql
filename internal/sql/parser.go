@@ -1292,6 +1292,21 @@ func (p *Parser) parseBinaryExpr(minPrec int) Expression {
 	left := p.parseUnaryExpr()
 
 	for {
+		// Special handling for NOT IN (two-token operator)
+		if p.curTokenIs(TokNot) {
+			// Look ahead to see if next token is IN
+			if p.peekTokenIs(TokIn) {
+				p.nextToken() // consume NOT
+				p.nextToken() // consume IN
+				right := p.parseBinaryExpr(4) // parse the subquery or list
+				inExpr := &BinaryExpr{Left: left, Op: OpIn, Right: right}
+				left = &UnaryExpr{Op: OpNot, Right: inExpr}
+				continue
+			}
+			// NOT without IN - not a binary operator for us
+			break
+		}
+
 		// Check if current token is a binary operator
 		if !p.isBinaryOpToken() {
 			break
@@ -1330,7 +1345,8 @@ func (p *Parser) parseUnaryExpr() Expression {
 	// NOT
 	if p.curTokenIs(TokNot) {
 		p.nextToken()
-		return &UnaryExpr{Op: OpNot, Right: p.parseUnaryExpr()}
+		// Parse the full expression after NOT (including binary operators like IN)
+		return &UnaryExpr{Op: OpNot, Right: p.parseBinaryExpr(1)}
 	}
 
 	// Unary minus
@@ -1489,8 +1505,8 @@ func (p *Parser) parseParenExpr() Expression {
 		if !p.expect(TokRParen) {
 			return nil
 		}
-		// Return the subquery as an expression (for IN subqueries)
-		return &ParenExpr{Expr: &Literal{Type: LiteralString, Value: stmt.String()}}
+		// Return the subquery as a SubqueryExpr (for IN subqueries)
+		return &SubqueryExpr{Select: stmt.(*SelectStmt)}
 	}
 
 	expr := p.parseExpression()

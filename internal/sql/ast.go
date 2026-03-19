@@ -1031,6 +1031,17 @@ func (e *ParenExpr) String() string {
 	return fmt.Sprintf("(%s)", e.Expr.String())
 }
 
+// SubqueryExpr represents a subquery expression (e.g., in IN clause).
+type SubqueryExpr struct {
+	Select *SelectStmt
+}
+
+func (e *SubqueryExpr) node()       {}
+func (e *SubqueryExpr) expression() {}
+func (e *SubqueryExpr) String() string {
+	return fmt.Sprintf("(%s)", e.Select.String())
+}
+
 // CastExpr represents a CAST expression.
 type CastExpr struct {
 	Expr Expression

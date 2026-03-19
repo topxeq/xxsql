@@ -1,8 +1,11 @@
 package main
 
 import (
+	"fmt"
 	"strings"
 	"testing"
+
+	"github.com/topxeq/xxsql/pkg/xxsql"
 )
 
 func TestParseOutputFormat(t *testing.T) {
@@ -429,7 +432,11 @@ func TestPrintWelcome(t *testing.T) {
 	*flagPort = 3306
 	dbName = "testdb"
 
-	printWelcome()
+	cfg := &xxsql.Config{
+		Addr:   fmt.Sprintf("%s:%d", *flagHost, *flagPort),
+		DBName: "testdb",
+	}
+	printWelcomeWithConfig(cfg)
 }
 
 func TestHandleMetaCommand_Unknown(t *testing.T) {

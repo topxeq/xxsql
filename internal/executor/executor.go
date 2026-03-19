@@ -72,8 +72,9 @@ type Result struct {
 
 // ColumnInfo represents column information for results.
 type ColumnInfo struct {
-	Name string
-	Type string
+	Name  string
+	Type  string
+	Alias string // optional alias for ORDER BY support
 }
 
 // Executor executes SQL queries against the storage engine.
@@ -325,10 +326,14 @@ func (e *Executor) executeSelect(stmt *sql.SelectStmt) (*Result, error) {
 			for i, col := range tblInfo.Columns {
 				if strings.ToLower(col.Name) == colName {
 					idx = i
-					resultCols = append(resultCols, ColumnInfo{
+					ci := ColumnInfo{
 						Name: col.Name,
 						Type: col.Type.String(),
-					})
+					}
+					if expr.Alias != "" {
+						ci.Alias = expr.Alias
+					}
+					resultCols = append(resultCols, ci)
 					break
 				}
 			}
@@ -366,151 +371,9 @@ func (e *Executor) executeSelect(stmt *sql.SelectStmt) (*Result, error) {
 	}
 
 	// If there are aggregate functions, compute aggregates
-	if len(aggregateFuncs) > 0 {
-		result := &Result{
-			Columns: resultCols,
-			Rows:    make([][]interface{}, 0),
-		}
-
-		// Initialize aggregate values
-		countVal := 0
-
-		// Count matching rows
-		for _, r := range rows {
-			if stmt.Where != nil {
-				match, err := e.evaluateWhere(stmt.Where, r, columnMap, columnOrder)
-				if err != nil {
-					return nil, err
-				}
-				if !match {
-					continue
-				}
-			}
-			countVal++
-		}
-
-		// Build result row with aggregate values
-		resultRow := make([]interface{}, len(resultCols))
-		for _, agg := range aggregateFuncs {
-			switch agg.name {
-			case "COUNT":
-				resultRow[agg.index] = countVal
-			case "SUM":
-				// Compute sum
-				var sum int64
-				for _, r := range rows {
-					if stmt.Where != nil {
-						match, _ := e.evaluateWhere(stmt.Where, r, columnMap, columnOrder)
-						if !match {
-							continue
-						}
-					}
-					if agg.arg != "" {
-						for j, col := range tblInfo.Columns {
-							if strings.ToLower(col.Name) == agg.arg {
-								if j < len(r.Values) && !r.Values[j].Null {
-									sum += r.Values[j].AsInt()
-								}
-							}
-						}
-					}
-				}
-				resultRow[agg.index] = sum
-			case "AVG":
-				// Compute average
-				var sum int64
-				count := 0
-				for _, r := range rows {
-					if stmt.Where != nil {
-						match, _ := e.evaluateWhere(stmt.Where, r, columnMap, columnOrder)
-						if !match {
-							continue
-						}
-					}
-					if agg.arg != "" {
-						for j, col := range tblInfo.Columns {
-							if strings.ToLower(col.Name) == agg.arg {
-								if j < len(r.Values) && !r.Values[j].Null {
-									sum += r.Values[j].AsInt()
-									count++
-								}
-							}
-						}
-					}
-				}
-				if count > 0 {
-					resultRow[agg.index] = float64(sum) / float64(count)
-				} else {
-					resultRow[agg.index] = nil
-				}
-			case "MIN":
-				// Compute min
-				var minVal int64
-				hasMin := false
-				for _, r := range rows {
-					if stmt.Where != nil {
-						match, _ := e.evaluateWhere(stmt.Where, r, columnMap, columnOrder)
-						if !match {
-							continue
-						}
-					}
-					if agg.arg != "" {
-						for j, col := range tblInfo.Columns {
-							if strings.ToLower(col.Name) == agg.arg {
-								if j < len(r.Values) && !r.Values[j].Null {
-									v := r.Values[j].AsInt()
-									if !hasMin || v < minVal {
-										minVal = v
-										hasMin = true
-									}
-								}
-							}
-						}
-					}
-				}
-				if hasMin {
-					resultRow[agg.index] = minVal
-				} else {
-					resultRow[agg.index] = nil
-				}
-			case "MAX":
-				// Compute max
-				var maxVal int64
-				hasMax := false
-				for _, r := range rows {
-					if stmt.Where != nil {
-						match, _ := e.evaluateWhere(stmt.Where, r, columnMap, columnOrder)
-						if !match {
-							continue
-						}
-					}
-					if agg.arg != "" {
-						for j, col := range tblInfo.Columns {
-							if strings.ToLower(col.Name) == agg.arg {
-								if j < len(r.Values) && !r.Values[j].Null {
-									v := r.Values[j].AsInt()
-									if !hasMax || v > maxVal {
-										maxVal = v
-										hasMax = true
-									}
-								}
-							}
-						}
-					}
-				}
-				if hasMax {
-					resultRow[agg.index] = maxVal
-				} else {
-					resultRow[agg.index] = nil
-				}
-			default:
-				resultRow[agg.index] = nil
-			}
-		}
-
-		result.Rows = append(result.Rows, resultRow)
-		result.RowCount = 1
-		return result, nil
+	if len(aggregateFuncs) > 0 || len(stmt.GroupBy) > 0 {
+		// Handle GROUP BY with aggregates
+		return e.executeGroupBy(stmt, rows, resultCols, colIndices, aggregateFuncs, tblInfo, columnMap, columnOrder)
 	}
 
 	// Build result rows
@@ -554,24 +417,40 @@ func (e *Executor) executeSelect(stmt *sql.SelectStmt) (*Result, error) {
 
 // sortRows sorts the result rows according to ORDER BY clause.
 func (e *Executor) sortRows(orderBy []*sql.OrderByItem, cols []ColumnInfo, rows [][]interface{}) [][]interface{} {
-	// Build column index map
+	// Build column index map (including aliases)
 	colIndexMap := make(map[string]int)
 	for i, col := range cols {
 		colIndexMap[strings.ToLower(col.Name)] = i
+		// Also add alias to the map if present
+		if col.Alias != "" {
+			colIndexMap[strings.ToLower(col.Alias)] = i
+		}
 	}
 
-	// Determine sort indices and directions
-	type sortKey struct {
+	// sortKeyType indicates whether this is a column index or expression
+	type sortKeyType int
+	const (
+		sortKeyIndex sortKeyType = iota
+		sortKeyExpr
+	)
+
+	// sortKeyData holds either an index or expression
+	type sortKeyData struct {
+		keyType   sortKeyType
 		index     int
+		expr      sql.Expression
 		ascending bool
 	}
-	sortKeys := make([]sortKey, 0, len(orderBy))
+	sortKeys := make([]sortKeyData, 0, len(orderBy))
 
 	for _, item := range orderBy {
-		var colName string
 		switch expr := item.Expr.(type) {
 		case *sql.ColumnRef:
-			colName = strings.ToLower(expr.Name)
+			colName := strings.ToLower(expr.Name)
+			idx, ok := colIndexMap[colName]
+			if ok {
+				sortKeys = append(sortKeys, sortKeyData{keyType: sortKeyIndex, index: idx, ascending: item.Ascending})
+			}
 		case *sql.Literal:
 			// Handle numeric column reference (e.g., ORDER BY 1)
 			if expr.Type == sql.LiteralNumber {
@@ -587,19 +466,13 @@ func (e *Executor) sortRows(orderBy []*sql.OrderByItem, cols []ColumnInfo, rows 
 					continue
 				}
 				if idx >= 0 && idx < len(cols) {
-					sortKeys = append(sortKeys, sortKey{index: idx, ascending: item.Ascending})
+					sortKeys = append(sortKeys, sortKeyData{keyType: sortKeyIndex, index: idx, ascending: item.Ascending})
 				}
 			}
-			continue
-		default:
-			continue
+		case *sql.BinaryExpr, *sql.UnaryExpr:
+			// Handle expression-based ORDER BY (e.g., ORDER BY amount*2)
+			sortKeys = append(sortKeys, sortKeyData{keyType: sortKeyExpr, expr: expr, ascending: item.Ascending})
 		}
-
-		idx, ok := colIndexMap[colName]
-		if !ok {
-			continue
-		}
-		sortKeys = append(sortKeys, sortKey{index: idx, ascending: item.Ascending})
 	}
 
 	if len(sortKeys) == 0 {
@@ -609,12 +482,26 @@ func (e *Executor) sortRows(orderBy []*sql.OrderByItem, cols []ColumnInfo, rows 
 	// Sort rows
 	sort.Slice(rows, func(i, j int) bool {
 		for _, key := range sortKeys {
-			if key.index >= len(rows[i]) || key.index >= len(rows[j]) {
-				continue
-			}
+			var vi, vj interface{}
 
-			vi := rows[i][key.index]
-			vj := rows[j][key.index]
+			if key.keyType == sortKeyIndex {
+				if key.index >= len(rows[i]) || key.index >= len(rows[j]) {
+					continue
+				}
+				vi = rows[i][key.index]
+				vj = rows[j][key.index]
+			} else {
+				// Evaluate expression for each row
+				var err error
+				vi, err = e.evaluateSortExpression(key.expr, rows[i], colIndexMap)
+				if err != nil {
+					continue
+				}
+				vj, err = e.evaluateSortExpression(key.expr, rows[j], colIndexMap)
+				if err != nil {
+					continue
+				}
+			}
 
 			cmp := compareValues(vi, vj)
 			if cmp == 0 {
@@ -630,6 +517,277 @@ func (e *Executor) sortRows(orderBy []*sql.OrderByItem, cols []ColumnInfo, rows 
 	})
 
 	return rows
+}
+
+// evaluateSortExpression evaluates an expression for sorting purposes.
+func (e *Executor) evaluateSortExpression(expr sql.Expression, row []interface{}, colIndexMap map[string]int) (interface{}, error) {
+	switch ex := expr.(type) {
+	case *sql.Literal:
+		return ex.Value, nil
+
+	case *sql.ColumnRef:
+		colName := strings.ToLower(ex.Name)
+		idx, ok := colIndexMap[colName]
+		if !ok {
+			return nil, fmt.Errorf("unknown column: %s", ex.Name)
+		}
+		if idx < len(row) {
+			return row[idx], nil
+		}
+		return nil, nil
+
+	case *sql.BinaryExpr:
+		left, err := e.evaluateSortExpression(ex.Left, row, colIndexMap)
+		if err != nil {
+			return nil, err
+		}
+		right, err := e.evaluateSortExpression(ex.Right, row, colIndexMap)
+		if err != nil {
+			return nil, err
+		}
+		return e.evaluateBinaryOp(left, ex.Op, right)
+
+	case *sql.UnaryExpr:
+		val, err := e.evaluateSortExpression(ex.Right, row, colIndexMap)
+		if err != nil {
+			return nil, err
+		}
+		if ex.Op == sql.OpNeg {
+			switch v := val.(type) {
+			case int:
+				return -v, nil
+			case int64:
+				return -v, nil
+			case float64:
+				return -v, nil
+			}
+		}
+		return val, nil
+	}
+	return nil, nil
+}
+
+// evaluateBinaryOp evaluates a binary operation for sorting.
+func (e *Executor) evaluateBinaryOp(left interface{}, op sql.BinaryOp, right interface{}) (interface{}, error) {
+	// Convert to float for arithmetic operations
+	leftFloat, leftOk := toFloat(left)
+	rightFloat, rightOk := toFloat(right)
+
+	switch op {
+	case sql.OpAdd:
+		if leftOk && rightOk {
+			return leftFloat + rightFloat, nil
+		}
+	case sql.OpSub:
+		if leftOk && rightOk {
+			return leftFloat - rightFloat, nil
+		}
+	case sql.OpMul:
+		if leftOk && rightOk {
+			return leftFloat * rightFloat, nil
+		}
+	case sql.OpDiv:
+		if leftOk && rightOk && rightFloat != 0 {
+			return leftFloat / rightFloat, nil
+		}
+	}
+	return nil, fmt.Errorf("cannot evaluate binary operation")
+}
+
+// toFloat converts a value to float64 for arithmetic.
+func toFloat(v interface{}) (float64, bool) {
+	switch val := v.(type) {
+	case int:
+		return float64(val), true
+	case int64:
+		return float64(val), true
+	case float64:
+		return val, true
+	case float32:
+		return float64(val), true
+	default:
+		str := fmt.Sprintf("%v", v)
+		if f, err := strconv.ParseFloat(str, 64); err == nil {
+			return f, true
+		}
+		return 0, false
+	}
+}
+
+// executeGroupBy handles GROUP BY and aggregate functions.
+func (e *Executor) executeGroupBy(stmt *sql.SelectStmt, rows []*row.Row, resultCols []ColumnInfo, colIndices []int, aggregateFuncs []struct {
+	name  string
+	arg   string
+	index int
+}, tblInfo *table.TableInfo, columnMap map[string]*types.ColumnInfo, columnOrder []*types.ColumnInfo) (*Result, error) {
+	// Build GROUP BY column indices
+	groupByIndices := make([]int, 0)
+	for _, gbExpr := range stmt.GroupBy {
+		if colRef, ok := gbExpr.(*sql.ColumnRef); ok {
+			colName := strings.ToLower(colRef.Name)
+			for i, col := range tblInfo.Columns {
+				if strings.ToLower(col.Name) == colName {
+					groupByIndices = append(groupByIndices, i)
+					break
+				}
+			}
+		}
+	}
+
+	// Group rows by GROUP BY key
+	groups := make(map[string][]*row.Row)
+	var groupOrder []string // maintain group order
+
+	for _, r := range rows {
+		// Apply WHERE filter
+		if stmt.Where != nil {
+			match, err := e.evaluateWhere(stmt.Where, r, columnMap, columnOrder)
+			if err != nil {
+				return nil, err
+			}
+			if !match {
+				continue
+			}
+		}
+
+		// Build group key
+		var key strings.Builder
+		if len(groupByIndices) > 0 {
+			for _, idx := range groupByIndices {
+				if idx < len(r.Values) {
+					key.WriteString(fmt.Sprintf("%v|", e.valueToInterface(r.Values[idx])))
+				} else {
+					key.WriteString("nil|")
+				}
+			}
+		} else {
+			// No GROUP BY - single group
+			key.WriteString("all")
+		}
+
+		keyStr := key.String()
+		if _, exists := groups[keyStr]; !exists {
+			groupOrder = append(groupOrder, keyStr)
+		}
+		groups[keyStr] = append(groups[keyStr], r)
+	}
+
+	// Build result
+	result := &Result{
+		Columns: resultCols,
+		Rows:    make([][]interface{}, 0),
+	}
+
+	// Process each group
+	for _, groupKey := range groupOrder {
+		groupRows := groups[groupKey]
+		resultRow := make([]interface{}, len(resultCols))
+
+		// Fill in non-aggregate columns (GROUP BY columns)
+		if len(groupRows) > 0 {
+			firstRow := groupRows[0]
+			for i, idx := range colIndices {
+				if idx < len(firstRow.Values) {
+					resultRow[i] = e.valueToInterface(firstRow.Values[idx])
+				}
+			}
+		}
+
+		// Compute aggregates for this group
+		for _, agg := range aggregateFuncs {
+			switch agg.name {
+			case "COUNT":
+				resultRow[agg.index] = len(groupRows)
+			case "SUM":
+				var sum int64
+				for _, r := range groupRows {
+					if agg.arg != "" && agg.arg != "*" {
+						for j, col := range tblInfo.Columns {
+							if strings.ToLower(col.Name) == agg.arg {
+								if j < len(r.Values) && !r.Values[j].Null {
+									sum += r.Values[j].AsInt()
+								}
+							}
+						}
+					}
+				}
+				resultRow[agg.index] = sum
+			case "AVG":
+				var sum int64
+				count := 0
+				for _, r := range groupRows {
+					if agg.arg != "" {
+						for j, col := range tblInfo.Columns {
+							if strings.ToLower(col.Name) == agg.arg {
+								if j < len(r.Values) && !r.Values[j].Null {
+									sum += r.Values[j].AsInt()
+									count++
+								}
+							}
+						}
+					}
+				}
+				if count > 0 {
+					resultRow[agg.index] = float64(sum) / float64(count)
+				} else {
+					resultRow[agg.index] = nil
+				}
+			case "MIN":
+				var minVal int64
+				hasMin := false
+				for _, r := range groupRows {
+					if agg.arg != "" {
+						for j, col := range tblInfo.Columns {
+							if strings.ToLower(col.Name) == agg.arg {
+								if j < len(r.Values) && !r.Values[j].Null {
+									v := r.Values[j].AsInt()
+									if !hasMin || v < minVal {
+										minVal = v
+										hasMin = true
+									}
+								}
+							}
+						}
+					}
+				}
+				if hasMin {
+					resultRow[agg.index] = minVal
+				} else {
+					resultRow[agg.index] = nil
+				}
+			case "MAX":
+				var maxVal int64
+				hasMax := false
+				for _, r := range groupRows {
+					if agg.arg != "" {
+						for j, col := range tblInfo.Columns {
+							if strings.ToLower(col.Name) == agg.arg {
+								if j < len(r.Values) && !r.Values[j].Null {
+									v := r.Values[j].AsInt()
+									if !hasMax || v > maxVal {
+										maxVal = v
+										hasMax = true
+									}
+								}
+							}
+						}
+					}
+				}
+				if hasMax {
+					resultRow[agg.index] = maxVal
+				} else {
+					resultRow[agg.index] = nil
+				}
+			default:
+				resultRow[agg.index] = nil
+			}
+		}
+
+		result.Rows = append(result.Rows, resultRow)
+	}
+
+	result.RowCount = len(result.Rows)
+	return result, nil
 }
 
 // executeUnion executes a UNION statement.
@@ -1041,6 +1199,53 @@ func (e *Executor) executeDelete(stmt *sql.DeleteStmt) (*Result, error) {
 func (e *Executor) evaluateWhereForRow(expr sql.Expression, r *row.Row, columns []*types.ColumnInfo, colIdxMap map[string]int) (bool, error) {
 	switch ex := expr.(type) {
 	case *sql.BinaryExpr:
+		// Handle IN operator specially (right side could be a subquery)
+		if ex.Op == sql.OpIn {
+			left, err := e.evaluateExprForRow(ex.Left, r, columns, colIdxMap)
+			if err != nil {
+				return false, err
+			}
+
+			// Check if right side is a subquery
+			if subq, ok := ex.Right.(*sql.SubqueryExpr); ok {
+				result, err := e.executeStatement(subq.Select)
+				if err != nil {
+					return false, err
+				}
+				// Check if value is in subquery results
+				for _, row := range result.Rows {
+					if len(row) > 0 {
+						if compareEqual(left, row[0]) {
+							return true, nil
+						}
+					}
+				}
+				return false, nil
+			}
+
+			// Check if right side is a parenthesized expression with subquery
+			if paren, ok := ex.Right.(*sql.ParenExpr); ok {
+				if subq, ok := paren.Expr.(*sql.SubqueryExpr); ok {
+					result, err := e.executeStatement(subq.Select)
+					if err != nil {
+						return false, err
+					}
+					// Check if value is in subquery results
+					for _, row := range result.Rows {
+						if len(row) > 0 {
+							if compareEqual(left, row[0]) {
+								return true, nil
+							}
+						}
+					}
+					return false, nil
+				}
+			}
+
+			// For non-subquery IN, we'd need a list - not implemented yet
+			return false, nil
+		}
+
 		left, err := e.evaluateExprForRow(ex.Left, r, columns, colIdxMap)
 		if err != nil {
 			return false, err
@@ -1069,6 +1274,42 @@ func (e *Executor) evaluateWhereForRow(expr sql.Expression, r *row.Row, columns 
 			return val != nil, nil
 		}
 		return val == nil, nil
+
+	case *sql.InExpr:
+		// Evaluate the expression
+		val, err := e.evaluateExprForRow(ex.Expr, r, columns, colIdxMap)
+		if err != nil {
+			return false, err
+		}
+
+		// Handle subquery
+		if ex.Select != nil {
+			result, err := e.executeStatement(ex.Select)
+			if err != nil {
+				return false, err
+			}
+			// Check if value is in subquery results
+			for _, row := range result.Rows {
+				if len(row) > 0 {
+					if compareEqual(val, row[0]) {
+						return !ex.Not, nil
+					}
+				}
+			}
+			return ex.Not, nil
+		}
+
+		// Handle value list
+		for _, listExpr := range ex.List {
+			listVal, err := e.evaluateExprForRow(listExpr, r, columns, colIdxMap)
+			if err != nil {
+				continue
+			}
+			if compareEqual(val, listVal) {
+				return !ex.Not, nil
+			}
+		}
+		return ex.Not, nil
 
 	case *sql.Literal:
 		if ex.Type == sql.LiteralBool {
@@ -1816,6 +2057,53 @@ func (e *Executor) executeTruncate(stmt *sql.TruncateTableStmt) (*Result, error)
 func (e *Executor) evaluateWhere(expr sql.Expression, r *row.Row, columnMap map[string]*types.ColumnInfo, columnOrder []*types.ColumnInfo) (bool, error) {
 	switch ex := expr.(type) {
 	case *sql.BinaryExpr:
+		// Handle IN operator specially (right side could be a subquery)
+		if ex.Op == sql.OpIn {
+			left, err := e.evaluateExpression(ex.Left, r, columnMap, columnOrder)
+			if err != nil {
+				return false, err
+			}
+
+			// Check if right side is a subquery
+			if subq, ok := ex.Right.(*sql.SubqueryExpr); ok {
+				result, err := e.executeStatement(subq.Select)
+				if err != nil {
+					return false, err
+				}
+				// Check if value is in subquery results
+				for _, row := range result.Rows {
+					if len(row) > 0 {
+						if compareEqual(left, row[0]) {
+							return true, nil
+						}
+					}
+				}
+				return false, nil
+			}
+
+			// Check if right side is a parenthesized expression with subquery
+			if paren, ok := ex.Right.(*sql.ParenExpr); ok {
+				if subq, ok := paren.Expr.(*sql.SubqueryExpr); ok {
+					result, err := e.executeStatement(subq.Select)
+					if err != nil {
+						return false, err
+					}
+					// Check if value is in subquery results
+					for _, row := range result.Rows {
+						if len(row) > 0 {
+							if compareEqual(left, row[0]) {
+								return true, nil
+							}
+						}
+					}
+					return false, nil
+				}
+			}
+
+			// For non-subquery IN, we'd need a list - not implemented yet
+			return false, nil
+		}
+
 		left, err := e.evaluateExpression(ex.Left, r, columnMap, columnOrder)
 		if err != nil {
 			return false, err
@@ -1845,6 +2133,42 @@ func (e *Executor) evaluateWhere(expr sql.Expression, r *row.Row, columnMap map[
 		}
 		return val == nil, nil
 
+	case *sql.InExpr:
+		// Evaluate the expression
+		val, err := e.evaluateExpression(ex.Expr, r, columnMap, columnOrder)
+		if err != nil {
+			return false, err
+		}
+
+		// Handle subquery
+		if ex.Select != nil {
+			result, err := e.executeStatement(ex.Select)
+			if err != nil {
+				return false, err
+			}
+			// Check if value is in subquery results
+			for _, row := range result.Rows {
+				if len(row) > 0 {
+					if compareEqual(val, row[0]) {
+						return !ex.Not, nil
+					}
+				}
+			}
+			return ex.Not, nil
+		}
+
+		// Handle value list
+		for _, listExpr := range ex.List {
+			listVal, err := e.evaluateExpression(listExpr, r, columnMap, columnOrder)
+			if err != nil {
+				continue
+			}
+			if compareEqual(val, listVal) {
+				return !ex.Not, nil
+			}
+		}
+		return ex.Not, nil
+
 	case *sql.Literal:
 		if ex.Type == sql.LiteralBool {
 			if b, ok := ex.Value.(bool); ok {
@@ -1854,6 +2178,17 @@ func (e *Executor) evaluateWhere(expr sql.Expression, r *row.Row, columnMap map[
 	}
 
 	return false, nil
+}
+
+// compareEqual checks if two values are equal.
+func compareEqual(a, b interface{}) bool {
+	if a == nil && b == nil {
+		return true
+	}
+	if a == nil || b == nil {
+		return false
+	}
+	return fmt.Sprintf("%v", a) == fmt.Sprintf("%v", b)
 }
 
 // evaluateExpression evaluates an expression against a row.

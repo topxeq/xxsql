@@ -197,6 +197,71 @@ func TestParseDSN(t *testing.T) {
 				MaxAllowedPacket: 16777216,
 			},
 		},
+		// URL format DSN tests
+		{
+			name: "URL format simple",
+			dsn:  "xxsql://root@localhost:3306/testdb",
+			expected: &Config{
+				User:   "root",
+				Net:    "tcp",
+				Addr:   "localhost:3306",
+				DBName: "testdb",
+			},
+		},
+		{
+			name: "URL format with password",
+			dsn:  "xxsql://user:pass@127.0.0.1:3307/mydb",
+			expected: &Config{
+				User:   "user",
+				Passwd: "pass",
+				Net:    "tcp",
+				Addr:   "127.0.0.1:3307",
+				DBName: "mydb",
+			},
+		},
+		{
+			name: "URL format without port",
+			dsn:  "xxsql://root@localhost/testdb",
+			expected: &Config{
+				User:   "root",
+				Net:    "tcp",
+				Addr:   "localhost:3306",
+				DBName: "testdb",
+			},
+		},
+		{
+			name: "URL format with parameters",
+			dsn:  "xxsql://root@localhost:3306/test?timeout=5s&charset=utf8",
+			expected: &Config{
+				User:    "root",
+				Net:     "tcp",
+				Addr:    "localhost:3306",
+				DBName:  "test",
+				Timeout: 5 * time.Second,
+				Charset: "utf8",
+			},
+		},
+		{
+			name: "URL format with TLS",
+			dsn:  "xxsql://user:secret@localhost:3306/db?tls=true",
+			expected: &Config{
+				User:   "user",
+				Passwd: "secret",
+				Net:    "tcp",
+				Addr:   "localhost:3306",
+				DBName: "db",
+				TLS:    true,
+			},
+		},
+		{
+			name: "URL format no user",
+			dsn:  "xxsql://localhost:3306/testdb",
+			expected: &Config{
+				Net:    "tcp",
+				Addr:   "localhost:3306",
+				DBName: "testdb",
+			},
+		},
 	}
 
 	for _, tt := range tests {
