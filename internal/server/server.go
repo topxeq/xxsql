@@ -109,21 +109,41 @@ func (s *Server) Start() error {
 	}
 
 	// Start private protocol server
-	if err := s.startPrivateServer(); err != nil {
-		return fmt.Errorf("failed to start private server: %w", err)
+	if s.config.Network.IsPrivateEnabled() && s.config.Network.PrivatePort > 0 {
+		if err := s.startPrivateServer(); err != nil {
+			return fmt.Errorf("failed to start private server: %w", err)
+		}
+	} else {
+		if !s.config.Network.IsPrivateEnabled() {
+			s.logger.Info("Private protocol server is disabled")
+		} else {
+			s.logger.Info("Private protocol server has invalid port, skipping")
+		}
 	}
 
 	// Start MySQL protocol server
-	if s.config.Network.MySQLPort > 0 {
+	if s.config.Network.IsMySQLEnabled() && s.config.Network.MySQLPort > 0 {
 		if err := s.startMySQLServer(); err != nil {
 			s.logger.Error("Failed to start MySQL server: %v", err)
+		}
+	} else {
+		if !s.config.Network.IsMySQLEnabled() {
+			s.logger.Info("MySQL protocol server is disabled")
+		} else {
+			s.logger.Info("MySQL protocol server has invalid port, skipping")
 		}
 	}
 
 	// Start HTTP API server
-	if s.config.Network.HTTPPort > 0 {
+	if s.config.Network.IsHTTPEnabled() && s.config.Network.HTTPPort > 0 {
 		if err := s.startHTTPServer(); err != nil {
 			s.logger.Error("Failed to start HTTP server: %v", err)
+		}
+	} else {
+		if !s.config.Network.IsHTTPEnabled() {
+			s.logger.Info("HTTP API server is disabled")
+		} else {
+			s.logger.Info("HTTP API server has invalid port, skipping")
 		}
 	}
 

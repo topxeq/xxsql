@@ -343,6 +343,13 @@ func (p *Parser) parseJoin() *JoinClause {
 		jc.Type = JoinCross
 		p.nextToken()
 		p.expect(TokJoin)
+	case TokFull:
+		jc.Type = JoinFull
+		p.nextToken()
+		if p.curTokenIs(TokOuter) {
+			p.nextToken()
+		}
+		p.expect(TokJoin)
 	case TokJoin:
 		jc.Type = JoinInner
 		p.nextToken()
@@ -1707,7 +1714,7 @@ func getPrecedence(op BinaryOp) int {
 
 // isJoinToken checks if the token is a join keyword.
 func isJoinToken(t TokenType) bool {
-	return t == TokJoin || t == TokInner || t == TokLeft || t == TokRight || t == TokCross
+	return t == TokJoin || t == TokInner || t == TokLeft || t == TokRight || t == TokCross || t == TokFull
 }
 
 // ============================================================================

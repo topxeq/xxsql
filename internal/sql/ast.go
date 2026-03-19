@@ -519,6 +519,8 @@ func (c *JoinClause) String() string {
 		sb.WriteString("RIGHT JOIN ")
 	case JoinCross:
 		sb.WriteString("CROSS JOIN ")
+	case JoinFull:
+		sb.WriteString("FULL JOIN ")
 	}
 	sb.WriteString(c.Table.String())
 	if c.On != nil {

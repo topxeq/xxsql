@@ -516,3 +516,77 @@ func BenchmarkLoader_Load(b *testing.B) {
 		loader.Load()
 	}
 }
+
+// TestNetworkEnabledFlags tests the service enabled flags
+func TestNetworkEnabledFlags(t *testing.T) {
+	t.Run("default all enabled", func(t *testing.T) {
+		cfg := DefaultConfig()
+		if !cfg.Network.IsPrivateEnabled() {
+			t.Error("Private should be enabled by default")
+		}
+		if !cfg.Network.IsMySQLEnabled() {
+			t.Error("MySQL should be enabled by default")
+		}
+		if !cfg.Network.IsHTTPEnabled() {
+			t.Error("HTTP should be enabled by default")
+		}
+	})
+
+	t.Run("explicit disable", func(t *testing.T) {
+		falseVal := false
+		cfg := DefaultConfig()
+		cfg.Network.PrivateEnabled = &falseVal
+		cfg.Network.MySQLEnabled = &falseVal
+		cfg.Network.HTTPEnabled = &falseVal
+
+		if cfg.Network.IsPrivateEnabled() {
+			t.Error("Private should be disabled")
+		}
+		if cfg.Network.IsMySQLEnabled() {
+			t.Error("MySQL should be disabled")
+		}
+		if cfg.Network.IsHTTPEnabled() {
+			t.Error("HTTP should be disabled")
+		}
+	})
+
+	t.Run("nil means default true", func(t *testing.T) {
+		cfg := &Config{
+			Network: NetworkConfig{
+				PrivateEnabled: nil,
+				MySQLEnabled:   nil,
+				HTTPEnabled:    nil,
+			},
+		}
+
+		if !cfg.Network.IsPrivateEnabled() {
+			t.Error("nil PrivateEnabled should default to true")
+		}
+		if !cfg.Network.IsMySQLEnabled() {
+			t.Error("nil MySQLEnabled should default to true")
+		}
+		if !cfg.Network.IsHTTPEnabled() {
+			t.Error("nil HTTPEnabled should default to true")
+		}
+	})
+}
+
+// TestValidateWithDisabledServices tests validation with disabled services
+func TestValidateWithDisabledServices(t *testing.T) {
+	falseVal := false
+	cfg := DefaultConfig()
+
+	// Disable all services
+	cfg.Network.PrivateEnabled = &falseVal
+	cfg.Network.MySQLEnabled = &falseVal
+	cfg.Network.HTTPEnabled = &falseVal
+
+	// Set invalid ports (should not fail validation since services are disabled)
+	cfg.Network.PrivatePort = 0
+	cfg.Network.MySQLPort = 0
+	cfg.Network.HTTPPort = 0
+
+	if err := cfg.Validate(); err != nil {
+		t.Errorf("Validation should pass with disabled services: %v", err)
+	}
+}

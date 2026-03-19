@@ -30,10 +30,37 @@ type ServerConfig struct {
 
 // NetworkConfig contains network-related configuration.
 type NetworkConfig struct {
-	PrivatePort int    `json:"private_port"` // Private protocol port (default: 9527)
-	MySQLPort   int    `json:"mysql_port"`   // MySQL compatible port (default: 3306)
-	HTTPPort    int    `json:"http_port"`    // HTTP API port (default: 8080)
-	Bind        string `json:"bind"`         // Bind address (default: "0.0.0.0")
+	PrivatePort    int    `json:"private_port"`    // Private protocol port (default: 9527)
+	MySQLPort      int    `json:"mysql_port"`      // MySQL compatible port (default: 3306)
+	HTTPPort       int    `json:"http_port"`       // HTTP API port (default: 8080)
+	Bind           string `json:"bind"`            // Bind address (default: "0.0.0.0")
+	PrivateEnabled *bool  `json:"private_enabled"` // Enable private protocol server (default: true)
+	MySQLEnabled   *bool  `json:"mysql_enabled"`   // Enable MySQL protocol server (default: true)
+	HTTPEnabled    *bool  `json:"http_enabled"`    // Enable HTTP API server (default: true)
+}
+
+// IsPrivateEnabled returns whether private protocol server is enabled.
+func (n *NetworkConfig) IsPrivateEnabled() bool {
+	if n.PrivateEnabled == nil {
+		return true // default to enabled
+	}
+	return *n.PrivateEnabled
+}
+
+// IsMySQLEnabled returns whether MySQL protocol server is enabled.
+func (n *NetworkConfig) IsMySQLEnabled() bool {
+	if n.MySQLEnabled == nil {
+		return true // default to enabled
+	}
+	return *n.MySQLEnabled
+}
+
+// IsHTTPEnabled returns whether HTTP API server is enabled.
+func (n *NetworkConfig) IsHTTPEnabled() bool {
+	if n.HTTPEnabled == nil {
+		return true // default to enabled
+	}
+	return *n.HTTPEnabled
 }
 
 // StorageConfig contains storage engine configuration.
@@ -146,6 +173,7 @@ type WorkerPoolConfig struct {
 
 // DefaultConfig returns a Config with all default values applied.
 func DefaultConfig() *Config {
+	trueVal := true
 	return &Config{
 		Server: ServerConfig{
 			Name:    "xxsql",
@@ -153,10 +181,13 @@ func DefaultConfig() *Config {
 			PIDFile: "./xxsql.pid",
 		},
 		Network: NetworkConfig{
-			PrivatePort: 9527,
-			MySQLPort:   3306,
-			HTTPPort:    8080,
-			Bind:        "0.0.0.0",
+			PrivatePort:    9527,
+			MySQLPort:      3306,
+			HTTPPort:       8080,
+			Bind:           "0.0.0.0",
+			PrivateEnabled: &trueVal,
+			MySQLEnabled:   &trueVal,
+			HTTPEnabled:    &trueVal,
 		},
 		Storage: StorageConfig{
 			PageSize:         4096,

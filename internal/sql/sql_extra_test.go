@@ -423,6 +423,34 @@ func TestParseJoin_CrossJoin(t *testing.T) {
 	}
 }
 
+func TestParseJoin_FullJoin(t *testing.T) {
+	input := "SELECT * FROM users FULL JOIN orders ON users.id = orders.user_id"
+	stmt, err := Parse(input)
+	if err != nil {
+		t.Fatalf("Parse failed: %v", err)
+	}
+
+	selectStmt := stmt.(*SelectStmt)
+	join := selectStmt.From.Joins[0]
+	if join.Type != JoinFull {
+		t.Errorf("Expected JoinFull, got %v", join.Type)
+	}
+}
+
+func TestParseJoin_FullOuterJoin(t *testing.T) {
+	input := "SELECT * FROM users FULL OUTER JOIN orders ON users.id = orders.user_id"
+	stmt, err := Parse(input)
+	if err != nil {
+		t.Fatalf("Parse failed: %v", err)
+	}
+
+	selectStmt := stmt.(*SelectStmt)
+	join := selectStmt.From.Joins[0]
+	if join.Type != JoinFull {
+		t.Errorf("Expected JoinFull, got %v", join.Type)
+	}
+}
+
 func TestParseJoin_ImplicitInnerJoin(t *testing.T) {
 	input := "SELECT * FROM users JOIN orders ON users.id = orders.user_id"
 	stmt, err := Parse(input)

@@ -1153,6 +1153,85 @@ func TestServer_ZeroPorts(t *testing.T) {
 	}
 }
 
+// TestServer_DisabledServices tests that services can be disabled via config
+func TestServer_DisabledServices(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	falseVal := false
+	cfg := config.DefaultConfig()
+	cfg.Server.DataDir = tmpDir
+	cfg.Network.PrivatePort = 19571
+	cfg.Network.MySQLPort = 3306
+	cfg.Network.HTTPPort = 8080
+	// Disable all services
+	cfg.Network.PrivateEnabled = &falseVal
+	cfg.Network.MySQLEnabled = &falseVal
+	cfg.Network.HTTPEnabled = &falseVal
+	cfg.Auth.Enabled = false
+
+	engine := storage.NewEngine(tmpDir)
+	engine.Open()
+	defer engine.Close()
+
+	logger := log.NewLogger(log.WithLevel(log.INFO))
+	srv := New(cfg, logger, engine)
+
+	if err := srv.Start(); err != nil {
+		t.Fatalf("Start failed: %v", err)
+	}
+	defer srv.Stop()
+
+	// With disabled services, all servers should be nil
+	if srv.private != nil {
+		t.Error("Private server should be nil when disabled")
+	}
+	if srv.mysql != nil {
+		t.Error("MySQL server should be nil when disabled")
+	}
+	if srv.http != nil {
+		t.Error("HTTP server should be nil when disabled")
+	}
+}
+
+// TestServer_PartiallyDisabledServices tests that some services can be disabled
+func TestServer_PartiallyDisabledServices(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	falseVal := false
+	cfg := config.DefaultConfig()
+	cfg.Server.DataDir = tmpDir
+	cfg.Network.PrivatePort = 19572
+	cfg.Network.MySQLPort = 13372
+	cfg.Network.HTTPPort = 18072
+	// Disable only HTTP
+	cfg.Network.HTTPEnabled = &falseVal
+	cfg.Auth.Enabled = false
+
+	engine := storage.NewEngine(tmpDir)
+	engine.Open()
+	defer engine.Close()
+
+	logger := log.NewLogger(log.WithLevel(log.INFO))
+	srv := New(cfg, logger, engine)
+
+	if err := srv.Start(); err != nil {
+		t.Fatalf("Start failed: %v", err)
+	}
+	defer srv.Stop()
+
+	// Private and MySQL should be running
+	if srv.private == nil {
+		t.Error("Private server should be running")
+	}
+	if srv.mysql == nil {
+		t.Error("MySQL server should be running")
+	}
+	// HTTP should be nil
+	if srv.http != nil {
+		t.Error("HTTP server should be nil when disabled")
+	}
+}
+
 // ============================================================================
 // Logger Access Tests
 // ============================================================================

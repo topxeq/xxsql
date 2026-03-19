@@ -857,6 +857,7 @@ func TestJoinClause_AllTypes(t *testing.T) {
 		{JoinLeft, "LEFT"},
 		{JoinRight, "RIGHT"},
 		{JoinCross, "CROSS"},
+		{JoinFull, "FULL"},
 	}
 
 	for _, tt := range types {

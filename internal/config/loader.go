@@ -104,6 +104,19 @@ func (l *Loader) applyEnvironment(cfg *Config) error {
 	if v := os.Getenv(l.envKey("BIND")); v != "" {
 		cfg.Network.Bind = v
 	}
+	// Service enabled flags
+	if v := os.Getenv(l.envKey("PRIVATE_ENABLED")); v != "" {
+		enabled := parseBool(v)
+		cfg.Network.PrivateEnabled = &enabled
+	}
+	if v := os.Getenv(l.envKey("MYSQL_ENABLED")); v != "" {
+		enabled := parseBool(v)
+		cfg.Network.MySQLEnabled = &enabled
+	}
+	if v := os.Getenv(l.envKey("HTTP_ENABLED")); v != "" {
+		enabled := parseBool(v)
+		cfg.Network.HTTPEnabled = &enabled
+	}
 
 	// Log config
 	if v := os.Getenv(l.envKey("LOG_LEVEL")); v != "" {
@@ -153,15 +166,21 @@ func (l *Loader) envKey(key string) string {
 
 // Validate validates the configuration.
 func (c *Config) Validate() error {
-	// Validate network ports
-	if c.Network.PrivatePort < 1 || c.Network.PrivatePort > 65535 {
-		return fmt.Errorf("invalid private_port: %d", c.Network.PrivatePort)
+	// Validate network ports (only if service is enabled)
+	if c.Network.IsPrivateEnabled() {
+		if c.Network.PrivatePort < 1 || c.Network.PrivatePort > 65535 {
+			return fmt.Errorf("invalid private_port: %d", c.Network.PrivatePort)
+		}
 	}
-	if c.Network.MySQLPort < 0 || c.Network.MySQLPort > 65535 {
-		return fmt.Errorf("invalid mysql_port: %d", c.Network.MySQLPort)
+	if c.Network.IsMySQLEnabled() {
+		if c.Network.MySQLPort < 1 || c.Network.MySQLPort > 65535 {
+			return fmt.Errorf("invalid mysql_port: %d", c.Network.MySQLPort)
+		}
 	}
-	if c.Network.HTTPPort < 0 || c.Network.HTTPPort > 65535 {
-		return fmt.Errorf("invalid http_port: %d", c.Network.HTTPPort)
+	if c.Network.IsHTTPEnabled() {
+		if c.Network.HTTPPort < 1 || c.Network.HTTPPort > 65535 {
+			return fmt.Errorf("invalid http_port: %d", c.Network.HTTPPort)
+		}
 	}
 
 	// Validate log level

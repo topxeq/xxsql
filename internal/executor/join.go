@@ -294,6 +294,16 @@ func (e *Executor) evaluateJoinExpression(expr sql.Expression, row *joinedRow, c
 				return !b, nil
 			}
 		}
+
+	case *sql.IsNullExpr:
+		val, err := e.evaluateJoinExpression(ex.Expr, row, ctx, rightRow, rightTbl)
+		if err != nil {
+			return nil, err
+		}
+		if ex.Not {
+			return val != nil, nil // IS NOT NULL
+		}
+		return val == nil, nil // IS NULL
 	}
 
 	return nil, nil
@@ -425,6 +435,8 @@ func (e *Executor) executeJoin(ctx *joinContext, currentRows []*joinedRow, join 
 		return e.executeRightJoin(ctx, currentRows, join)
 	case sql.JoinCross:
 		return e.executeCrossJoin(ctx, currentRows, join)
+	case sql.JoinFull:
+		return e.executeFullJoin(ctx, currentRows, join)
 	default:
 		return nil, fmt.Errorf("unsupported join type: %v", join.Type)
 	}
@@ -587,6 +599,75 @@ func (e *Executor) executeCrossJoin(ctx *joinContext, currentRows []*joinedRow, 
 				rightValues[i] = e.valueToInterface(v)
 			}
 			combined := combineRows(leftRow, rightValues, rightTbl, ctx.totalCols)
+			newRows = append(newRows, combined)
+		}
+	}
+
+	return newRows, nil
+}
+
+// executeFullJoin performs FULL OUTER JOIN.
+func (e *Executor) executeFullJoin(ctx *joinContext, currentRows []*joinedRow, join *sql.JoinClause) ([]*joinedRow, error) {
+	rightTbl, err := e.loadJoinTable(join.Table, ctx.totalCols)
+	if err != nil {
+		return nil, err
+	}
+	ctx.tables = append(ctx.tables, rightTbl)
+	ctx.tableMap[rightTbl.lookupKey()] = rightTbl
+	leftColCount := ctx.totalCols
+	ctx.totalCols += len(rightTbl.columns)
+
+	// Track which right rows matched
+	matched := make(map[row.RowID]bool)
+	var newRows []*joinedRow
+
+	// Pass 1: Find matches and emit matched rows + unmatched left rows
+	for _, leftRow := range currentRows {
+		found := false
+		for _, rightRow := range rightTbl.rows {
+			match, err := e.evaluateOnClause(join.On, leftRow, rightRow, ctx, rightTbl)
+			if err != nil {
+				return nil, err
+			}
+			if match {
+				found = true
+				matched[rightRow.ID] = true
+				rightValues := make([]interface{}, len(rightTbl.columns))
+				for i, v := range rightRow.Values {
+					rightValues[i] = e.valueToInterface(v)
+				}
+				combined := combineRows(leftRow, rightValues, rightTbl, ctx.totalCols)
+				newRows = append(newRows, combined)
+			}
+		}
+		if !found {
+			// No match: emit left row with NULL right columns
+			combined := combineRows(leftRow, make([]interface{}, len(rightTbl.columns)), rightTbl, ctx.totalCols)
+			// Mark right columns as NULL
+			for i := 0; i < len(rightTbl.columns); i++ {
+				combined.nullFlags[rightTbl.startIdx+i] = true
+			}
+			newRows = append(newRows, combined)
+		}
+	}
+
+	// Pass 2: Add unmatched right rows with NULL left
+	for _, rightRow := range rightTbl.rows {
+		if !matched[rightRow.ID] {
+			combined := &joinedRow{
+				values:    make([]interface{}, ctx.totalCols),
+				nullFlags: make([]bool, ctx.totalCols),
+			}
+			// Left side: NULL
+			for i := 0; i < leftColCount; i++ {
+				combined.values[i] = nil
+				combined.nullFlags[i] = true
+			}
+			// Right side: actual values
+			for i, v := range rightRow.Values {
+				combined.values[rightTbl.startIdx+i] = e.valueToInterface(v)
+				combined.nullFlags[rightTbl.startIdx+i] = v.Null
+			}
 			newRows = append(newRows, combined)
 		}
 	}

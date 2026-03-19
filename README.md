@@ -61,7 +61,7 @@ Then XxSql might be the right choice.
 
 - **DDL** - CREATE/ALTER/DROP TABLE, CREATE/DROP INDEX
 - **DML** - SELECT, INSERT, UPDATE, DELETE, TRUNCATE
-- **JOINs** - INNER, LEFT, RIGHT, CROSS JOIN with multiple table support
+- **JOINs** - INNER, LEFT, RIGHT, CROSS, FULL OUTER JOIN with multiple table support
 - **UNION** - UNION and UNION ALL with duplicate elimination
 - **Aggregates** - COUNT, SUM, AVG, MIN, MAX
 - **Subqueries** - WHERE clause subqueries
@@ -250,6 +250,16 @@ TRUNCATE TABLE users;
 
 ### JOIN Support
 
+XxSql supports all standard SQL JOIN types:
+
+| JOIN Type | Description |
+|-----------|-------------|
+| INNER JOIN | Returns rows when there is a match in both tables |
+| LEFT [OUTER] JOIN | Returns all rows from left table, with matched rows from right (NULL if no match) |
+| RIGHT [OUTER] JOIN | Returns all rows from right table, with matched rows from left (NULL if no match) |
+| FULL [OUTER] JOIN | Returns all rows from both tables, with NULLs where there is no match |
+| CROSS JOIN | Returns Cartesian product of both tables |
+
 ```sql
 -- Inner join
 SELECT u.name, o.order_id
@@ -261,10 +271,25 @@ SELECT u.name, o.order_id
 FROM users u
 LEFT JOIN orders o ON u.id = o.user_id;
 
+-- Left outer join (equivalent to LEFT JOIN)
+SELECT u.name, o.order_id
+FROM users u
+LEFT OUTER JOIN orders o ON u.id = o.user_id;
+
 -- Right join
 SELECT u.name, o.order_id
 FROM users u
 RIGHT JOIN orders o ON u.id = o.user_id;
+
+-- Full outer join - returns all rows from both tables
+SELECT u.name, o.order_id
+FROM users u
+FULL JOIN orders o ON u.id = o.user_id;
+
+-- Full outer join with OUTER keyword
+SELECT u.name, o.order_id
+FROM users u
+FULL OUTER JOIN orders o ON u.id = o.user_id;
 
 -- Cross join
 SELECT u.name, p.product_name
@@ -276,6 +301,12 @@ SELECT u.name, o.order_id, p.product_name
 FROM users u
 INNER JOIN orders o ON u.id = o.user_id
 INNER JOIN products p ON o.product_id = p.id;
+
+-- Join with WHERE clause
+SELECT u.name, o.order_id
+FROM users u
+LEFT JOIN orders o ON u.id = o.user_id
+WHERE o.order_id IS NOT NULL;
 ```
 
 ### UNION Support
@@ -507,6 +538,197 @@ Navigate to `http://localhost:8080` (default HTTP port).
 
 Web interface uses cookie-based sessions with 24-hour expiry. Login with database user credentials.
 
+## RESTful API
+
+XxSql provides a comprehensive RESTful API for programmatic access. The API runs on the HTTP port (default: 8080).
+
+### Authentication
+
+API requests require session-based authentication. First login to obtain a session cookie:
+
+```bash
+# Login and save session cookie
+curl -c cookies.txt -X POST http://localhost:8080/api/login \
+  -H "Content-Type: application/json" \
+  -d '{"username": "admin", "password": "admin"}'
+
+# Use session for subsequent requests
+curl -b cookies.txt http://localhost:8080/api/tables
+```
+
+### API Endpoints
+
+#### Server Status
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/api/status` | Get server status (version, uptime, table count) |
+| GET | `/api/metrics` | Get storage engine metrics and statistics |
+| GET | `/api/config` | Get current configuration |
+| PUT | `/api/config` | Update configuration (requires restart) |
+
+#### Query Execution
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| POST | `/api/query` | Execute SQL query |
+
+**Query Request:**
+```json
+{
+  "sql": "SELECT * FROM users WHERE id = 1"
+}
+```
+
+**Query Response:**
+```json
+{
+  "columns": [{"name": "id", "type": "INT"}, {"name": "name", "type": "VARCHAR"}],
+  "rows": [[1, "Alice"], [2, "Bob"]],
+  "row_count": 2,
+  "affected": 0,
+  "message": "",
+  "duration": "1.23ms"
+}
+```
+
+#### Table Management
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/api/tables` | List all tables |
+| GET | `/api/tables/{name}` | Get table schema and metadata |
+| GET | `/api/tables/{name}/data` | Get table data with pagination |
+
+**Table Data Pagination:**
+```bash
+# Get page 2 (50 rows per page)
+curl -b cookies.txt "http://localhost:8080/api/api/tables/users/data?page=2"
+```
+
+#### User Management
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/api/users` | List all users |
+| POST | `/api/users` | Create new user |
+| GET | `/api/users/{name}` | Get user details |
+| PUT | `/api/users/{name}` | Update user |
+| DELETE | `/api/users/{name}` | Delete user |
+
+**Create User Request:**
+```json
+{
+  "username": "newuser",
+  "password": "securepassword",
+  "role": "user"
+}
+```
+
+#### Backup & Restore
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/api/backups` | List all backups |
+| POST | `/api/backups` | Create new backup |
+| GET | `/api/backups/{name}` | Download backup file |
+| POST | `/api/restore` | Restore from backup |
+
+**Create Backup Request:**
+```json
+{
+  "path": "/path/to/backup.xbak",
+  "compress": true
+}
+```
+
+**Restore Request:**
+```json
+{
+  "path": "/path/to/backup.xbak"
+}
+```
+
+#### Logs
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/api/logs/server` | Get server logs |
+| GET | `/api/logs/audit` | Get audit logs |
+
+**Query Parameters:**
+- `lines` - Number of lines to return (default: 100, max: 1000)
+
+```bash
+curl -b cookies.txt "http://localhost:8080/api/logs/server?lines=50"
+```
+
+#### Authentication
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| POST | `/api/login` | Login and create session |
+| POST | `/api/logout` | Logout and destroy session |
+
+### Example Usage
+
+```bash
+# Check server status
+curl -b cookies.txt http://localhost:8080/api/status
+
+# Create a table
+curl -b cookies.txt -X POST http://localhost:8080/api/query \
+  -H "Content-Type: application/json" \
+  -d '{"sql": "CREATE TABLE products (id SEQ PRIMARY KEY, name VARCHAR(100), price FLOAT)"}'
+
+# Insert data
+curl -b cookies.txt -X POST http://localhost:8080/api/query \
+  -H "Content-Type: application/json" \
+  -d '{"sql": "INSERT INTO products (name, price) VALUES (\"Widget\", 29.99)"}'
+
+# Query data
+curl -b cookies.txt -X POST http://localhost:8080/api/query \
+  -H "Content-Type: application/json" \
+  -d '{"sql": "SELECT * FROM products"}'
+
+# Create backup
+curl -b cookies.txt -X POST http://localhost:8080/api/backups \
+  -H "Content-Type: application/json" \
+  -d '{"compress": true}'
+
+# List users
+curl -b cookies.txt http://localhost:8080/api/users
+
+# Create new user
+curl -b cookies.txt -X POST http://localhost:8080/api/users \
+  -H "Content-Type: application/json" \
+  -d '{"username": "appuser", "password": "secret123", "role": "user"}'
+```
+
+### Error Handling
+
+API errors return JSON with an `error` field:
+
+```json
+{
+  "error": "table not found: nonexistent",
+  "duration": "0.05ms"
+}
+```
+
+### Disabling the API
+
+To disable the HTTP API server, set `http_enabled: false` in configuration:
+
+```json
+{
+  "network": {
+    "http_port": 8080,
+    "http_enabled": false
+  }
+}
+```
+
 ## Architecture
 
 ```
@@ -558,7 +780,10 @@ Configuration file example (`configs/xxsql.json`):
     "private_port": 9527,
     "mysql_port": 3306,
     "http_port": 8080,
-    "bind": "0.0.0.0"
+    "bind": "0.0.0.0",
+    "private_enabled": true,
+    "mysql_enabled": true,
+    "http_enabled": true
   },
   "storage": {
     "page_size": 4096,
@@ -631,6 +856,52 @@ Configuration file example (`configs/xxsql.json`):
   }
 }
 ```
+
+### Network Configuration
+
+The `network` section controls which services are started:
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `private_port` | int | 9527 | Private protocol port |
+| `mysql_port` | int | 3306 | MySQL compatible port |
+| `http_port` | int | 8080 | HTTP/Web interface port |
+| `bind` | string | "0.0.0.0" | Bind address |
+| `private_enabled` | bool | true | Enable/disable private protocol server |
+| `mysql_enabled` | bool | true | Enable/disable MySQL protocol server |
+| `http_enabled` | bool | true | Enable/disable HTTP API server |
+
+**Example: Disable HTTP interface**
+```json
+{
+  "network": {
+    "private_port": 9527,
+    "mysql_port": 3306,
+    "http_port": 8080,
+    "bind": "0.0.0.0",
+    "http_enabled": false
+  }
+}
+```
+
+**Example: MySQL-only server**
+```json
+{
+  "network": {
+    "private_port": 9527,
+    "mysql_port": 3306,
+    "http_port": 8080,
+    "bind": "0.0.0.0",
+    "private_enabled": false,
+    "http_enabled": false
+  }
+}
+```
+
+**Environment Variables:**
+- `XXSQL_PRIVATE_ENABLED` - Enable/disable private protocol server
+- `XXSQL_MYSQL_ENABLED` - Enable/disable MySQL protocol server
+- `XXSQL_HTTP_ENABLED` - Enable/disable HTTP API server
 
 ### Command-Line Options
 
@@ -816,7 +1087,7 @@ SELECT CAST('123' AS INT), CAST(0xdeadbeef AS BLOB);
 - [x] MySQL Protocol
 - [x] Authentication & Permissions
 - [x] Security Features (Audit, Rate Limiting, IP Access, TLS)
-- [x] JOIN Support (INNER, LEFT, RIGHT, CROSS)
+- [x] JOIN Support (INNER, LEFT, RIGHT, CROSS, FULL OUTER)
 - [x] UNION Support
 - [x] DDL Enhancement (Constraints, ALTER TABLE)
 - [x] Backup/Recovery

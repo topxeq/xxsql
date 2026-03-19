@@ -1366,3 +1366,345 @@ func TestJoinUnknownTableAlias(t *testing.T) {
 		t.Error("Expected error for unknown table alias")
 	}
 }
+
+// ============================================================================
+// FULL OUTER JOIN Tests
+// ============================================================================
+
+func TestFullJoinBasic(t *testing.T) {
+	exec, cleanup := setupJoinTest(t)
+	defer cleanup()
+
+	// Create tables with partial overlap
+	_, err := exec.Execute(`
+		CREATE TABLE left_t (id INT PRIMARY KEY, value VARCHAR(50))
+	`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = exec.Execute(`INSERT INTO left_t (id, value) VALUES (1, 'A')`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = exec.Execute(`INSERT INTO left_t (id, value) VALUES (2, 'B')`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = exec.Execute(`INSERT INTO left_t (id, value) VALUES (3, 'C')`)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = exec.Execute(`
+		CREATE TABLE right_t (id INT PRIMARY KEY, data VARCHAR(50))
+	`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = exec.Execute(`INSERT INTO right_t (id, data) VALUES (2, 'Two')`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = exec.Execute(`INSERT INTO right_t (id, data) VALUES (3, 'Three')`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = exec.Execute(`INSERT INTO right_t (id, data) VALUES (4, 'Four')`)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := exec.Execute(`
+		SELECT l.value, r.data
+		FROM left_t l
+		FULL JOIN right_t r ON l.id = r.id
+	`)
+	if err != nil {
+		t.Fatalf("Query failed: %v", err)
+	}
+
+	// Expected rows:
+	// 1. (A, NULL) - left only (id=1)
+	// 2. (B, Two) - matched (id=2)
+	// 3. (C, Three) - matched (id=3)
+	// 4. (NULL, Four) - right only (id=4)
+	if result.RowCount != 4 {
+		t.Errorf("Expected 4 rows, got %d", result.RowCount)
+	}
+}
+
+func TestFullOuterJoinSyntax(t *testing.T) {
+	exec, cleanup := setupJoinTest(t)
+	defer cleanup()
+
+	_, err := exec.Execute(`
+		CREATE TABLE t1 (id INT PRIMARY KEY, val VARCHAR(50))
+	`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = exec.Execute(`INSERT INTO t1 (id, val) VALUES (1, 'A')`)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = exec.Execute(`
+		CREATE TABLE t2 (id INT PRIMARY KEY, data VARCHAR(50))
+	`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = exec.Execute(`INSERT INTO t2 (id, data) VALUES (2, 'B')`)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Test FULL OUTER JOIN syntax (with OUTER keyword)
+	result, err := exec.Execute(`
+		SELECT t1.val, t2.data
+		FROM t1
+		FULL OUTER JOIN t2 ON t1.id = t2.id
+	`)
+	if err != nil {
+		t.Fatalf("Query failed: %v", err)
+	}
+
+	// Both rows should appear with NULL on the other side
+	if result.RowCount != 2 {
+		t.Errorf("Expected 2 rows, got %d", result.RowCount)
+	}
+}
+
+func TestFullJoinAllMatched(t *testing.T) {
+	exec, cleanup := setupJoinTest(t)
+	defer cleanup()
+
+	_, err := exec.Execute(`
+		CREATE TABLE t1 (id INT PRIMARY KEY, val VARCHAR(50))
+	`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = exec.Execute(`INSERT INTO t1 (id, val) VALUES (1, 'A')`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = exec.Execute(`INSERT INTO t1 (id, val) VALUES (2, 'B')`)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = exec.Execute(`
+		CREATE TABLE t2 (id INT PRIMARY KEY, data VARCHAR(50))
+	`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = exec.Execute(`INSERT INTO t2 (id, data) VALUES (1, 'One')`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = exec.Execute(`INSERT INTO t2 (id, data) VALUES (2, 'Two')`)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := exec.Execute(`
+		SELECT t1.val, t2.data
+		FROM t1
+		FULL JOIN t2 ON t1.id = t2.id
+	`)
+	if err != nil {
+		t.Fatalf("Query failed: %v", err)
+	}
+
+	// All rows matched, no NULLs
+	if result.RowCount != 2 {
+		t.Errorf("Expected 2 rows, got %d", result.RowCount)
+	}
+
+	// Verify no NULL values
+	for _, row := range result.Rows {
+		if row[0] == nil || row[1] == nil {
+			t.Error("Expected no NULL values when all rows match")
+		}
+	}
+}
+
+func TestFullJoinWithEmptyLeft(t *testing.T) {
+	exec, cleanup := setupJoinTest(t)
+	defer cleanup()
+
+	_, err := exec.Execute(`
+		CREATE TABLE empty_left (id INT PRIMARY KEY, val VARCHAR(50))
+	`)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = exec.Execute(`
+		CREATE TABLE right_t (id INT PRIMARY KEY, data VARCHAR(50))
+	`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = exec.Execute(`INSERT INTO right_t (id, data) VALUES (1, 'One')`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = exec.Execute(`INSERT INTO right_t (id, data) VALUES (2, 'Two')`)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := exec.Execute(`
+		SELECT el.val, r.data
+		FROM empty_left el
+		FULL JOIN right_t r ON el.id = r.id
+	`)
+	if err != nil {
+		t.Fatalf("Query failed: %v", err)
+	}
+
+	// All right rows should appear with NULL left
+	if result.RowCount != 2 {
+		t.Errorf("Expected 2 rows, got %d", result.RowCount)
+	}
+
+	// Left column should be NULL
+	for _, row := range result.Rows {
+		if row[0] != nil {
+			t.Error("Left column should be NULL when left table is empty")
+		}
+	}
+}
+
+func TestFullJoinWithEmptyRight(t *testing.T) {
+	exec, cleanup := setupJoinTest(t)
+	defer cleanup()
+
+	_, err := exec.Execute(`
+		CREATE TABLE left_t (id INT PRIMARY KEY, val VARCHAR(50))
+	`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = exec.Execute(`INSERT INTO left_t (id, val) VALUES (1, 'One')`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = exec.Execute(`INSERT INTO left_t (id, val) VALUES (2, 'Two')`)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = exec.Execute(`
+		CREATE TABLE empty_right (id INT PRIMARY KEY, data VARCHAR(50))
+	`)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := exec.Execute(`
+		SELECT l.val, er.data
+		FROM left_t l
+		FULL JOIN empty_right er ON l.id = er.id
+	`)
+	if err != nil {
+		t.Fatalf("Query failed: %v", err)
+	}
+
+	// All left rows should appear with NULL right
+	if result.RowCount != 2 {
+		t.Errorf("Expected 2 rows, got %d", result.RowCount)
+	}
+
+	// Right column should be NULL
+	for _, row := range result.Rows {
+		if row[1] != nil {
+			t.Error("Right column should be NULL when right table is empty")
+		}
+	}
+}
+
+func TestFullJoinWithBothEmpty(t *testing.T) {
+	exec, cleanup := setupJoinTest(t)
+	defer cleanup()
+
+	_, err := exec.Execute(`
+		CREATE TABLE empty1 (id INT PRIMARY KEY, val VARCHAR(50))
+	`)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = exec.Execute(`
+		CREATE TABLE empty2 (id INT PRIMARY KEY, data VARCHAR(50))
+	`)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := exec.Execute(`
+		SELECT e1.val, e2.data
+		FROM empty1 e1
+		FULL JOIN empty2 e2 ON e1.id = e2.id
+	`)
+	if err != nil {
+		t.Fatalf("Query failed: %v", err)
+	}
+
+	if result.RowCount != 0 {
+		t.Errorf("Expected 0 rows when both tables are empty, got %d", result.RowCount)
+	}
+}
+
+func TestFullJoinWithWhere(t *testing.T) {
+	exec, cleanup := setupJoinTest(t)
+	defer cleanup()
+
+	_, err := exec.Execute(`
+		CREATE TABLE t1 (id INT PRIMARY KEY, val VARCHAR(50))
+	`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = exec.Execute(`INSERT INTO t1 (id, val) VALUES (1, 'A')`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = exec.Execute(`INSERT INTO t1 (id, val) VALUES (2, 'B')`)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = exec.Execute(`
+		CREATE TABLE t2 (id INT PRIMARY KEY, data VARCHAR(50))
+	`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = exec.Execute(`INSERT INTO t2 (id, data) VALUES (2, 'Two')`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = exec.Execute(`INSERT INTO t2 (id, data) VALUES (3, 'Three')`)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	result, err := exec.Execute(`
+		SELECT t1.val, t2.data
+		FROM t1
+		FULL JOIN t2 ON t1.id = t2.id
+		WHERE t1.val IS NOT NULL
+	`)
+	if err != nil {
+		t.Fatalf("Query failed: %v", err)
+	}
+
+	// Only rows where t1.val is not NULL
+	if result.RowCount != 2 {
+		t.Errorf("Expected 2 rows, got %d", result.RowCount)
+	}
+}
