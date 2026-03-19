@@ -66,14 +66,12 @@ jobs:
           GOOS: ${{ matrix.goos }}
           GOARCH: ${{ matrix.goarch }}
           CGO_ENABLED: 0
-          VERSION: ${{ steps.version.outputs.VERSION }}
-          SHORT_SHA: ${{ steps.version.outputs.SHORT_SHA }}
-          BUILD_TIME: ${{ steps.version.outputs.BUILD_TIME }}
         run: |
           mkdir -p build
           echo "Building xxsqls for $GOOS/$GOARCH..."
-          echo "Version: $VERSION, SHA: $SHORT_SHA, Time: $BUILD_TIME"
-          go build -buildvcs=false -ldflags="-s -w -X main.Version=$VERSION -X main.GitCommit=$SHORT_SHA -X main.BuildTime=$BUILD_TIME" -o build/xxsqls${{ matrix.ext }} ./cmd/xxsqls
+          go version
+          go env GOOS GOARCH
+          go build -v -o build/xxsqls${{ matrix.ext }} ./cmd/xxsqls
 
       - name: Build client
         shell: bash
@@ -81,12 +79,9 @@ jobs:
           GOOS: ${{ matrix.goos }}
           GOARCH: ${{ matrix.goarch }}
           CGO_ENABLED: 0
-          VERSION: ${{ steps.version.outputs.VERSION }}
-          SHORT_SHA: ${{ steps.version.outputs.SHORT_SHA }}
-          BUILD_TIME: ${{ steps.version.outputs.BUILD_TIME }}
         run: |
           echo "Building xxsqlc for $GOOS/$GOARCH..."
-          go build -buildvcs=false -ldflags="-s -w -X main.Version=$VERSION -X main.GitCommit=$SHORT_SHA -X main.BuildTime=$BUILD_TIME" -o build/xxsqlc${{ matrix.ext }} ./cmd/xxsqlc
+          go build -v -o build/xxsqlc${{ matrix.ext }} ./cmd/xxsqlc
 
       - name: Create archive
         shell: bash
