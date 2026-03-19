@@ -1474,6 +1474,8 @@ func (p *Parser) parsePrimaryExpr() Expression {
 		return p.parseCaseExpr()
 	case TokCast:
 		return p.parseCastExpr()
+	case TokExists:
+		return p.parseExistsExpr()
 	// Handle function keywords (COUNT, SUM, AVG, MIN, MAX, COALESCE, NULLIF)
 	case TokCount, TokSum, TokAvg, TokMin, TokMax, TokCoalesce, TokNullIf:
 		return p.parseFunctionKeyword()
@@ -1638,6 +1640,37 @@ func (p *Parser) parseParenExpr() Expression {
 	}
 
 	return &ParenExpr{Expr: expr}
+}
+
+// parseExistsExpr parses an EXISTS expression.
+// EXISTS (SELECT ...)
+func (p *Parser) parseExistsExpr() *ExistsExpr {
+	p.nextToken() // consume EXISTS
+
+	// Expect (
+	if !p.expect(TokLParen) {
+		return nil
+	}
+
+	// Parse the subquery
+	if !p.curTokenIs(TokSelect) {
+		p.error("expected SELECT after EXISTS (")
+		return nil
+	}
+
+	stmt := p.parseSelect()
+	if stmt == nil {
+		return nil
+	}
+
+	// Expect )
+	if !p.expect(TokRParen) {
+		return nil
+	}
+
+	return &ExistsExpr{
+		Subquery: &SubqueryExpr{Select: stmt.(*SelectStmt)},
+	}
 }
 
 // parseCaseExpr parses a CASE expression.

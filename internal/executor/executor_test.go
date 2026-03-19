@@ -862,3 +862,72 @@ func TestExecutorDelete(t *testing.T) {
 		t.Errorf("Expected 2 rows after delete, got %d", result.RowCount)
 	}
 }
+
+func TestExecutor_ExistsSubquery(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "exists_test")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	engine := storage.NewEngine(tmpDir)
+	if err := engine.Open(); err != nil {
+		t.Fatalf("Failed to open engine: %v", err)
+	}
+	defer engine.Close()
+
+	exec := executor.NewExecutor(engine)
+
+	// Create users table
+	_, err = exec.Execute("CREATE TABLE users (id INT, name VARCHAR)")
+	if err != nil {
+		t.Fatalf("CREATE TABLE users failed: %v", err)
+	}
+
+	// Create orders table
+	_, err = exec.Execute("CREATE TABLE orders (id INT, user_id INT, amount INT)")
+	if err != nil {
+		t.Fatalf("CREATE TABLE orders failed: %v", err)
+	}
+
+	// Insert test data
+	exec.Execute("INSERT INTO users (id, name) VALUES (1, 'Alice')")
+	exec.Execute("INSERT INTO users (id, name) VALUES (2, 'Bob')")
+	exec.Execute("INSERT INTO users (id, name) VALUES (3, 'Charlie')")
+
+	exec.Execute("INSERT INTO orders (id, user_id, amount) VALUES (1, 1, 100)")
+	exec.Execute("INSERT INTO orders (id, user_id, amount) VALUES (2, 1, 200)")
+	exec.Execute("INSERT INTO orders (id, user_id, amount) VALUES (3, 2, 150)")
+
+	// Test EXISTS with correlated subquery
+	result, err := exec.Execute("SELECT * FROM users WHERE EXISTS (SELECT 1 FROM orders WHERE orders.user_id = users.id)")
+	if err != nil {
+		t.Fatalf("EXISTS query failed: %v", err)
+	}
+
+	// Should return Alice (id=1) and Bob (id=2) who have orders
+	if len(result.Rows) != 2 {
+		t.Errorf("Expected 2 rows with EXISTS, got %d", len(result.Rows))
+	}
+
+	t.Logf("EXISTS query returned %d rows", len(result.Rows))
+	for i, row := range result.Rows {
+		t.Logf("  Row %d: %v", i, row)
+	}
+
+	// Test NOT EXISTS
+	result2, err := exec.Execute("SELECT * FROM users WHERE NOT EXISTS (SELECT 1 FROM orders WHERE orders.user_id = users.id)")
+	if err != nil {
+		t.Fatalf("NOT EXISTS query failed: %v", err)
+	}
+
+	// Should return Charlie (id=3) who has no orders
+	if len(result2.Rows) != 1 {
+		t.Errorf("Expected 1 row with NOT EXISTS, got %d", len(result2.Rows))
+	}
+
+	t.Logf("NOT EXISTS query returned %d rows", len(result2.Rows))
+	for i, row := range result2.Rows {
+		t.Logf("  Row %d: %v", i, row)
+	}
+}

@@ -80,11 +80,13 @@ type ColumnInfo struct {
 
 // Executor executes SQL queries against the storage engine.
 type Executor struct {
-	engine     *storage.Engine
-	database   string
-	perms      PermissionChecker
-	authMgr    AuthManager
-	udfManager *UDFManager
+	engine        *storage.Engine
+	database      string
+	perms         PermissionChecker
+	authMgr       AuthManager
+	udfManager    *UDFManager
+	outerContext  map[string]interface{} // For correlated subqueries
+	currentTable  string                 // Current table being queried (for outer context)
 }
 
 // AuthManager interface for auth operations.
@@ -289,6 +291,11 @@ func (e *Executor) executeSelect(stmt *sql.SelectStmt) (*Result, error) {
 	if tableName == "" {
 		return nil, fmt.Errorf("table name is required")
 	}
+
+	// Set current table for correlated subqueries
+	oldTable := e.currentTable
+	e.currentTable = strings.ToLower(tableName)
+	defer func() { e.currentTable = oldTable }()
 
 	// Get the table
 	tbl, err := e.engine.GetTable(tableName)
@@ -1506,6 +1513,42 @@ func (e *Executor) evaluateWhereForRow(expr sql.Expression, r *row.Row, columns 
 		}
 		return ex.Not, nil
 
+	case *sql.ExistsExpr:
+		// Build outer context from the current row for correlated subqueries
+		outerCtx := make(map[string]interface{})
+		tablePrefix := ""
+		if e.currentTable != "" {
+			tablePrefix = e.currentTable + "."
+		}
+		for i, col := range columns {
+			if i < len(r.Values) {
+				val := e.valueToInterface(r.Values[i])
+				colName := strings.ToLower(col.Name)
+				// Store without table prefix
+				outerCtx[colName] = val
+				// Store with table prefix (e.g., users.id)
+				if tablePrefix != "" {
+					outerCtx[tablePrefix+colName] = val
+				}
+			}
+		}
+
+		// Save current outer context and set new one
+		oldOuterCtx := e.outerContext
+		e.outerContext = outerCtx
+
+		// Execute the subquery
+		result, err := e.executeStatement(ex.Subquery.Select)
+
+		// Restore old outer context
+		e.outerContext = oldOuterCtx
+
+		if err != nil {
+			return false, err
+		}
+		// EXISTS returns true if the subquery returns any rows
+		return len(result.Rows) > 0, nil
+
 	case *sql.Literal:
 		if ex.Type == sql.LiteralBool {
 			if b, ok := ex.Value.(bool); ok {
@@ -1525,8 +1568,36 @@ func (e *Executor) evaluateExprForRow(expr sql.Expression, r *row.Row, columns [
 
 	case *sql.ColumnRef:
 		colName := strings.ToLower(ex.Name)
+
+		// If column has a table prefix, check if it matches the current table
+		if ex.Table != "" {
+			tableName := strings.ToLower(ex.Table)
+			// Check if the table prefix matches the current table
+			if e.currentTable != "" && tableName != e.currentTable {
+				// Column is from a different table - check outer context
+				if e.outerContext != nil {
+					qualifiedName := tableName + "." + colName
+					if val, ok := e.outerContext[qualifiedName]; ok {
+						return val, nil
+					}
+					// Also try without table prefix
+					if val, ok := e.outerContext[colName]; ok {
+						return val, nil
+					}
+				}
+				return nil, fmt.Errorf("unknown column: %s.%s", ex.Table, ex.Name)
+			}
+			// Table prefix matches current table, look up the column
+		}
+
 		idx, ok := colIdxMap[colName]
 		if !ok {
+			// Check outer context for correlated subqueries
+			if e.outerContext != nil {
+				if val, ok := e.outerContext[colName]; ok {
+					return val, nil
+				}
+			}
 			return nil, fmt.Errorf("unknown column: %s", ex.Name)
 		}
 		if idx < len(r.Values) {
@@ -2437,6 +2508,42 @@ func (e *Executor) evaluateWhere(expr sql.Expression, r *row.Row, columnMap map[
 		}
 		return ex.Not, nil
 
+	case *sql.ExistsExpr:
+		// Build outer context from the current row for correlated subqueries
+		outerCtx := make(map[string]interface{})
+		tablePrefix := ""
+		if e.currentTable != "" {
+			tablePrefix = e.currentTable + "."
+		}
+		for i, col := range columnOrder {
+			if i < len(r.Values) {
+				val := e.valueToInterface(r.Values[i])
+				colName := strings.ToLower(col.Name)
+				// Store without table prefix
+				outerCtx[colName] = val
+				// Store with table prefix (e.g., users.id)
+				if tablePrefix != "" {
+					outerCtx[tablePrefix+colName] = val
+				}
+			}
+		}
+
+		// Save current outer context and set new one
+		oldOuterCtx := e.outerContext
+		e.outerContext = outerCtx
+
+		// Execute the subquery
+		result, err := e.executeStatement(ex.Subquery.Select)
+
+		// Restore old outer context
+		e.outerContext = oldOuterCtx
+
+		if err != nil {
+			return false, err
+		}
+		// EXISTS returns true if the subquery returns any rows
+		return len(result.Rows) > 0, nil
+
 	case *sql.Literal:
 		if ex.Type == sql.LiteralBool {
 			if b, ok := ex.Value.(bool); ok {
@@ -2467,8 +2574,36 @@ func (e *Executor) evaluateExpression(expr sql.Expression, r *row.Row, columnMap
 
 	case *sql.ColumnRef:
 		colName := strings.ToLower(ex.Name)
+
+		// If column has a table prefix, check if it matches the current table
+		if ex.Table != "" {
+			tableName := strings.ToLower(ex.Table)
+			// Check if the table prefix matches the current table
+			if e.currentTable != "" && tableName != e.currentTable {
+				// Column is from a different table - check outer context
+				if e.outerContext != nil {
+					qualifiedName := tableName + "." + colName
+					if val, ok := e.outerContext[qualifiedName]; ok {
+						return val, nil
+					}
+					// Also try without table prefix
+					if val, ok := e.outerContext[colName]; ok {
+						return val, nil
+					}
+				}
+				return nil, fmt.Errorf("unknown column: %s.%s", ex.Table, ex.Name)
+			}
+			// Table prefix matches current table, look up the column
+		}
+
 		colInfo, ok := columnMap[colName]
 		if !ok {
+			// Check outer context for correlated subqueries
+			if e.outerContext != nil {
+				if val, ok := e.outerContext[colName]; ok {
+					return val, nil
+				}
+			}
 			return nil, fmt.Errorf("unknown column: %s", ex.Name)
 		}
 		// Find column index

@@ -1047,6 +1047,21 @@ func (e *SubqueryExpr) String() string {
 	return fmt.Sprintf("(%s)", e.Select.String())
 }
 
+// ExistsExpr represents an EXISTS subquery expression.
+type ExistsExpr struct {
+	Subquery *SubqueryExpr
+	Not      bool // true for NOT EXISTS
+}
+
+func (e *ExistsExpr) node()       {}
+func (e *ExistsExpr) expression() {}
+func (e *ExistsExpr) String() string {
+	if e.Not {
+		return fmt.Sprintf("NOT EXISTS %s", e.Subquery.String())
+	}
+	return fmt.Sprintf("EXISTS %s", e.Subquery.String())
+}
+
 // CastExpr represents a CAST expression.
 type CastExpr struct {
 	Expr Expression
