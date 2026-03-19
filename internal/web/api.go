@@ -504,3 +504,172 @@ func readLastLines(path string, n int) ([]string, error) {
 
 	return lines, scanner.Err()
 }
+
+// ============================================================================
+// API Key Management
+// ============================================================================
+
+// handleAPIKeys handles GET /api/keys and POST /api/keys.
+func (s *Server) handleAPIKeys(w http.ResponseWriter, r *http.Request) {
+	if s.apiKeyManager == nil {
+		writeError(w, http.StatusServiceUnavailable, "API key management not available")
+		return
+	}
+
+	switch r.Method {
+	case http.MethodGet:
+		// List API keys for current user (or all for admin)
+		username := getUsername(r.Context())
+		var keys []*auth.APIKey
+
+		// Check if admin
+		user, err := s.auth.GetUser(username)
+		if err == nil && user.Role == auth.RoleAdmin {
+			keys = s.apiKeyManager.ListAllKeys()
+		} else {
+			keys = s.apiKeyManager.ListKeys(username)
+		}
+
+		// Sanitize - don't expose key hashes
+		result := make([]map[string]interface{}, len(keys))
+		for i, k := range keys {
+			result[i] = map[string]interface{}{
+				"id":           k.ID,
+				"name":         k.Name,
+				"username":     k.Username,
+				"permissions":  k.Permissions,
+				"created_at":   k.CreatedAt,
+				"expires_at":   k.ExpiresAt,
+				"last_used_at": k.LastUsedAt,
+				"enabled":      k.Enabled,
+			}
+		}
+
+		writeJSON(w, http.StatusOK, map[string]interface{}{"keys": result})
+
+	case http.MethodPost:
+		// Create new API key
+		var req struct {
+			Name        string `json:"name"`
+			ExpiresIn   int64  `json:"expires_in"`  // seconds, 0 = no expiration
+			Permissions uint32 `json:"permissions"` // permission bits
+		}
+		if err := readJSON(r, &req); err != nil {
+			writeError(w, http.StatusBadRequest, "invalid request")
+			return
+		}
+
+		if req.Name == "" {
+			req.Name = "API Key"
+		}
+
+		username := getUsername(r.Context())
+		perms := auth.Permission(req.Permissions)
+		if perms == 0 {
+			// Default to user's role permissions
+			user, err := s.auth.GetUser(username)
+			if err != nil {
+				writeError(w, http.StatusInternalServerError, "user not found")
+				return
+			}
+			perms = auth.RolePermissions[user.Role]
+		}
+
+		var expiresIn time.Duration
+		if req.ExpiresIn > 0 {
+			expiresIn = time.Duration(req.ExpiresIn) * time.Second
+		}
+
+		fullKey, key, err := s.apiKeyManager.GenerateKey(req.Name, username, perms, expiresIn)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+
+		writeJSON(w, http.StatusOK, map[string]interface{}{
+			"message":      "API key created",
+			"id":           key.ID,
+			"name":         key.Name,
+			"key":          fullKey, // Only shown once!
+			"permissions":  key.Permissions,
+			"created_at":   key.CreatedAt,
+			"expires_at":   key.ExpiresAt,
+			"_warning":     "Store this key securely. It will not be shown again.",
+		})
+
+	default:
+		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+	}
+}
+
+// handleAPIKeyDetail handles /api/keys/{id}.
+func (s *Server) handleAPIKeyDetail(w http.ResponseWriter, r *http.Request) {
+	if s.apiKeyManager == nil {
+		writeError(w, http.StatusServiceUnavailable, "API key management not available")
+		return
+	}
+
+	keyID := strings.TrimPrefix(r.URL.Path, "/api/keys/")
+	if keyID == "" {
+		writeError(w, http.StatusBadRequest, "key ID required")
+		return
+	}
+
+	key, err := s.apiKeyManager.GetKey(keyID)
+	if err != nil {
+		writeError(w, http.StatusNotFound, "API key not found")
+		return
+	}
+
+	// Check permission - user can only manage their own keys (unless admin)
+	username := getUsername(r.Context())
+	user, err := s.auth.GetUser(username)
+	isAdmin := err == nil && user.Role == auth.RoleAdmin
+
+	if key.Username != username && !isAdmin {
+		writeError(w, http.StatusForbidden, "access denied")
+		return
+	}
+
+	switch r.Method {
+	case http.MethodGet:
+		writeJSON(w, http.StatusOK, map[string]interface{}{
+			"id":           key.ID,
+			"name":         key.Name,
+			"username":     key.Username,
+			"permissions":  key.Permissions,
+			"created_at":   key.CreatedAt,
+			"expires_at":   key.ExpiresAt,
+			"last_used_at": key.LastUsedAt,
+			"enabled":      key.Enabled,
+		})
+
+	case http.MethodPut:
+		var req struct {
+			Enabled *bool `json:"enabled"`
+		}
+		if err := readJSON(r, &req); err != nil {
+			writeError(w, http.StatusBadRequest, "invalid request")
+			return
+		}
+
+		if req.Enabled != nil {
+			if err := s.apiKeyManager.EnableKey(keyID, *req.Enabled); err != nil {
+				writeError(w, http.StatusInternalServerError, err.Error())
+				return
+			}
+		}
+
+		writeJSON(w, http.StatusOK, map[string]string{"message": "API key updated"})
+
+	case http.MethodDelete:
+		if err := s.apiKeyManager.RevokeKey(keyID); err != nil {
+			writeError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]string{"message": "API key revoked"})
+
+	default:
+		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+	}
+}

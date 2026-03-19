@@ -25,14 +25,15 @@ var assets embed.FS
 
 // Server represents the web management server.
 type Server struct {
-	config     *config.Config
-	engine     *storage.Engine
-	auth       *auth.Manager
-	backup     *backup.Manager
-	server     *http.Server
-	templates  *template.Template
-	sessions   map[string]*Session
-	startTime  time.Time
+	config        *config.Config
+	engine        *storage.Engine
+	auth          *auth.Manager
+	apiKeyManager *auth.APIKeyManager
+	backup        *backup.Manager
+	server        *http.Server
+	templates     *template.Template
+	sessions      map[string]*Session
+	startTime     time.Time
 }
 
 // Session represents a web session.
@@ -45,13 +46,22 @@ type Session struct {
 
 // NewServer creates a new web management server.
 func NewServer(cfg *config.Config, engine *storage.Engine, authMgr *auth.Manager, backupMgr *backup.Manager) *Server {
+	var apiKeyMgr *auth.APIKeyManager
+	if cfg.Server.DataDir != "" {
+		apiKeyMgr = auth.NewAPIKeyManager(cfg.Server.DataDir)
+		if err := apiKeyMgr.Load(); err != nil {
+			fmt.Printf("[WEB] Warning: failed to load API keys: %v\n", err)
+		}
+	}
+
 	return &Server{
-		config:    cfg,
-		engine:    engine,
-		auth:      authMgr,
-		backup:    backupMgr,
-		sessions:  make(map[string]*Session),
-		startTime: time.Now(),
+		config:        cfg,
+		engine:        engine,
+		auth:          authMgr,
+		apiKeyManager: apiKeyMgr,
+		backup:        backupMgr,
+		sessions:      make(map[string]*Session),
+		startTime:     time.Now(),
 	}
 }
 
@@ -97,6 +107,8 @@ func (s *Server) Start() error {
 	mux.HandleFunc("/api/config", s.handleAPIConfig)
 	mux.HandleFunc("/api/login", s.handleAPILogin)
 	mux.HandleFunc("/api/logout", s.handleAPILogout)
+	mux.HandleFunc("/api/keys", s.handleAPIKeys)
+	mux.HandleFunc("/api/keys/", s.handleAPIKeyDetail)
 
 	// Create server
 	addr := fmt.Sprintf("%s:%d", s.config.Network.Bind, s.config.Network.HTTPPort)
@@ -230,15 +242,97 @@ func (s *Server) authMiddleware(next http.Handler) http.Handler {
 			return
 		}
 
-		// Check session
+		// For API routes, check either session or API key
+		if strings.HasPrefix(r.URL.Path, "/api/") {
+			// First, try session authentication
+			session := s.getSession(r)
+			if session != nil {
+				// Set username in context for session
+				r = r.WithContext(setUsername(r.Context(), session.Username))
+				next.ServeHTTP(w, r)
+				return
+			}
+
+			// Try API key authentication
+			if s.authenticateAPIKey(w, r, next) {
+				return
+			}
+
+			// No valid authentication
+			writeError(w, http.StatusUnauthorized, "authentication required")
+			return
+		}
+
+		// For non-API routes, check session only
 		session := s.getSession(r)
-		if session == nil && !strings.HasPrefix(r.URL.Path, "/api/") {
+		if session == nil {
 			http.Redirect(w, r, "/login", http.StatusFound)
 			return
 		}
 
+		r = r.WithContext(setUsername(r.Context(), session.Username))
 		next.ServeHTTP(w, r)
 	})
+}
+
+// authenticateAPIKey authenticates using API key header.
+func (s *Server) authenticateAPIKey(w http.ResponseWriter, r *http.Request, next http.Handler) bool {
+	if s.apiKeyManager == nil {
+		return false
+	}
+
+	// Check X-API-Key header
+	apiKey := r.Header.Get("X-API-Key")
+	if apiKey == "" {
+		return false
+	}
+
+	// Validate key
+	key, err := s.apiKeyManager.ValidateKey(apiKey)
+	if err != nil {
+		return false
+	}
+
+	// Set username in context
+	r = r.WithContext(setUsername(r.Context(), key.Username))
+	r = r.WithContext(setAPIKey(r.Context(), key))
+
+	next.ServeHTTP(w, r)
+	return true
+}
+
+// contextKey type for context keys.
+type contextKey string
+
+const (
+	usernameKey contextKey = "username"
+	apiKeyKey   contextKey = "apiKey"
+)
+
+// setUsername sets username in context.
+func setUsername(ctx context.Context, username string) context.Context {
+	return context.WithValue(ctx, usernameKey, username)
+}
+
+// getUsername gets username from context.
+func getUsername(ctx context.Context) string {
+	if v := ctx.Value(usernameKey); v != nil {
+		return v.(string)
+	}
+	return ""
+}
+
+// setAPIKey sets API key in context.
+func setAPIKey(ctx context.Context, key *auth.APIKey) context.Context {
+	return context.WithValue(ctx, apiKeyKey, key)
+}
+
+// getAPIKey gets API key from context.
+func getAPIKey(ctx context.Context) *auth.APIKey {
+	if v := ctx.Value(apiKeyKey); v != nil {
+		return v.(*auth.APIKey)
+	}
+	return nil
 }
 
 // responseWriter wraps http.ResponseWriter to capture status code.

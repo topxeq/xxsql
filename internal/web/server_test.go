@@ -832,7 +832,7 @@ func TestAuthMiddleware(t *testing.T) {
 		{"/login", true},
 		{"/api/login", true},
 		{"/query", false},
-		{"/api/status", true},
+		{"/api/status", false}, // API endpoints now require authentication
 	}
 
 	for _, tt := range tests {
@@ -1158,5 +1158,266 @@ func TestHandleAPIRestore_FileNotFound(t *testing.T) {
 	// Should fail because file doesn't exist
 	if w.Code != http.StatusInternalServerError && w.Code != http.StatusBadRequest {
 		t.Errorf("Status: got %d, want error status", w.Code)
+	}
+}
+
+// ============================================================================
+// API Key Authentication Tests
+// ============================================================================
+
+func TestAPIKeyAuthentication(t *testing.T) {
+	server, _ := setupTestServer(t)
+
+	// Generate an API key
+	fullKey, _, err := server.apiKeyManager.GenerateKey("test-key", "admin", auth.PermSelect|auth.PermInsert, 0)
+	if err != nil {
+		t.Fatalf("Failed to generate API key: %v", err)
+	}
+
+	// Test API call with API key
+	req := httptest.NewRequest(http.MethodGet, "/api/status", nil)
+	req.Header.Set("X-API-Key", fullKey)
+	w := httptest.NewRecorder()
+
+	server.handleAPIStatus(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("Status: got %d, want %d", w.Code, http.StatusOK)
+	}
+}
+
+func TestAPIKeyAuthentication_InvalidKey(t *testing.T) {
+	server, _ := setupTestServer(t)
+
+	// Test with invalid API key
+	req := httptest.NewRequest(http.MethodGet, "/api/tables", nil)
+	req.Header.Set("X-API-Key", "xxsql_invalid_key")
+	w := httptest.NewRecorder()
+
+	// Use the middleware
+	handler := server.authMiddleware(http.HandlerFunc(server.handleAPITables))
+	handler.ServeHTTP(w, req)
+
+	if w.Code != http.StatusUnauthorized {
+		t.Errorf("Status: got %d, want %d", w.Code, http.StatusUnauthorized)
+	}
+}
+
+func TestAPIKeyAuthentication_DisabledKey(t *testing.T) {
+	server, _ := setupTestServer(t)
+
+	// Generate and disable key
+	fullKey, key, _ := server.apiKeyManager.GenerateKey("disabled-key", "admin", auth.PermSelect, 0)
+	server.apiKeyManager.EnableKey(key.ID, false)
+
+	// Try to use disabled key
+	req := httptest.NewRequest(http.MethodGet, "/api/tables", nil)
+	req.Header.Set("X-API-Key", fullKey)
+	w := httptest.NewRecorder()
+
+	handler := server.authMiddleware(http.HandlerFunc(server.handleAPITables))
+	handler.ServeHTTP(w, req)
+
+	if w.Code != http.StatusUnauthorized {
+		t.Errorf("Status: got %d, want %d", w.Code, http.StatusUnauthorized)
+	}
+}
+
+func TestHandleAPIKeys_Create(t *testing.T) {
+	server, _ := setupTestServer(t)
+
+	// First, login to get session
+	loginBody, _ := json.Marshal(map[string]string{
+		"username": "admin",
+		"password": "admin",
+	})
+	loginReq := httptest.NewRequest(http.MethodPost, "/api/login", bytes.NewBuffer(loginBody))
+	loginReq.Header.Set("Content-Type", "application/json")
+	loginW := httptest.NewRecorder()
+	server.handleAPILogin(loginW, loginReq)
+
+	// Create API key
+	body, _ := json.Marshal(map[string]interface{}{
+		"name":        "test-key",
+		"expires_in":  0,
+		"permissions": 0,
+	})
+	req := httptest.NewRequest(http.MethodPost, "/api/keys", bytes.NewBuffer(body))
+	req.Header.Set("Content-Type", "application/json")
+
+	// Set session cookie
+	for _, cookie := range loginW.Result().Cookies() {
+		req.AddCookie(cookie)
+	}
+
+	w := httptest.NewRecorder()
+
+	// Use middleware
+	handler := server.authMiddleware(http.HandlerFunc(server.handleAPIKeys))
+	handler.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("Status: got %d, want %d, body: %s", w.Code, http.StatusOK, w.Body.String())
+	}
+
+	var result map[string]interface{}
+	json.Unmarshal(w.Body.Bytes(), &result)
+
+	if result["key"] == nil {
+		t.Error("Response should contain the generated key")
+	}
+}
+
+func TestHandleAPIKeys_List(t *testing.T) {
+	server, _ := setupTestServer(t)
+
+	// Generate some keys
+	server.apiKeyManager.GenerateKey("key1", "admin", auth.PermSelect, 0)
+	server.apiKeyManager.GenerateKey("key2", "admin", auth.PermInsert, 0)
+
+	// Login
+	loginBody, _ := json.Marshal(map[string]string{
+		"username": "admin",
+		"password": "admin",
+	})
+	loginReq := httptest.NewRequest(http.MethodPost, "/api/login", bytes.NewBuffer(loginBody))
+	loginReq.Header.Set("Content-Type", "application/json")
+	loginW := httptest.NewRecorder()
+	server.handleAPILogin(loginW, loginReq)
+
+	// List keys
+	req := httptest.NewRequest(http.MethodGet, "/api/keys", nil)
+	for _, cookie := range loginW.Result().Cookies() {
+		req.AddCookie(cookie)
+	}
+	w := httptest.NewRecorder()
+
+	// Use middleware
+	handler := server.authMiddleware(http.HandlerFunc(server.handleAPIKeys))
+	handler.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("Status: got %d, want %d", w.Code, http.StatusOK)
+	}
+
+	var result map[string]interface{}
+	json.Unmarshal(w.Body.Bytes(), &result)
+
+	keys, ok := result["keys"].([]interface{})
+	if !ok {
+		t.Fatal("keys should be an array")
+	}
+	if len(keys) < 2 {
+		t.Errorf("Should have at least 2 keys, got %d", len(keys))
+	}
+}
+
+func TestHandleAPIKeyDetail_Get(t *testing.T) {
+	server, _ := setupTestServer(t)
+
+	// Generate key
+	_, key, _ := server.apiKeyManager.GenerateKey("test-key", "admin", auth.PermSelect, 0)
+
+	// Login
+	loginBody, _ := json.Marshal(map[string]string{
+		"username": "admin",
+		"password": "admin",
+	})
+	loginReq := httptest.NewRequest(http.MethodPost, "/api/login", bytes.NewBuffer(loginBody))
+	loginReq.Header.Set("Content-Type", "application/json")
+	loginW := httptest.NewRecorder()
+	server.handleAPILogin(loginW, loginReq)
+
+	// Get key detail
+	req := httptest.NewRequest(http.MethodGet, "/api/keys/"+key.ID, nil)
+	for _, cookie := range loginW.Result().Cookies() {
+		req.AddCookie(cookie)
+	}
+	w := httptest.NewRecorder()
+
+	// Use middleware
+	handler := server.authMiddleware(http.HandlerFunc(server.handleAPIKeyDetail))
+	handler.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("Status: got %d, want %d", w.Code, http.StatusOK)
+	}
+}
+
+func TestHandleAPIKeyDetail_Delete(t *testing.T) {
+	server, _ := setupTestServer(t)
+
+	// Generate key
+	_, key, _ := server.apiKeyManager.GenerateKey("test-key", "admin", auth.PermSelect, 0)
+
+	// Login
+	loginBody, _ := json.Marshal(map[string]string{
+		"username": "admin",
+		"password": "admin",
+	})
+	loginReq := httptest.NewRequest(http.MethodPost, "/api/login", bytes.NewBuffer(loginBody))
+	loginReq.Header.Set("Content-Type", "application/json")
+	loginW := httptest.NewRecorder()
+	server.handleAPILogin(loginW, loginReq)
+
+	// Delete key
+	req := httptest.NewRequest(http.MethodDelete, "/api/keys/"+key.ID, nil)
+	for _, cookie := range loginW.Result().Cookies() {
+		req.AddCookie(cookie)
+	}
+	w := httptest.NewRecorder()
+
+	// Use middleware
+	handler := server.authMiddleware(http.HandlerFunc(server.handleAPIKeyDetail))
+	handler.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("Status: got %d, want %d", w.Code, http.StatusOK)
+	}
+
+	// Verify key is deleted
+	_, err := server.apiKeyManager.GetKey(key.ID)
+	if err == nil {
+		t.Error("Key should be deleted")
+	}
+}
+
+func TestHandleAPIKeyDetail_EnableDisable(t *testing.T) {
+	server, _ := setupTestServer(t)
+
+	// Generate key
+	_, key, _ := server.apiKeyManager.GenerateKey("test-key", "admin", auth.PermSelect, 0)
+
+	// Login
+	loginBody, _ := json.Marshal(map[string]string{
+		"username": "admin",
+		"password": "admin",
+	})
+	loginReq := httptest.NewRequest(http.MethodPost, "/api/login", bytes.NewBuffer(loginBody))
+	loginReq.Header.Set("Content-Type", "application/json")
+	loginW := httptest.NewRecorder()
+	server.handleAPILogin(loginW, loginReq)
+
+	// Disable key
+	body, _ := json.Marshal(map[string]bool{"enabled": false})
+	req := httptest.NewRequest(http.MethodPut, "/api/keys/"+key.ID, bytes.NewBuffer(body))
+	req.Header.Set("Content-Type", "application/json")
+	for _, cookie := range loginW.Result().Cookies() {
+		req.AddCookie(cookie)
+	}
+	w := httptest.NewRecorder()
+
+	// Use middleware
+	handler := server.authMiddleware(http.HandlerFunc(server.handleAPIKeyDetail))
+	handler.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("Status: got %d, want %d", w.Code, http.StatusOK)
+	}
+
+	// Verify key is disabled
+	updatedKey, _ := server.apiKeyManager.GetKey(key.ID)
+	if updatedKey.Enabled {
+		t.Error("Key should be disabled")
 	}
 }

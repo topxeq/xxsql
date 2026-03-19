@@ -544,7 +544,11 @@ XxSql provides a comprehensive RESTful API for programmatic access. The API runs
 
 ### Authentication
 
-API requests require session-based authentication. First login to obtain a session cookie:
+API requests require authentication. Two methods are supported:
+
+#### Session Authentication (Cookie-based)
+
+For web interface and interactive use:
 
 ```bash
 # Login and save session cookie
@@ -555,6 +559,24 @@ curl -c cookies.txt -X POST http://localhost:8080/api/login \
 # Use session for subsequent requests
 curl -b cookies.txt http://localhost:8080/api/tables
 ```
+
+#### API Key Authentication (Header-based)
+
+For programmatic access and scripts:
+
+```bash
+# Use API key in header
+curl -H "X-API-Key: xxsql_ak_xxx..." http://localhost:8080/api/query \
+  -H "Content-Type: application/json" \
+  -d '{"sql": "SELECT * FROM users"}'
+```
+
+**API Key Features:**
+- Stateless authentication (no session management needed)
+- Scoped permissions (can limit what operations the key can perform)
+- Optional expiration time
+- Can be enabled/disabled or revoked
+- Key is shown only once when created - store securely!
 
 ### API Endpoints
 
@@ -623,6 +645,60 @@ curl -b cookies.txt "http://localhost:8080/api/api/tables/users/data?page=2"
   "password": "securepassword",
   "role": "user"
 }
+```
+
+#### API Key Management
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/api/keys` | List API keys (user's own, or all for admin) |
+| POST | `/api/keys` | Create new API key |
+| GET | `/api/keys/{id}` | Get API key details |
+| PUT | `/api/keys/{id}` | Update API key (enable/disable) |
+| DELETE | `/api/keys/{id}` | Revoke API key |
+
+**Create API Key Request:**
+```json
+{
+  "name": "my-app-key",
+  "expires_in": 0,
+  "permissions": 0
+}
+```
+
+- `name` - Human-readable name for the key
+- `expires_in` - Expiration time in seconds (0 = no expiration)
+- `permissions` - Permission bits (0 = use user's role permissions)
+
+**Create API Key Response:**
+```json
+{
+  "message": "API key created",
+  "id": "ak_abc12345",
+  "name": "my-app-key",
+  "key": "xxsql_ak_abc12345_def67890...",
+  "_warning": "Store this key securely. It will not be shown again."
+}
+```
+
+**Using API Key:**
+```bash
+# Create a new API key (using session auth)
+curl -b cookies.txt -X POST http://localhost:8080/api/keys \
+  -H "Content-Type: application/json" \
+  -d '{"name": "script-key"}'
+
+# Use the API key for requests
+curl -H "X-API-Key: xxsql_ak_xxx..." \
+  http://localhost:8080/api/query \
+  -H "Content-Type: application/json" \
+  -d '{"sql": "SELECT * FROM users"}'
+
+# List your API keys
+curl -b cookies.txt http://localhost:8080/api/keys
+
+# Revoke an API key
+curl -b cookies.txt -X DELETE http://localhost:8080/api/keys/ak_abc12345
 ```
 
 #### Backup & Restore
