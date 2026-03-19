@@ -35,7 +35,7 @@ data/
 *.log
 *.log.*
 *.gz
-backup/
+/backup/
 
 # Test coverage
 coverage.out
