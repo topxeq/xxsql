@@ -89,6 +89,26 @@ Then XxSql might be the right choice.
 
 ### Installation
 
+### Download Pre-built Binaries
+
+Download from [GitHub Releases](https://github.com/topxeq/xxsql/releases):
+
+| Platform | Architecture | Download |
+|----------|-------------|----------|
+| Linux | amd64 | `xxsql-vX.X.X-linux-amd64.tar.gz` |
+| Linux | arm64 | `xxsql-vX.X.X-linux-arm64.tar.gz` |
+| macOS | amd64 (Intel) | `xxsql-vX.X.X-darwin-amd64.tar.gz` |
+| macOS | arm64 (Apple Silicon) | `xxsql-vX.X.X-darwin-arm64.tar.gz` |
+| Windows | amd64 | `xxsql-vX.X.X-windows-amd64.zip` |
+
+```bash
+# Linux/macOS example
+tar -xzf xxsql-v0.0.4-linux-amd64.tar.gz
+./xxsqls -data-dir ./data
+```
+
+### Build from Source
+
 ```bash
 # Clone the repository
 git clone https://github.com/topxeq/xxsql.git
@@ -627,7 +647,15 @@ See [docs/TESTING.md](docs/TESTING.md) for testing guidelines.
 
 ## Roadmap
 
-### v0.0.1 (Current Release) ✅
+### v0.0.4 (Current Release) ✅
+
+- [x] All v0.0.1 features
+- [x] Enhanced Go SQL Driver with DSN parsing
+- [x] Multi-platform binary releases (Linux, macOS, Windows)
+- [x] Automated GitHub Actions release workflow
+- [x] Improved SQL executor
+
+### v0.0.1 ✅
 
 - [x] Basic framework + Config + Logging
 - [x] SQL Parser
@@ -655,6 +683,8 @@ See [docs/TESTING.md](docs/TESTING.md) for testing guidelines.
 - [ ] Connection pooling improvements
 - [ ] More SQL functions
 - [ ] Performance benchmarks
+- [ ] Subquery optimization
+- [ ] Transaction isolation levels
 
 ## Contributing
 
