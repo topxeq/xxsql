@@ -10,7 +10,6 @@ jobs:
   test:
     name: Test
     runs-on: ubuntu-latest
-
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -19,18 +18,6 @@ jobs:
         uses: actions/setup-go@v5
         with:
           go-version: '1.22'
-          cache: false
-
-      - name: Debug
-        run: |
-          echo "=== pwd ==="
-          pwd
-          echo "=== ls -la ==="
-          ls -la
-          echo "=== go.mod ==="
-          cat go.mod
-          echo "=== internal directories ==="
-          ls -la internal/ || true
 
       - name: Run tests
         run: go test ./... -v -race -count=1
@@ -38,7 +25,6 @@ jobs:
   build:
     name: Build
     runs-on: ubuntu-latest
-
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -47,7 +33,6 @@ jobs:
         uses: actions/setup-go@v5
         with:
           go-version: '1.22'
-          cache: false
 
       - name: Build server
         run: go build -v -o bin/xxsqls ./cmd/xxsqls
