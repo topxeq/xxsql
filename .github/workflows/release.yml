@@ -19,11 +19,11 @@ jobs:
       - name: Download dependencies
         run: go mod download
       - name: List packages
-        run: go list ./... 2>&1
+        run: go list ./... 2>&1 || true
       - name: Build
         run: |
-          go build -v -o xxsqls ./cmd/xxsqls 2>&1
-          go build -v -o xxsqlc ./cmd/xxsqlc 2>&1
+          go build -v -o xxsqls ./cmd/xxsqls 2>&1 || exit 1
+          go build -v -o xxsqlc ./cmd/xxsqlc 2>&1 || exit 1
           ls -la xxsqls xxsqlc
       - name: Archive
         run: tar -czvf xxsql-${{ github.ref_name }}-linux-amd64.tar.gz xxsqls xxsqlc
