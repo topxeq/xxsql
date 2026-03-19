@@ -23,12 +23,28 @@ jobs:
         with:
           go-version: '1.22'
 
+      - name: Verify Go
+        run: |
+          echo "=== Go location ==="
+          which go
+          echo "=== Go version ==="
+          go version
+          echo "=== Go env ==="
+          go env
+
+      - name: List files
+        run: |
+          echo "=== Files ==="
+          ls -la
+          echo "=== cmd/xxsqls ==="
+          ls -la cmd/xxsqls || echo "cmd/xxsqls not found"
+
       - name: Build
         run: |
           echo "=== Building xxsqls ==="
-          go build -v -o xxsqls ./cmd/xxsqls 2>&1 || exit 1
+          go build -v -o xxsqls ./cmd/xxsqls 2>&1
           echo "=== Building xxsqlc ==="
-          go build -v -o xxsqlc ./cmd/xxsqlc 2>&1 || exit 1
+          go build -v -o xxsqlc ./cmd/xxsqlc 2>&1
           ls -la xxsqls xxsqlc
 
       - name: Create archive
