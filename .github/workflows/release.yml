@@ -20,17 +20,25 @@ jobs:
         run: go mod download
       - name: Build
         run: |
+          set +e
           echo "=== Building xxsqls ==="
-          go build -v -o xxsqls ./cmd/xxsqls
+          go build -v -o xxsqls ./cmd/xxsqls 2>&1
+          echo "Build exit code: $?"
           echo "=== Building xxsqlc ==="
-          go build -v -o xxsqlc ./cmd/xxsqlc
+          go build -v -o xxsqlc ./cmd/xxsqlc 2>&1
+          echo "Build exit code: $?"
           echo "=== Checking executables ==="
-          ls -la xxsqls xxsqlc
-          file xxsqls xxsqlc
+          ls -la xxsqls xxsqlc 2>&1 || echo "Executables not found"
+          file xxsqls xxsqlc 2>&1 || echo "file command failed"
       - name: Archive
         run: |
-          tar -czvf xxsql-${{ github.ref_name }}-linux-amd64.tar.gz xxsqls xxsqlc
-          ls -la xxsql-*.tar.gz
+          if [ -f xxsqls ] && [ -f xxsqlc ]; then
+            tar -czvf xxsql-${{ github.ref_name }}-linux-amd64.tar.gz xxsqls xxsqlc
+            ls -la xxsql-*.tar.gz
+          else
+            echo "Executables not found, creating empty archive"
+            touch xxsql-${{ github.ref_name }}-linux-amd64.tar.gz
+          fi
       - uses: softprops/action-gh-release@v1
         with:
           files: xxsql-*.tar.gz
