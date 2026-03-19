@@ -821,45 +821,53 @@ const (
 	OpConcat
 )
 
+func (op BinaryOp) String() string {
+	switch op {
+	case OpEq:
+		return "="
+	case OpNe:
+		return "<>"
+	case OpLt:
+		return "<"
+	case OpLe:
+		return "<="
+	case OpGt:
+		return ">"
+	case OpGe:
+		return ">="
+	case OpAdd:
+		return "+"
+	case OpSub:
+		return "-"
+	case OpMul:
+		return "*"
+	case OpDiv:
+		return "/"
+	case OpMod:
+		return "%"
+	case OpAnd:
+		return "AND"
+	case OpOr:
+		return "OR"
+	case OpLike:
+		return "LIKE"
+	case OpNotLike:
+		return "NOT LIKE"
+	case OpIn:
+		return "IN"
+	case OpNotIn:
+		return "NOT IN"
+	case OpConcat:
+		return "||"
+	default:
+		return "?"
+	}
+}
+
 func (e *BinaryExpr) node()       {}
 func (e *BinaryExpr) expression() {}
 func (e *BinaryExpr) String() string {
-	var op string
-	switch e.Op {
-	case OpEq:
-		op = "="
-	case OpNe:
-		op = "<>"
-	case OpLt:
-		op = "<"
-	case OpLe:
-		op = "<="
-	case OpGt:
-		op = ">"
-	case OpGe:
-		op = ">="
-	case OpAdd:
-		op = "+"
-	case OpSub:
-		op = "-"
-	case OpMul:
-		op = "*"
-	case OpDiv:
-		op = "/"
-	case OpMod:
-		op = "%"
-	case OpAnd:
-		op = "AND"
-	case OpOr:
-		op = "OR"
-	case OpLike:
-		op = "LIKE"
-	case OpNotLike:
-		op = "NOT LIKE"
-	case OpConcat:
-		op = "||"
-	}
-	return fmt.Sprintf("(%s %s %s)", e.Left.String(), op, e.Right.String())
+	return fmt.Sprintf("(%s %s %s)", e.Left.String(), e.Op.String(), e.Right.String())
 }
 
 // UnaryExpr represents a unary expression.
@@ -1011,14 +1019,21 @@ func (w *CaseWhen) String() string {
 	return fmt.Sprintf("WHEN %s THEN %s", w.Condition.String(), w.Result.String())
 }
 
-// TableRef represents a table reference.
+// TableRef represents a table reference (either a named table or a subquery).
 type TableRef struct {
-	Name  string
-	Alias string
+	Name     string       // Table name (if referencing a real table)
+	Alias    string       // Optional alias
+	Subquery *SubqueryExpr // Subquery (if this is a derived table)
 }
 
 func (t *TableRef) node() {}
 func (t *TableRef) String() string {
+	if t.Subquery != nil {
+		if t.Alias != "" {
+			return fmt.Sprintf("(%s) AS %s", t.Subquery.String(), t.Alias)
+		}
+		return fmt.Sprintf("(%s)", t.Subquery.String())
+	}
 	if t.Alias != "" {
 		return fmt.Sprintf("%s AS %s", t.Name, t.Alias)
 	}
@@ -1060,6 +1075,37 @@ func (e *ExistsExpr) String() string {
 		return fmt.Sprintf("NOT EXISTS %s", e.Subquery.String())
 	}
 	return fmt.Sprintf("EXISTS %s", e.Subquery.String())
+}
+
+// AnyAllExpr represents an ANY or ALL expression with a subquery.
+// Examples: x > ANY (SELECT ...), x = ALL (SELECT ...)
+type AnyAllExpr struct {
+	Left     Expression  // Left operand
+	Op       BinaryOp    // Comparison operator (=, >, <, >=, <=, !=, <>)
+	IsAny    bool        // true for ANY, false for ALL
+	Subquery *SubqueryExpr
+}
+
+func (e *AnyAllExpr) node()       {}
+func (e *AnyAllExpr) expression() {}
+func (e *AnyAllExpr) String() string {
+	keyword := "ALL"
+	if e.IsAny {
+		keyword = "ANY"
+	}
+	return fmt.Sprintf("%s %s %s (%s)", e.Left.String(), e.Op.String(), keyword, e.Subquery.String())
+}
+
+// ScalarSubquery represents a scalar subquery that returns a single value.
+// Example: SELECT (SELECT COUNT(*) FROM users)
+type ScalarSubquery struct {
+	Subquery *SubqueryExpr
+}
+
+func (e *ScalarSubquery) node()       {}
+func (e *ScalarSubquery) expression() {}
+func (e *ScalarSubquery) String() string {
+	return fmt.Sprintf("(%s)", e.Subquery.String())
 }
 
 // CastExpr represents a CAST expression.

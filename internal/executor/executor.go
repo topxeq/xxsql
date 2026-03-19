@@ -287,6 +287,11 @@ func (e *Executor) executeSelect(stmt *sql.SelectStmt) (*Result, error) {
 		return e.executeSelectWithoutFrom(stmt)
 	}
 
+	// Check if this is a derived table (subquery in FROM clause)
+	if stmt.From.Table.Subquery != nil {
+		return e.executeSelectFromDerivedTable(stmt)
+	}
+
 	tableName := stmt.From.Table.Name
 	if tableName == "" {
 		return nil, fmt.Errorf("table name is required")
@@ -994,6 +999,157 @@ func (e *Executor) rowKey(row []interface{}) string {
 	return strings.Join(parts, "\x00")
 }
 
+// executeSelectFromDerivedTable handles SELECT from a derived table (subquery in FROM clause).
+func (e *Executor) executeSelectFromDerivedTable(stmt *sql.SelectStmt) (*Result, error) {
+	// Execute the subquery first
+	subquery := stmt.From.Table.Subquery
+	derivedResult, err := e.executeStatement(subquery.Select)
+	if err != nil {
+		return nil, fmt.Errorf("derived table error: %w", err)
+	}
+
+	// Use the alias if provided
+	tableAlias := stmt.From.Table.Alias
+	if tableAlias == "" {
+		tableAlias = "derived_table"
+	}
+
+	// Set current table for correlated subqueries
+	oldTable := e.currentTable
+	e.currentTable = strings.ToLower(tableAlias)
+	defer func() { e.currentTable = oldTable }()
+
+	// Build column index map for the derived table
+	colIdxMap := make(map[string]int)
+	for i, col := range derivedResult.Columns {
+		colIdxMap[strings.ToLower(col.Name)] = i
+	}
+
+	// Build column info for the derived table (simplified)
+	columnOrder := make([]*types.ColumnInfo, len(derivedResult.Columns))
+	for i, col := range derivedResult.Columns {
+		columnOrder[i] = &types.ColumnInfo{
+			Name: col.Name,
+			Type: types.TypeVarchar,
+		}
+	}
+
+	result := &Result{
+		Columns: make([]ColumnInfo, 0),
+		Rows:    make([][]interface{}, 0),
+	}
+
+	// Determine result columns
+	for _, colExpr := range stmt.Columns {
+		switch expr := colExpr.(type) {
+		case *sql.StarExpr:
+			for _, col := range derivedResult.Columns {
+				result.Columns = append(result.Columns, col)
+			}
+		case *sql.ColumnRef:
+			colName := strings.ToLower(expr.Name)
+			if _, ok := colIdxMap[colName]; !ok {
+				return nil, fmt.Errorf("unknown column: %s", expr.Name)
+			}
+			ci := ColumnInfo{
+				Name: expr.Name,
+				Type: "VARCHAR",
+			}
+			if expr.Alias != "" {
+				ci.Alias = expr.Alias
+			}
+			result.Columns = append(result.Columns, ci)
+		default:
+			// Handle other expressions (literals, functions, etc.)
+			ci := ColumnInfo{
+				Name: fmt.Sprintf("expr_%d", len(result.Columns)+1),
+				Type: "VARCHAR",
+			}
+			result.Columns = append(result.Columns, ci)
+		}
+	}
+
+	// Process each row from the derived table
+	for _, srcRow := range derivedResult.Rows {
+		// Apply WHERE filter if present
+		if stmt.Where != nil {
+			// Build a pseudo row.Row for evaluation
+			pseudoRow := &row.Row{}
+			values := make([]types.Value, len(srcRow))
+			for i, v := range srcRow {
+				switch val := v.(type) {
+				case int:
+					values[i] = types.NewIntValue(int64(val))
+				case int64:
+					values[i] = types.NewIntValue(val)
+				case float64:
+					values[i] = types.NewFloatValue(val)
+				case string:
+					values[i] = types.NewStringValue(val, types.TypeVarchar)
+				case []byte:
+					values[i] = types.NewBlobValue(val)
+				default:
+					values[i] = types.NewStringValue(fmt.Sprintf("%v", val), types.TypeVarchar)
+				}
+			}
+			pseudoRow.Values = values
+
+			match, err := e.evaluateWhereForRow(stmt.Where, pseudoRow, columnOrder, colIdxMap)
+			if err != nil {
+				return nil, err
+			}
+			if !match {
+				continue
+			}
+		}
+
+		// Build result row
+		resultRow := make([]interface{}, len(result.Columns))
+		colIdx := 0
+		for _, colExpr := range stmt.Columns {
+			switch expr := colExpr.(type) {
+			case *sql.StarExpr:
+				for _, srcVal := range srcRow {
+					resultRow[colIdx] = srcVal
+					colIdx++
+				}
+			case *sql.ColumnRef:
+				colName := strings.ToLower(expr.Name)
+				if idx, ok := colIdxMap[colName]; ok && idx < len(srcRow) {
+					resultRow[colIdx] = srcRow[idx]
+				}
+				colIdx++
+			default:
+				// For other expressions, just use nil for now
+				colIdx++
+			}
+		}
+		result.Rows = append(result.Rows, resultRow)
+	}
+
+	// Apply ORDER BY (simplified - just pass through for now)
+	// Apply LIMIT/OFFSET
+	if stmt.Limit != nil {
+		offset := 0
+		if stmt.Offset != nil {
+			offset = int(*stmt.Offset)
+		}
+		limit := int(*stmt.Limit)
+		if offset < len(result.Rows) {
+			end := offset + limit
+			if end > len(result.Rows) {
+				end = len(result.Rows)
+			}
+			result.Rows = result.Rows[offset:end]
+		} else {
+			result.Rows = nil
+		}
+	}
+
+	result.RowCount = len(result.Rows)
+	return result, nil
+}
+
 // executeSelectWithoutFrom handles SELECT without FROM (e.g., SELECT 1, SELECT NOW()).
 func (e *Executor) executeSelectWithoutFrom(stmt *sql.SelectStmt) (*Result, error) {
 	result := &Result{
@@ -1549,6 +1705,109 @@ func (e *Executor) evaluateWhereForRow(expr sql.Expression, r *row.Row, columns 
 		// EXISTS returns true if the subquery returns any rows
 		return len(result.Rows) > 0, nil
 
+	case *sql.AnyAllExpr:
+		// Evaluate the left expression
+		left, err := e.evaluateExprForRow(ex.Left, r, columns, colIdxMap)
+		if err != nil {
+			return false, err
+		}
+
+		// Build outer context from the current row for correlated subqueries
+		outerCtx := make(map[string]interface{})
+		tablePrefix := ""
+		if e.currentTable != "" {
+			tablePrefix = e.currentTable + "."
+		}
+		for i, col := range columns {
+			if i < len(r.Values) {
+				val := e.valueToInterface(r.Values[i])
+				colName := strings.ToLower(col.Name)
+				outerCtx[colName] = val
+				if tablePrefix != "" {
+					outerCtx[tablePrefix+colName] = val
+				}
+			}
+		}
+
+		// Save current outer context and set new one
+		oldOuterCtx := e.outerContext
+		e.outerContext = outerCtx
+
+		// Execute the subquery
+		subqResult, err := e.executeStatement(ex.Subquery.Select)
+
+		// Restore old outer context
+		e.outerContext = oldOuterCtx
+
+		if err != nil {
+			return false, err
+		}
+
+		// Evaluate ANY/ALL
+		if ex.IsAny {
+			// ANY: returns true if comparison is true for at least one value
+			for _, row := range subqResult.Rows {
+				if len(row) > 0 {
+					cmp, err := e.compareValues(left, ex.Op, row[0])
+					if err == nil && cmp {
+						return true, nil
+					}
+				}
+			}
+			return false, nil
+		} else {
+			// ALL: returns true if comparison is true for all values
+			if len(subqResult.Rows) == 0 {
+				return true, nil // ALL on empty set is true
+			}
+			for _, row := range subqResult.Rows {
+				if len(row) > 0 {
+					cmp, err := e.compareValues(left, ex.Op, row[0])
+					if err != nil || !cmp {
+						return false, nil
+					}
+				}
+			}
+			return true, nil
+		}
+
+	case *sql.ScalarSubquery:
+		// Execute the scalar subquery
+		oldOuterCtx := e.outerContext
+		result, err := e.executeStatement(ex.Subquery.Select)
+		e.outerContext = oldOuterCtx
+
+		if err != nil {
+			return false, err
+		}
+
+		// Scalar subquery must return exactly one row and one column
+		if len(result.Rows) == 0 {
+			return false, nil // No rows = NULL, which is false
+		}
+		if len(result.Rows) > 1 {
+			return false, fmt.Errorf("scalar subquery returned more than one row")
+		}
+		if len(result.Rows[0]) == 0 {
+			return false, nil
+		}
+
+		// Check if the result is truthy
+		val := result.Rows[0][0]
+		if val == nil {
+			return false, nil
+		}
+		switch v := val.(type) {
+		case bool:
+			return v, nil
+		case int, int64, float64:
+			return v != 0, nil
+		case string:
+			return v != "", nil
+		default:
+			return val != nil, nil
+		}
+
 	case *sql.Literal:
 		if ex.Type == sql.LiteralBool {
 			if b, ok := ex.Value.(bool); ok {
@@ -1604,6 +1863,61 @@ func (e *Executor) evaluateExprForRow(expr sql.Expression, r *row.Row, columns [
 			return e.valueToInterface(r.Values[idx]), nil
 		}
 		return nil, nil
+
+	case *sql.ScalarSubquery:
+		// Execute the scalar subquery
+		result, err := e.executeStatement(ex.Subquery.Select)
+		if err != nil {
+			return nil, err
+		}
+		if len(result.Rows) == 0 {
+			return nil, nil
+		}
+		if len(result.Rows) > 1 {
+			return nil, fmt.Errorf("scalar subquery returned more than one row")
+		}
+		if len(result.Rows[0]) == 0 {
+			return nil, nil
+		}
+		return result.Rows[0][0], nil
+
+	case *sql.SubqueryExpr:
+		// Treat as scalar subquery in expression context
+		result, err := e.executeStatement(ex.Select)
+		if err != nil {
+			return nil, err
+		}
+		if len(result.Rows) == 0 {
+			return nil, nil
+		}
+		if len(result.Rows) > 1 {
+			return nil, fmt.Errorf("scalar subquery returned more than one row")
+		}
+		if len(result.Rows[0]) == 0 {
+			return nil, nil
+		}
+		return result.Rows[0][0], nil
+
+	case *sql.BinaryExpr:
+		left, err := e.evaluateExprForRow(ex.Left, r, columns, colIdxMap)
+		if err != nil {
+			return nil, err
+		}
+		right, err := e.evaluateExprForRow(ex.Right, r, columns, colIdxMap)
+		if err != nil {
+			return nil, err
+		}
+		return e.evaluateBinaryOp(left, ex.Op, right)
+
+	case *sql.FunctionCall:
+		// Build column info from the columns slice
+		columnOrder := make([]*types.ColumnInfo, len(columns))
+		columnMap := make(map[string]*types.ColumnInfo)
+		for i, col := range columns {
+			columnOrder[i] = col
+			columnMap[strings.ToLower(col.Name)] = col
+		}
+		return e.evaluateFunction(ex, r, columnMap, columnOrder)
 	}
 	return nil, nil
 }
@@ -2544,6 +2858,109 @@ func (e *Executor) evaluateWhere(expr sql.Expression, r *row.Row, columnMap map[
 		// EXISTS returns true if the subquery returns any rows
 		return len(result.Rows) > 0, nil
 
+	case *sql.AnyAllExpr:
+		// Evaluate the left expression
+		left, err := e.evaluateExpression(ex.Left, r, columnMap, columnOrder)
+		if err != nil {
+			return false, err
+		}
+
+		// Build outer context from the current row for correlated subqueries
+		outerCtx := make(map[string]interface{})
+		tablePrefix := ""
+		if e.currentTable != "" {
+			tablePrefix = e.currentTable + "."
+		}
+		for i, col := range columnOrder {
+			if i < len(r.Values) {
+				val := e.valueToInterface(r.Values[i])
+				colName := strings.ToLower(col.Name)
+				outerCtx[colName] = val
+				if tablePrefix != "" {
+					outerCtx[tablePrefix+colName] = val
+				}
+			}
+		}
+
+		// Save current outer context and set new one
+		oldOuterCtx := e.outerContext
+		e.outerContext = outerCtx
+
+		// Execute the subquery
+		subqResult, err := e.executeStatement(ex.Subquery.Select)
+
+		// Restore old outer context
+		e.outerContext = oldOuterCtx
+
+		if err != nil {
+			return false, err
+		}
+
+		// Evaluate ANY/ALL
+		if ex.IsAny {
+			// ANY: returns true if comparison is true for at least one value
+			for _, row := range subqResult.Rows {
+				if len(row) > 0 {
+					cmp, err := e.compareValues(left, ex.Op, row[0])
+					if err == nil && cmp {
+						return true, nil
+					}
+				}
+			}
+			return false, nil
+		} else {
+			// ALL: returns true if comparison is true for all values
+			if len(subqResult.Rows) == 0 {
+				return true, nil // ALL on empty set is true
+			}
+			for _, row := range subqResult.Rows {
+				if len(row) > 0 {
+					cmp, err := e.compareValues(left, ex.Op, row[0])
+					if err != nil || !cmp {
+						return false, nil
+					}
+				}
+			}
+			return true, nil
+		}
+
+	case *sql.ScalarSubquery:
+		// Execute the scalar subquery
+		oldOuterCtx := e.outerContext
+		result, err := e.executeStatement(ex.Subquery.Select)
+		e.outerContext = oldOuterCtx
+
+		if err != nil {
+			return false, err
+		}
+
+		// Scalar subquery must return exactly one row and one column
+		if len(result.Rows) == 0 {
+			return false, nil // No rows = NULL, which is false
+		}
+		if len(result.Rows) > 1 {
+			return false, fmt.Errorf("scalar subquery returned more than one row")
+		}
+		if len(result.Rows[0]) == 0 {
+			return false, nil
+		}
+
+		// Check if the result is truthy
+		val := result.Rows[0][0]
+		if val == nil {
+			return false, nil
+		}
+		switch v := val.(type) {
+		case bool:
+			return v, nil
+		case int, int64, float64:
+			return v != 0, nil
+		case string:
+			return v != "", nil
+		default:
+			return val != nil, nil
+		}
+
 	case *sql.Literal:
 		if ex.Type == sql.LiteralBool {
 			if b, ok := ex.Value.(bool); ok {
@@ -2658,6 +3075,82 @@ func (e *Executor) evaluateExpression(expr sql.Expression, r *row.Row, columnMap
 
 	case *sql.FunctionCall:
 		return e.evaluateFunction(ex, r, columnMap, columnOrder)
+
+	case *sql.ScalarSubquery:
+		// Execute the scalar subquery
+		result, err := e.executeStatement(ex.Subquery.Select)
+		if err != nil {
+			return nil, err
+		}
+		// Scalar subquery must return exactly one row and one column
+		if len(result.Rows) == 0 {
+			return nil, nil // No rows = NULL
+		}
+		if len(result.Rows) > 1 {
+			return nil, fmt.Errorf("scalar subquery returned more than one row")
+		}
+		if len(result.Rows[0]) == 0 {
+			return nil, nil
+		}
+		return result.Rows[0][0], nil
+
+	case *sql.SubqueryExpr:
+		// Treat as scalar subquery in expression context
+		result, err := e.executeStatement(ex.Select)
+		if err != nil {
+			return nil, err
+		}
+		if len(result.Rows) == 0 {
+			return nil, nil
+		}
+		if len(result.Rows) > 1 {
+			return nil, fmt.Errorf("scalar subquery returned more than one row")
+		}
+		if len(result.Rows[0]) == 0 {
+			return nil, nil
+		}
+		return result.Rows[0][0], nil
+
+	case *sql.AnyAllExpr:
+		// Evaluate the left expression
+		left, err := e.evaluateExpression(ex.Left, r, columnMap, columnOrder)
+		if err != nil {
+			return nil, err
+		}
+
+		// Execute the subquery
+		result, err := e.executeStatement(ex.Subquery.Select)
+		if err != nil {
+			return nil, err
+		}
+
+		// Evaluate ANY/ALL
+		if ex.IsAny {
+			// ANY: returns true if comparison is true for at least one value
+			for _, row := range result.Rows {
+				if len(row) > 0 {
+					cmp, err := e.compareValues(left, ex.Op, row[0])
+					if err == nil && cmp {
+						return true, nil
+					}
+				}
+			}
+			return false, nil
+		} else {
+			// ALL: returns true if comparison is true for all values
+			if len(result.Rows) == 0 {
+				return true, nil // ALL on empty set is true
+			}
+			for _, row := range result.Rows {
+				if len(row) > 0 {
+					cmp, err := e.compareValues(left, ex.Op, row[0])
+					if err != nil || !cmp {
+						return false, nil
+					}
+				}
+			}
+			return true, nil
+		}
 	}
 	return nil, nil
 }

@@ -120,6 +120,7 @@ const (
 	// Keywords - Other
 	TokIf
 	TokExists
+	TokAny
 	TokAutoIncrement
 	TokUnsigned
 	TokZerofill
@@ -545,6 +546,7 @@ var keywords = map[string]TokenType{
 	"END":          TokEnd,
 	"IF":           TokIf,
 	"EXISTS":       TokExists,
+	"ANY":          TokAny,
 	"AUTO_INCREMENT": TokAutoIncrement,
 	"UNSIGNED":     TokUnsigned,
 	"ZEROFILL":     TokZerofill,

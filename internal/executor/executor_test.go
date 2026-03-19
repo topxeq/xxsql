@@ -931,3 +931,144 @@ func TestExecutor_ExistsSubquery(t *testing.T) {
 		t.Logf("  Row %d: %v", i, row)
 	}
 }
+
+func TestExecutor_DerivedTable(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "derived_test")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	engine := storage.NewEngine(tmpDir)
+	if err := engine.Open(); err != nil {
+		t.Fatalf("Failed to open engine: %v", err)
+	}
+	defer engine.Close()
+
+	exec := executor.NewExecutor(engine)
+
+	// Create and populate users table
+	exec.Execute("CREATE TABLE users (id INT, name VARCHAR, age INT)")
+	exec.Execute("INSERT INTO users (id, name, age) VALUES (1, 'Alice', 30)")
+	exec.Execute("INSERT INTO users (id, name, age) VALUES (2, 'Bob', 25)")
+	exec.Execute("INSERT INTO users (id, name, age) VALUES (3, 'Charlie', 35)")
+
+	// Test derived table (subquery in FROM clause)
+	result, err := exec.Execute("SELECT * FROM (SELECT id, name FROM users WHERE age > 26) AS older_users")
+	if err != nil {
+		t.Fatalf("Derived table query failed: %v", err)
+	}
+
+	// Should return Alice (30) and Charlie (35)
+	if len(result.Rows) != 2 {
+		t.Errorf("Expected 2 rows from derived table, got %d", len(result.Rows))
+	}
+
+	t.Logf("Derived table query returned %d rows", len(result.Rows))
+	for i, row := range result.Rows {
+		t.Logf("  Row %d: %v", i, row)
+	}
+}
+
+func TestExecutor_AnyAllSubquery(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "anyall_test")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	engine := storage.NewEngine(tmpDir)
+	if err := engine.Open(); err != nil {
+		t.Fatalf("Failed to open engine: %v", err)
+	}
+	defer engine.Close()
+
+	exec := executor.NewExecutor(engine)
+
+	// Create and populate tables
+	exec.Execute("CREATE TABLE products (id INT, name VARCHAR, price INT)")
+	exec.Execute("INSERT INTO products (id, name, price) VALUES (1, 'Product A', 100)")
+	exec.Execute("INSERT INTO products (id, name, price) VALUES (2, 'Product B', 200)")
+	exec.Execute("INSERT INTO products (id, name, price) VALUES (3, 'Product C', 150)")
+
+	// Test ANY subquery
+	result, err := exec.Execute("SELECT * FROM products WHERE price > ANY (SELECT price FROM products WHERE id = 1)")
+	if err != nil {
+		t.Fatalf("ANY query failed: %v", err)
+	}
+
+	t.Logf("ANY query returned %d rows", len(result.Rows))
+	for i, row := range result.Rows {
+		t.Logf("  Row %d: %v", i, row)
+	}
+
+	// Product B (200) and Product C (150) should be > 100
+	// But actually 150 > 100 and 200 > 100, so both should match
+	if len(result.Rows) < 1 {
+		t.Errorf("Expected at least 1 row from ANY query")
+	}
+
+	// Test ALL subquery
+	result2, err := exec.Execute("SELECT * FROM products WHERE price > ALL (SELECT price FROM products WHERE id = 2)")
+	if err != nil {
+		t.Fatalf("ALL query failed: %v", err)
+	}
+
+	t.Logf("ALL query returned %d rows", len(result2.Rows))
+	for i, row := range result2.Rows {
+		t.Logf("  Row %d: %v", i, row)
+	}
+
+	// No product has price > 200 (the max), so should return 0 rows
+	if len(result2.Rows) != 0 {
+		t.Errorf("Expected 0 rows from ALL query (no product > 200), got %d", len(result2.Rows))
+	}
+}
+
+func TestExecutor_ScalarSubquery(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "scalar_test")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	engine := storage.NewEngine(tmpDir)
+	if err := engine.Open(); err != nil {
+		t.Fatalf("Failed to open engine: %v", err)
+	}
+	defer engine.Close()
+
+	exec := executor.NewExecutor(engine)
+
+	// Create and populate tables
+	exec.Execute("CREATE TABLE orders (id INT, amount INT)")
+	exec.Execute("INSERT INTO orders (id, amount) VALUES (1, 100)")
+	exec.Execute("INSERT INTO orders (id, amount) VALUES (2, 200)")
+	exec.Execute("INSERT INTO orders (id, amount) VALUES (3, 150)")
+
+	// Test scalar subquery in SELECT list
+	result, err := exec.Execute("SELECT (SELECT MAX(amount) FROM orders) AS max_amount")
+	if err != nil {
+		t.Fatalf("Scalar subquery failed: %v", err)
+	}
+
+	if len(result.Rows) != 1 {
+		t.Errorf("Expected 1 row, got %d", len(result.Rows))
+	}
+
+	t.Logf("Scalar subquery result: %v", result.Rows)
+
+	// Test scalar subquery in WHERE clause
+	result2, err := exec.Execute("SELECT * FROM orders WHERE amount > (SELECT AVG(amount) FROM orders)")
+	if err != nil {
+		t.Fatalf("Scalar subquery in WHERE failed: %v", err)
+	}
+
+	// AVG of 100, 200, 150 = 150
+	// Only order 2 (amount 200) is > 150
+	if len(result2.Rows) != 1 {
+		t.Errorf("Expected 1 row (amount > 150), got %d", len(result2.Rows))
+	}
+
+	t.Logf("Scalar subquery WHERE result: %v", result2.Rows)
+}

@@ -378,17 +378,45 @@ func (p *Parser) parseJoin() *JoinClause {
 	return jc
 }
 
-// parseTableRef parses a table reference.
+// parseTableRef parses a table reference (table name or subquery).
 func (p *Parser) parseTableRef() *TableRef {
-	// Check for required table name
+	tr := &TableRef{}
+
+	// Check for subquery: (SELECT ...) AS alias
+	if p.curTokenIs(TokLParen) {
+		p.nextToken() // consume (
+		if p.curTokenIs(TokSelect) {
+			// Parse subquery
+			stmt := p.parseSelect()
+			if stmt == nil {
+				return nil
+			}
+			if !p.expect(TokRParen) {
+				return nil
+			}
+			tr.Subquery = &SubqueryExpr{Select: stmt.(*SelectStmt)}
+
+			// Require alias for derived table
+			if p.curTokenIs(TokAs) {
+				p.nextToken()
+			}
+			if p.curTokenIs(TokIdent) {
+				tr.Alias = p.currTok.Value
+				p.nextToken()
+			}
+			return tr
+		}
+		p.error("expected SELECT or table name")
+		return nil
+	}
+
+	// Regular table name
 	if !p.curTokenIs(TokIdent) {
 		p.error("expected table name")
 		return nil
 	}
 
-	tr := &TableRef{
-		Name: p.currTok.Value,
-	}
+	tr.Name = p.currTok.Value
 	p.nextToken()
 
 	// Alias
@@ -1414,6 +1442,42 @@ func (p *Parser) parseBinaryExpr(minPrec int) Expression {
 		}
 
 		p.nextToken()
+
+		// Check for ANY/ALL after comparison operator
+		if p.curTokenIs(TokAny) || p.curTokenIs(TokAll) {
+			isAny := p.curTokenIs(TokAny)
+			p.nextToken() // consume ANY or ALL
+
+			// Expect (
+			if !p.expect(TokLParen) {
+				return nil
+			}
+
+			// Expect SELECT
+			if !p.curTokenIs(TokSelect) {
+				p.error("expected SELECT after ANY/ALL (")
+				return nil
+			}
+
+			// Parse subquery
+			stmt := p.parseSelect()
+			if stmt == nil {
+				return nil
+			}
+
+			if !p.expect(TokRParen) {
+				return nil
+			}
+
+			left = &AnyAllExpr{
+				Left:     left,
+				Op:       op,
+				IsAny:    isAny,
+				Subquery: &SubqueryExpr{Select: stmt.(*SelectStmt)},
+			}
+			continue
+		}
+
 		right := p.parseBinaryExpr(prec + 1)
 		left = &BinaryExpr{Left: left, Op: op, Right: right}
 	}
