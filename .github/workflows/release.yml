@@ -4,60 +4,23 @@ on:
   push:
     tags:
       - 'v*'
-  workflow_dispatch:
 
 permissions:
   contents: write
 
 jobs:
   build:
-    name: Build
     runs-on: ubuntu-latest
-
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-
-      - name: Install Go
-        run: |
-          wget -q https://go.dev/dl/go1.22.0.linux-amd64.tar.gz
-          sudo tar -C /usr/local -xzf go1.22.0.linux-amd64.tar.gz
-          /usr/local/go/bin/go version
-
-      - name: Build
-        shell: bash
-        run: |
-          echo "=== Current directory ==="
-          pwd
-          echo "=== Listing files ==="
-          ls -la
-          echo "=== cmd directory ==="
-          ls -la cmd/ || echo "cmd not found"
-          echo "=== go.mod ==="
-          cat go.mod
-          echo "=== Downloading dependencies ==="
-          /usr/local/go/bin/go mod download
-          echo "=== Listing packages ==="
-          /usr/local/go/bin/go list ./... 2>&1
-          echo "=== Building xxsqls ==="
-          /usr/local/go/bin/go build -v github.com/topxeq/xxsql/cmd/xxsqls -o xxsqls 2>&1
-          echo "=== Building xxsqlc ==="
-          /usr/local/go/bin/go build -v github.com/topxeq/xxsql/cmd/xxsqlc -o xxsqlc 2>&1
-          echo "=== Checking output ==="
-          ls -la xxsqls xxsqlc 2>&1 || echo "Build files not found"
-
-      - name: Create archive
-        if: startsWith(github.ref, 'refs/tags/')
-        run: |
-          VERSION=${GITHUB_REF#refs/tags/}
-          tar -czvf xxsql-${VERSION}-linux-amd64.tar.gz xxsqls xxsqlc
-
-      - name: Create Release
-        if: startsWith(github.ref, 'refs/tags/')
-        uses: softprops/action-gh-release@v1
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+      - run: go build -o xxsqls ./cmd/xxsqls
+      - run: go build -o xxsqlc ./cmd/xxsqlc
+      - run: tar -czvf xxsql-${{ github.ref_name }}-linux-amd64.tar.gz xxsqls xxsqlc
+      - uses: softprops/action-gh-release@v1
         with:
           files: xxsql-*.tar.gz
-          draft: false
-          prerelease: false
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
