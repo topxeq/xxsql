@@ -2,8 +2,10 @@ name: Release
 
 on:
   push:
+    branches: [master]
     tags:
       - 'v*'
+  workflow_dispatch:
 
 permissions:
   contents: write
@@ -48,11 +50,13 @@ jobs:
           ls -la
 
       - name: Create archive
+        if: startsWith(github.ref, 'refs/tags/')
         run: |
           VERSION=${GITHUB_REF#refs/tags/}
           tar -czvf xxsql-${VERSION}-linux-amd64.tar.gz xxsqls xxsqlc
 
       - name: Create Release
+        if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v1
         with:
           files: xxsql-*.tar.gz
