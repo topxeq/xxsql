@@ -56,10 +56,11 @@ jobs:
         run: |
           ARCHIVE_NAME=xxsql-${{ github.ref_name }}-${{ matrix.goos }}-${{ matrix.goarch }}
           if [ "${{ matrix.goos }}" = "windows" ]; then
-            7z a ../${ARCHIVE_NAME}.zip xxsqls${{ matrix.ext }} xxsqlc${{ matrix.ext }}
+            7z a ${ARCHIVE_NAME}.zip xxsqls${{ matrix.ext }} xxsqlc${{ matrix.ext }}
           else
-            tar -czvf ../${ARCHIVE_NAME}.tar.gz xxsqls${{ matrix.ext }} xxsqlc${{ matrix.ext }}
+            tar -czvf ${ARCHIVE_NAME}.tar.gz xxsqls${{ matrix.ext }} xxsqlc${{ matrix.ext }}
           fi
+          ls -la
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
