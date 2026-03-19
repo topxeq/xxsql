@@ -11,6 +11,9 @@ permissions:
 jobs:
   build:
     runs-on: ubuntu-latest
+    env:
+      GOPROXY: direct
+      GOSUMDB: off
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
@@ -22,11 +25,19 @@ jobs:
           /usr/local/go/bin/go version
           /usr/local/go/bin/go env
 
-      - name: Download dependencies
-        run: /usr/local/go/bin/go mod download
+      - name: Debug module resolution
+        run: |
+          echo "=== GOMOD ==="
+          /usr/local/go/bin/go env GOMOD
+          echo "=== GOMODCACHE ==="
+          /usr/local/go/bin/go env GOMODCACHE
+          echo "=== Module graph ==="
+          /usr/local/go/bin/go mod graph || true
+          echo "=== List all packages ==="
+          /usr/local/go/bin/go list ./... 2>&1 || true
 
       - name: Build all packages
-        run: /usr/local/go/bin/go build -v ./...
+        run: /usr/local/go/bin/go build -v ./... 2>&1
 
       - name: Build server binary
         run: /usr/local/go/bin/go build -v -o xxsqls ./cmd/xxsqls
