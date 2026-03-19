@@ -169,14 +169,17 @@ http://localhost:8080
 | Type | Description |
 |------|-------------|
 | SEQ | Auto-increment integer (like MySQL AUTO_INCREMENT) |
-| INT | 64-bit integer |
-| FLOAT | 64-bit floating point |
-| DECIMAL(p,s) | Exact numeric with precision and scale |
+| TINYINT, SMALLINT, INT, INTEGER, BIGINT | Integer types (64-bit) |
+| FLOAT, DOUBLE | Floating point types |
+| DECIMAL(p,s), NUMERIC(p,s) | Exact numeric with precision and scale |
 | CHAR(n) | Fixed-length string |
 | VARCHAR(n) | Variable-length string |
 | TEXT | Large text |
-| BOOL | Boolean |
-| DATE, TIME, DATETIME | Date/time types |
+| BLOB | Binary large object |
+| BOOL, BOOLEAN | Boolean (TRUE/FALSE) |
+| DATE | Date (YYYY-MM-DD) |
+| TIME | Time (HH:MM:SS) |
+| DATETIME, TIMESTAMP | Date and time |
 
 **DECIMAL Example:**
 ```sql
@@ -416,8 +419,38 @@ The `xxsqlc` CLI client provides an interactive REPL for SQL execution.
 ### Usage
 
 ```bash
-./xxsqlc -u admin -h localhost -P 3306 -d testdb
+# Basic connection
+./xxsqlc -u admin -host localhost -port 3306 -d testdb
+
+# Using DSN
+./xxsqlc -dsn "xxsql://admin:password@localhost:3306/testdb"
+
+# Execute SQL from command line
+./xxsqlc -u admin -d testdb -e "SELECT * FROM users"
+
+# Execute SQL from file
+./xxsqlc -u admin -d testdb -f script.sql -progress
+
+# Specify output format
+./xxsqlc -u admin -d testdb -format json -e "SELECT * FROM users"
 ```
+
+### Command-Line Options
+
+| Flag | Description |
+|------|-------------|
+| `-host` | Server host (default: localhost) |
+| `-port` | Server port (default: 3306) |
+| `-u` | Username |
+| `-p` | Password |
+| `-d` | Database name |
+| `-dsn` | Connection string (URL format) |
+| `-e` | Execute command and exit |
+| `-f` | Execute SQL from file and exit |
+| `-format` | Output format: table, vertical, json, tsv |
+| `-progress` | Show progress when executing SQL file |
+| `-q` | Suppress welcome message |
+| `-version` | Print version information |
 
 ### Features
 
@@ -431,15 +464,20 @@ The `xxsqlc` CLI client provides an interactive REPL for SQL execution.
 
 | Command | Description |
 |---------|-------------|
-| `\d` | List tables |
-| `\d table` | Describe table structure |
-| `\l` | List databases |
-| `\u dbname` | Use database |
-| `\timing` | Toggle query timing |
-| `\g` | Execute current query |
-| `\j` | JSON output format |
-| `\t` | TSV output format |
+| `\h`, `\?` | Show help |
 | `\q` | Quit |
+| `\c` | Clear screen / Clear current query |
+| `\v` | Show version |
+| `\l` | List databases |
+| `\d [table]` | Describe table or list tables |
+| `\u <db>` | Use database |
+| `\conninfo` | Show connection info |
+| `\timing` | Toggle query timing |
+| `\g`, `\vertical` | Switch to vertical output format |
+| `\j`, `\json` | Switch to JSON output format |
+| `\t`, `\tsv` | Switch to TSV output format |
+| `\table` | Switch to table output format (default) |
+| `\format` | Show current output format |
 
 ## Web Management Interface
 
@@ -524,6 +562,22 @@ Configuration file example (`configs/xxsql.json`):
     "checkpoint_pages": 1000,
     "checkpoint_int_sec": 300
   },
+  "worker": {
+    "pool_size": 32,
+    "max_connection": 200
+  },
+  "worker_pool": {
+    "worker_count": 32,
+    "task_queue_size": 1000,
+    "task_timeout": "30s",
+    "strategy": "round_robin"
+  },
+  "connection": {
+    "max_connections": 200,
+    "wait_timeout": 30,
+    "idle_timeout": 28800,
+    "strategy": "fifo"
+  },
   "auth": {
     "enabled": true,
     "admin_user": "admin",
@@ -533,20 +587,41 @@ Configuration file example (`configs/xxsql.json`):
   "security": {
     "audit_enabled": true,
     "audit_file": "audit.log",
+    "audit_max_size_mb": 100,
+    "audit_max_backups": 10,
     "rate_limit_enabled": true,
     "rate_limit_max_attempts": 5,
-    "password_min_length": 8
+    "rate_limit_window_min": 15,
+    "rate_limit_block_min": 30,
+    "password_min_length": 8,
+    "password_require_upper": true,
+    "password_require_lower": true,
+    "password_require_digit": true,
+    "tls_enabled": false,
+    "tls_mode": "optional",
+    "ip_access_mode": "allow_all"
   },
   "backup": {
     "auto_interval_hours": 24,
     "keep_count": 7,
     "backup_dir": "./backup"
   },
+  "recovery": {
+    "wal_sync_interval_ms": 100,
+    "checkpoint_interval_sec": 300,
+    "wal_retention_sec": 86400
+  },
+  "safety": {
+    "enable_checksum": true,
+    "max_recovery_attempts": 3
+  },
   "log": {
     "level": "INFO",
     "file": "",
     "max_size_mb": 100,
-    "max_backups": 5
+    "max_backups": 5,
+    "max_age_days": 30,
+    "compress": false
   }
 }
 ```
