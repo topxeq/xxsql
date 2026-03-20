@@ -394,6 +394,8 @@ func setAlias(expr Expression, alias string) {
 		e.Alias = alias
 	case *BinaryExpr:
 		e.Alias = alias
+	case *WindowFuncCall:
+		e.Alias = alias
 	}
 }
 
@@ -544,7 +546,11 @@ func (p *Parser) parseOrderBy() []*OrderByItem {
 	if !p.expect(TokBy) {
 		return nil
 	}
+	return p.parseOrderByItems()
+}
 
+// parseOrderByItems parses the items after ORDER BY.
+func (p *Parser) parseOrderByItems() []*OrderByItem {
 	var items []*OrderByItem
 
 	for {
@@ -1722,7 +1728,7 @@ func (p *Parser) parseFunctionKeyword() Expression {
 }
 
 // parseFunctionCall parses a function call.
-func (p *Parser) parseFunctionCall(name string) *FunctionCall {
+func (p *Parser) parseFunctionCall(name string) Expression {
 	p.nextToken() // consume (
 
 	fc := &FunctionCall{Name: name}
@@ -1747,7 +1753,59 @@ func (p *Parser) parseFunctionCall(name string) *FunctionCall {
 		return nil
 	}
 
+	// Check for OVER clause (window function)
+	if p.curTokenIs(TokOver) {
+		return p.parseWindowFunction(fc)
+	}
+
 	return fc
+}
+
+// parseWindowFunction parses a window function with OVER clause.
+func (p *Parser) parseWindowFunction(fc *FunctionCall) Expression {
+	p.nextToken() // consume OVER
+
+	wfc := &WindowFuncCall{
+		Func:   fc,
+		Window: &WindowSpec{},
+	}
+
+	// Check for named window reference or window specification
+	if p.curTokenIs(TokIdent) {
+		// Named window reference
+		wfc.Window.Name = p.currTok.Value
+		p.nextToken()
+		return wfc
+	}
+
+	// Expect ( for window specification
+	if !p.expect(TokLParen) {
+		return nil
+	}
+
+	// Parse PARTITION BY
+	if p.curTokenIs(TokPartition) {
+		p.nextToken() // consume PARTITION
+		if !p.expect(TokBy) {
+			return nil
+		}
+		wfc.Window.PartitionBy = p.parseExpressionList()
+	}
+
+	// Parse ORDER BY
+	if p.curTokenIs(TokOrder) {
+		p.nextToken() // consume ORDER
+		if !p.expect(TokBy) {
+			return nil
+		}
+		wfc.Window.OrderBy = p.parseOrderByItems()
+	}
+
+	if !p.expect(TokRParen) {
+		return nil
+	}
+
+	return wfc
 }
 
 // parseNumber parses a number literal.

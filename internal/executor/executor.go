@@ -437,6 +437,34 @@ func (e *Executor) executeSelect(stmt *sql.SelectStmt) (*Result, error) {
 				Name: "subquery",
 				Type: "VARCHAR",
 			})
+		case *sql.WindowFuncCall:
+			// Window function - will be evaluated after partitioning
+			colIndices = append(colIndices, -1)
+			funcExprs = append(funcExprs, expr)
+			funcName := strings.ToUpper(expr.Func.Name)
+			colName := expr.Func.Name + "()"
+			if expr.Alias != "" {
+				colName = expr.Alias
+			}
+			resultType := "INT"
+			if funcName == "AVG" {
+				resultType = "FLOAT"
+			} else if funcName == "ROW_NUMBER" || funcName == "RANK" || funcName == "DENSE_RANK" {
+				resultType = "INT"
+			}
+			resultCols = append(resultCols, ColumnInfo{
+				Name: colName,
+				Type: resultType,
+			})
+		}
+	}
+
+	// Check for window functions
+	hasWindowFuncs := false
+	for _, expr := range funcExprs {
+		if _, ok := expr.(*sql.WindowFuncCall); ok {
+			hasWindowFuncs = true
+			break
 		}
 	}
 
@@ -444,6 +472,11 @@ func (e *Executor) executeSelect(stmt *sql.SelectStmt) (*Result, error) {
 	if len(aggregateFuncs) > 0 || len(stmt.GroupBy) > 0 {
 		// Handle GROUP BY with aggregates
 		return e.executeGroupBy(stmt, rows, resultCols, colIndices, funcExprs, aggregateFuncs, tblInfo, columnMap, columnOrder)
+	}
+
+	// If there are window functions, handle them
+	if hasWindowFuncs {
+		return e.executeWindowFunctions(stmt, rows, resultCols, colIndices, funcExprs, tblInfo, columnMap, columnOrder)
 	}
 
 	// Build result rows
@@ -761,6 +794,385 @@ func (e *Executor) evaluateUnaryExpr(op sql.UnaryOp, val interface{}) (interface
 	default:
 		return val, nil
 	}
+}
+
+// executeWindowFunctions handles window function execution.
+func (e *Executor) executeWindowFunctions(stmt *sql.SelectStmt, rows []*row.Row, resultCols []ColumnInfo, colIndices []int, funcExprs []sql.Expression, tblInfo *table.TableInfo, columnMap map[string]*types.ColumnInfo, columnOrder []*types.ColumnInfo) (*Result, error) {
+	// Filter rows by WHERE clause first
+	filteredRows := make([]*row.Row, 0)
+	for _, r := range rows {
+		if stmt.Where != nil {
+			match, err := e.evaluateWhere(stmt.Where, r, columnMap, columnOrder)
+			if err != nil {
+				return nil, err
+			}
+			if !match {
+				continue
+			}
+		}
+		filteredRows = append(filteredRows, r)
+	}
+
+	// Find window function expressions
+	var windowFuncs []struct {
+		index int
+		expr  *sql.WindowFuncCall
+	}
+	for i, expr := range funcExprs {
+		if wf, ok := expr.(*sql.WindowFuncCall); ok {
+			windowFuncs = append(windowFuncs, struct {
+				index int
+				expr  *sql.WindowFuncCall
+			}{i, wf})
+		}
+	}
+
+	// Compute window function values
+	windowValues := make([]map[int]interface{}, len(filteredRows))
+	for i := range filteredRows {
+		windowValues[i] = make(map[int]interface{})
+	}
+
+	// Build column index map for ORDER BY in window functions
+	colIdxMap := make(map[string]int)
+	for i, col := range columnOrder {
+		colIdxMap[strings.ToLower(col.Name)] = i
+	}
+
+	// Process each window function
+	for _, wf := range windowFuncs {
+		// Group rows by partition
+		partitions := e.partitionRows(filteredRows, wf.expr.Window.PartitionBy, columnMap, columnOrder)
+
+		// Process each partition
+		for _, partition := range partitions {
+			// Sort partition by ORDER BY if present
+			if len(wf.expr.Window.OrderBy) > 0 {
+				e.sortRowsForWindowPartition(partition, filteredRows, wf.expr.Window.OrderBy, colIdxMap)
+			}
+
+			// Compute window function values for each row in partition
+			e.computeWindowFunction(wf.expr, partition, filteredRows, windowValues, wf.index, columnMap, columnOrder, colIdxMap)
+		}
+	}
+
+	// Build result rows
+	result := &Result{
+		Columns: resultCols,
+		Rows:    make([][]interface{}, 0),
+	}
+
+	for rowIdx, r := range filteredRows {
+		resultRow := make([]interface{}, len(colIndices))
+		for i, idx := range colIndices {
+			if funcExprs[i] != nil {
+				// Check if it's a window function
+				if _, ok := funcExprs[i].(*sql.WindowFuncCall); ok {
+					resultRow[i] = windowValues[rowIdx][i]
+				} else {
+					// Evaluate regular expression
+					val, err := e.evaluateExpression(funcExprs[i], r, columnMap, columnOrder)
+					if err != nil {
+						return nil, err
+					}
+					resultRow[i] = val
+				}
+			} else if idx >= 0 && idx < len(r.Values) {
+				resultRow[i] = e.valueToInterface(r.Values[idx])
+			} else {
+				resultRow[i] = nil
+			}
+		}
+		result.Rows = append(result.Rows, resultRow)
+	}
+
+	// Apply ORDER BY if present
+	if len(stmt.OrderBy) > 0 {
+		result.Rows = e.sortRows(stmt.OrderBy, resultCols, result.Rows)
+	}
+
+	// Apply LIMIT/OFFSET
+	if stmt.Limit != nil {
+		offset := 0
+		if stmt.Offset != nil {
+			offset = int(*stmt.Offset)
+		}
+		limit := int(*stmt.Limit)
+		if offset < len(result.Rows) {
+			end := offset + limit
+			if end > len(result.Rows) {
+				end = len(result.Rows)
+			}
+			result.Rows = result.Rows[offset:end]
+		} else {
+			result.Rows = nil
+		}
+	}
+
+	result.RowCount = len(result.Rows)
+	return result, nil
+}
+
+// partitionRows groups rows by PARTITION BY expressions, returning indices.
+func (e *Executor) partitionRows(rows []*row.Row, partitionBy []sql.Expression, columnMap map[string]*types.ColumnInfo, columnOrder []*types.ColumnInfo) [][]int {
+	if len(partitionBy) == 0 {
+		// No partition - all rows are in one partition
+		indices := make([]int, len(rows))
+		for i := range rows {
+			indices[i] = i
+		}
+		return [][]int{indices}
+	}
+
+	// Group by partition key
+	partitions := make(map[string][]int)
+	for i, r := range rows {
+		key := e.getPartitionKey(r, partitionBy, columnMap, columnOrder)
+		partitions[key] = append(partitions[key], i)
+	}
+
+	result := make([][]int, 0, len(partitions))
+	for _, indices := range partitions {
+		result = append(result, indices)
+	}
+	return result
+}
+
+// getPartitionKey computes a string key for partitioning.
+func (e *Executor) getPartitionKey(r *row.Row, partitionBy []sql.Expression, columnMap map[string]*types.ColumnInfo, columnOrder []*types.ColumnInfo) string {
+	var parts []string
+	for _, expr := range partitionBy {
+		val, err := e.evaluateExpression(expr, r, columnMap, columnOrder)
+		if err != nil {
+			parts = append(parts, "NULL")
+		} else {
+			parts = append(parts, fmt.Sprintf("%v", val))
+		}
+	}
+	return strings.Join(parts, "|")
+}
+
+// sortRowsForWindowPartition sorts row indices within a partition by ORDER BY.
+func (e *Executor) sortRowsForWindowPartition(indices []int, rows []*row.Row, orderBy []*sql.OrderByItem, colIdxMap map[string]int) {
+	sort.Slice(indices, func(i, j int) bool {
+		for _, item := range orderBy {
+			// Get column name from expression
+			var colIdx int
+			var found bool
+			switch expr := item.Expr.(type) {
+			case *sql.ColumnRef:
+				colIdx, found = colIdxMap[strings.ToLower(expr.Name)]
+				if !found {
+					continue
+				}
+			default:
+				continue
+			}
+
+			// Get values from rows
+			rowI := rows[indices[i]]
+			rowJ := rows[indices[j]]
+			if colIdx >= len(rowI.Values) || colIdx >= len(rowJ.Values) {
+				continue
+			}
+			vi := e.valueToInterface(rowI.Values[colIdx])
+			vj := e.valueToInterface(rowJ.Values[colIdx])
+
+			cmp := compareValues(vi, vj)
+			if cmp != 0 {
+				if item.Ascending {
+					return cmp < 0
+				}
+				return cmp > 0
+			}
+		}
+		return false
+	})
+}
+
+// computeWindowFunction computes window function values for a partition.
+func (e *Executor) computeWindowFunction(wf *sql.WindowFuncCall, partition []int, rows []*row.Row, windowValues []map[int]interface{}, colIndex int, columnMap map[string]*types.ColumnInfo, columnOrder []*types.ColumnInfo, colIdxMap map[string]int) {
+	funcName := strings.ToUpper(wf.Func.Name)
+
+	switch funcName {
+	case "ROW_NUMBER":
+		for rank, rowIdx := range partition {
+			windowValues[rowIdx][colIndex] = int64(rank + 1)
+		}
+
+	case "RANK":
+		e.computeRank(partition, rows, wf, windowValues, colIndex, colIdxMap, false)
+
+	case "DENSE_RANK":
+		e.computeRank(partition, rows, wf, windowValues, colIndex, colIdxMap, true)
+
+	case "COUNT":
+		totalCount := int64(len(partition))
+		for _, rowIdx := range partition {
+			windowValues[rowIdx][colIndex] = totalCount
+		}
+
+	case "SUM":
+		e.computeSumWindow(partition, rows, wf, windowValues, colIndex, colIdxMap)
+
+	case "AVG":
+		e.computeAvgWindow(partition, rows, wf, windowValues, colIndex, colIdxMap)
+
+	case "MIN":
+		e.computeMinWindow(partition, rows, wf, windowValues, colIndex, colIdxMap)
+
+	case "MAX":
+		e.computeMaxWindow(partition, rows, wf, windowValues, colIndex, colIdxMap)
+	}
+}
+
+// computeRank computes RANK or DENSE_RANK window function.
+func (e *Executor) computeRank(partition []int, rows []*row.Row, wf *sql.WindowFuncCall, windowValues []map[int]interface{}, colIndex int, colIdxMap map[string]int, dense bool) {
+	if len(wf.Window.OrderBy) == 0 {
+		// Without ORDER BY, all rows have rank 1
+		for _, rowIdx := range partition {
+			windowValues[rowIdx][colIndex] = int64(1)
+		}
+		return
+	}
+
+	// Get ORDER BY column index
+	var orderColIdx int
+	if colRef, ok := wf.Window.OrderBy[0].Expr.(*sql.ColumnRef); ok {
+		orderColIdx = colIdxMap[strings.ToLower(colRef.Name)]
+	}
+
+	rank := 1
+	denseRank := 1
+	var prevValue interface{}
+
+	for i, rowIdx := range partition {
+		r := rows[rowIdx]
+		if orderColIdx >= len(r.Values) {
+			continue
+		}
+		currentValue := e.valueToInterface(r.Values[orderColIdx])
+
+		if i > 0 && !valuesEqual(currentValue, prevValue) {
+			if dense {
+				denseRank++
+			} else {
+				rank = i + 1
+			}
+		}
+
+		if dense {
+			windowValues[rowIdx][colIndex] = int64(denseRank)
+		} else {
+			windowValues[rowIdx][colIndex] = int64(rank)
+		}
+		prevValue = currentValue
+	}
+}
+
+// computeSumWindow computes SUM window function.
+func (e *Executor) computeSumWindow(partition []int, rows []*row.Row, wf *sql.WindowFuncCall, windowValues []map[int]interface{}, colIndex int, colIdxMap map[string]int) {
+	var sum float64
+	for _, rowIdx := range partition {
+		val := e.getWindowFuncArgValue(wf, rows[rowIdx], colIdxMap)
+		if val != nil {
+			switch v := val.(type) {
+			case int:
+				sum += float64(v)
+			case int64:
+				sum += float64(v)
+			case float64:
+				sum += v
+			}
+		}
+	}
+	for _, rowIdx := range partition {
+		windowValues[rowIdx][colIndex] = sum
+	}
+}
+
+// computeAvgWindow computes AVG window function.
+func (e *Executor) computeAvgWindow(partition []int, rows []*row.Row, wf *sql.WindowFuncCall, windowValues []map[int]interface{}, colIndex int, colIdxMap map[string]int) {
+	var sum float64
+	var count int64
+	for _, rowIdx := range partition {
+		val := e.getWindowFuncArgValue(wf, rows[rowIdx], colIdxMap)
+		if val != nil {
+			switch v := val.(type) {
+			case int:
+				sum += float64(v)
+				count++
+			case int64:
+				sum += float64(v)
+				count++
+			case float64:
+				sum += v
+				count++
+			}
+		}
+	}
+	var avg float64
+	if count > 0 {
+		avg = sum / float64(count)
+	}
+	for _, rowIdx := range partition {
+		windowValues[rowIdx][colIndex] = avg
+	}
+}
+
+// computeMinWindow computes MIN window function.
+func (e *Executor) computeMinWindow(partition []int, rows []*row.Row, wf *sql.WindowFuncCall, windowValues []map[int]interface{}, colIndex int, colIdxMap map[string]int) {
+	var minVal interface{}
+	for _, rowIdx := range partition {
+		val := e.getWindowFuncArgValue(wf, rows[rowIdx], colIdxMap)
+		if val != nil {
+			if minVal == nil || compareValues(val, minVal) < 0 {
+				minVal = val
+			}
+		}
+	}
+	for _, rowIdx := range partition {
+		windowValues[rowIdx][colIndex] = minVal
+	}
+}
+
+// computeMaxWindow computes MAX window function.
+func (e *Executor) computeMaxWindow(partition []int, rows []*row.Row, wf *sql.WindowFuncCall, windowValues []map[int]interface{}, colIndex int, colIdxMap map[string]int) {
+	var maxVal interface{}
+	for _, rowIdx := range partition {
+		val := e.getWindowFuncArgValue(wf, rows[rowIdx], colIdxMap)
+		if val != nil {
+			if maxVal == nil || compareValues(val, maxVal) > 0 {
+				maxVal = val
+			}
+		}
+	}
+	for _, rowIdx := range partition {
+		windowValues[rowIdx][colIndex] = maxVal
+	}
+}
+
+// getWindowFuncArgValue gets the argument value for a window function from a row.
+func (e *Executor) getWindowFuncArgValue(wf *sql.WindowFuncCall, r *row.Row, colIdxMap map[string]int) interface{} {
+	if len(wf.Func.Args) == 0 {
+		return nil
+	}
+	if _, ok := wf.Func.Args[0].(*sql.StarExpr); ok {
+		return 1 // COUNT(*) returns 1 for each row
+	}
+	if colRef, ok := wf.Func.Args[0].(*sql.ColumnRef); ok {
+		colIdx, found := colIdxMap[strings.ToLower(colRef.Name)]
+		if !found || colIdx >= len(r.Values) {
+			return nil
+		}
+		return e.valueToInterface(r.Values[colIdx])
+	}
+	return nil
+}
+
+// valuesEqual checks if two values are equal.
+func valuesEqual(a, b interface{}) bool {
+	return compareValues(a, b) == 0
 }
 
 // executeGroupBy handles GROUP BY and aggregate functions.

@@ -1538,3 +1538,132 @@ func TestExecutorRecursiveCTE(t *testing.T) {
 		t.Logf("Multiple columns result (%d rows): %v", len(result.Rows), result.Rows)
 	})
 }
+
+func TestExecutorWindowFunctions(t *testing.T) {
+	// Create temp directory
+	tmpDir, err := os.MkdirTemp("", "xxsql-executor-test-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	// Create storage engine
+	engine := storage.NewEngine(tmpDir)
+	if err := engine.Open(); err != nil {
+		t.Fatalf("Failed to open engine: %v", err)
+	}
+	defer engine.Close()
+
+	// Create executor
+	exec := executor.NewExecutor(engine)
+
+	// Create a table with test data
+	_, err = exec.Execute("CREATE TABLE sales (id INT, region VARCHAR(50), amount INT)")
+	if err != nil {
+		t.Fatalf("Failed to create table: %v", err)
+	}
+
+	// Insert test data
+	exec.Execute("INSERT INTO sales VALUES (1, 'North', 100)")
+	exec.Execute("INSERT INTO sales VALUES (2, 'North', 150)")
+	exec.Execute("INSERT INTO sales VALUES (3, 'South', 200)")
+	exec.Execute("INSERT INTO sales VALUES (4, 'South', 250)")
+	exec.Execute("INSERT INTO sales VALUES (5, 'South', 300)")
+
+	// Test 1: ROW_NUMBER()
+	t.Run("RowNumber", func(t *testing.T) {
+		result, err := exec.Execute("SELECT id, region, amount, ROW_NUMBER() OVER (ORDER BY amount) AS rn FROM sales")
+		if err != nil {
+			t.Fatalf("ROW_NUMBER query failed: %v", err)
+		}
+		// Should have 5 rows
+		if len(result.Rows) != 5 {
+			t.Errorf("Expected 5 rows, got %d", len(result.Rows))
+		}
+		t.Logf("ROW_NUMBER result (%d rows): %v", len(result.Rows), result.Rows)
+	})
+
+	// Test 2: ROW_NUMBER() with PARTITION BY
+	t.Run("RowNumberPartition", func(t *testing.T) {
+		result, err := exec.Execute("SELECT id, region, amount, ROW_NUMBER() OVER (PARTITION BY region ORDER BY amount) AS rn FROM sales")
+		if err != nil {
+			t.Fatalf("ROW_NUMBER with PARTITION BY failed: %v", err)
+		}
+		// Should have 5 rows
+		if len(result.Rows) != 5 {
+			t.Errorf("Expected 5 rows, got %d", len(result.Rows))
+		}
+		t.Logf("ROW_NUMBER with PARTITION BY result (%d rows): %v", len(result.Rows), result.Rows)
+	})
+
+	// Test 3: COUNT() window function
+	t.Run("CountWindow", func(t *testing.T) {
+		result, err := exec.Execute("SELECT id, region, amount, COUNT(*) OVER () AS total_count FROM sales")
+		if err != nil {
+			t.Fatalf("COUNT window query failed: %v", err)
+		}
+		// Should have 5 rows
+		if len(result.Rows) != 5 {
+			t.Errorf("Expected 5 rows, got %d", len(result.Rows))
+		}
+		// Each row should have total_count = 5
+		for i, row := range result.Rows {
+			if len(row) >= 4 && row[3] != int64(5) {
+				t.Errorf("Row %d: Expected total_count=5, got %v", i, row[3])
+			}
+		}
+		t.Logf("COUNT window result (%d rows): %v", len(result.Rows), result.Rows)
+	})
+
+	// Test 4: SUM() window function
+	t.Run("SumWindow", func(t *testing.T) {
+		result, err := exec.Execute("SELECT id, region, amount, SUM(amount) OVER () AS total_sum FROM sales")
+		if err != nil {
+			t.Fatalf("SUM window query failed: %v", err)
+		}
+		// Should have 5 rows, each with total_sum = 100+150+200+250+300 = 1000
+		if len(result.Rows) != 5 {
+			t.Errorf("Expected 5 rows, got %d", len(result.Rows))
+		}
+		t.Logf("SUM window result (%d rows): %v", len(result.Rows), result.Rows)
+	})
+
+	// Test 5: SUM() with PARTITION BY
+	t.Run("SumPartition", func(t *testing.T) {
+		result, err := exec.Execute("SELECT id, region, amount, SUM(amount) OVER (PARTITION BY region) AS region_sum FROM sales")
+		if err != nil {
+			t.Fatalf("SUM with PARTITION BY failed: %v", err)
+		}
+		// Should have 5 rows
+		if len(result.Rows) != 5 {
+			t.Errorf("Expected 5 rows, got %d", len(result.Rows))
+		}
+		t.Logf("SUM with PARTITION BY result (%d rows): %v", len(result.Rows), result.Rows)
+	})
+
+	// Test 6: AVG() window function
+	t.Run("AvgWindow", func(t *testing.T) {
+		result, err := exec.Execute("SELECT id, region, amount, AVG(amount) OVER () AS avg_amount FROM sales")
+		if err != nil {
+			t.Fatalf("AVG window query failed: %v", err)
+		}
+		// Should have 5 rows
+		if len(result.Rows) != 5 {
+			t.Errorf("Expected 5 rows, got %d", len(result.Rows))
+		}
+		t.Logf("AVG window result (%d rows): %v", len(result.Rows), result.Rows)
+	})
+
+	// Test 7: MIN/MAX window functions
+	t.Run("MinMaxWindow", func(t *testing.T) {
+		result, err := exec.Execute("SELECT id, amount, MIN(amount) OVER () AS min_amt, MAX(amount) OVER () AS max_amt FROM sales")
+		if err != nil {
+			t.Fatalf("MIN/MAX window query failed: %v", err)
+		}
+		// Should have 5 rows
+		if len(result.Rows) != 5 {
+			t.Errorf("Expected 5 rows, got %d", len(result.Rows))
+		}
+		t.Logf("MIN/MAX window result (%d rows): %v", len(result.Rows), result.Rows)
+	})
+}

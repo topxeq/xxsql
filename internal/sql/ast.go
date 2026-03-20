@@ -997,6 +997,58 @@ func (f *FunctionCall) String() string {
 	return sb.String()
 }
 
+// WindowSpec represents the window specification for window functions.
+type WindowSpec struct {
+	PartitionBy []Expression // PARTITION BY expressions
+	OrderBy     []*OrderByItem // ORDER BY items
+	Name        string      // Named window reference (optional)
+}
+
+func (w *WindowSpec) String() string {
+	var sb strings.Builder
+	sb.WriteString("OVER (")
+	if len(w.PartitionBy) > 0 {
+		sb.WriteString("PARTITION BY ")
+		for i, expr := range w.PartitionBy {
+			if i > 0 {
+				sb.WriteString(", ")
+			}
+			sb.WriteString(expr.String())
+		}
+	}
+	if len(w.OrderBy) > 0 {
+		if len(w.PartitionBy) > 0 {
+			sb.WriteString(" ")
+		}
+		sb.WriteString("ORDER BY ")
+		for i, item := range w.OrderBy {
+			if i > 0 {
+				sb.WriteString(", ")
+			}
+			sb.WriteString(item.String())
+		}
+	}
+	sb.WriteString(")")
+	return sb.String()
+}
+
+// WindowFuncCall represents a window function call with OVER clause.
+type WindowFuncCall struct {
+	Func   *FunctionCall // The function being called
+	Window *WindowSpec   // The window specification
+	Alias  string        // optional alias
+}
+
+func (w *WindowFuncCall) node()       {}
+func (w *WindowFuncCall) expression() {}
+func (w *WindowFuncCall) String() string {
+	var sb strings.Builder
+	sb.WriteString(w.Func.String())
+	sb.WriteString(" ")
+	sb.WriteString(w.Window.String())
+	return sb.String()
+}
+
 // BetweenExpr represents a BETWEEN expression.
 type BetweenExpr struct {
 	Expr   Expression

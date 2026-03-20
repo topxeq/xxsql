@@ -155,6 +155,16 @@ const (
 	TokAt
 	TokFor
 
+	// Keywords - Window Functions
+	TokOver
+	TokPartition
+	TokWindow
+	TokRows
+	TokRange
+	TokPreceding
+	TokFollowing
+	TokCurrent
+
 	// Keywords - UDF
 	TokFunction
 	TokReturns
@@ -430,6 +440,22 @@ func (t TokenType) String() string {
 		return "@"
 	case TokFor:
 		return "FOR"
+	case TokOver:
+		return "OVER"
+	case TokPartition:
+		return "PARTITION"
+	case TokWindow:
+		return "WINDOW"
+	case TokRows:
+		return "ROWS"
+	case TokRange:
+		return "RANGE"
+	case TokPreceding:
+		return "PRECEDING"
+	case TokFollowing:
+		return "FOLLOWING"
+	case TokCurrent:
+		return "CURRENT"
 	case TokFunction:
 		return "FUNCTION"
 	case TokReturns:
@@ -580,6 +606,14 @@ var keywords = map[string]TokenType{
 	"WITH":         TokWith,
 	"RECURSIVE":    TokRecursive,
 	"FOR":          TokFor,
+	"OVER":         TokOver,
+	"PARTITION":    TokPartition,
+	"WINDOW":       TokWindow,
+	"ROWS":         TokRows,
+	"RANGE":        TokRange,
+	"PRECEDING":    TokPreceding,
+	"FOLLOWING":    TokFollowing,
+	"CURRENT":      TokCurrent,
 	"FUNCTION":     TokFunction,
 	"RETURNS":      TokReturns,
 	"RETURN":       TokReturn,

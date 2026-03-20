@@ -92,7 +92,7 @@ The following comparison highlights key differences between XxSql and SQLite acr
 | **UNION** | UNION/UNION ALL/INTERSECT/EXCEPT | UNION/UNION ALL/INTERSECT/EXCEPT |
 | **Subqueries** | Full support (all locations) | SELECT list, WHERE, HAVING, FROM clause |
 | **Correlated Subqueries** | Yes | Yes |
-| **Window Functions** | Yes | No |
+| **Window Functions** | Yes | Yes (ROW_NUMBER, RANK, DENSE_RANK, aggregates) |
 | **CTE (WITH clause)** | Yes (recursive too) | Yes (with recursive support) |
 | **GROUP BY** | Yes | Yes |
 | **HAVING** | Yes | Yes (with subquery support) |
@@ -869,6 +869,89 @@ SELECT user_id FROM cancelled_orders;
 - All queries in a set operation must have the same number of columns
 - Column names are taken from the first query
 - `UNION ALL` is more efficient than `UNION` when duplicates are acceptable
+
+### Window Functions
+
+XxSql supports window functions that perform calculations across a set of rows related to the current row.
+
+#### Supported Window Functions
+
+| Function | Description |
+|----------|-------------|
+| `ROW_NUMBER()` | Assigns a unique sequential integer to rows within a partition |
+| `RANK()` | Assigns a rank with gaps for ties |
+| `DENSE_RANK()` | Assigns a rank without gaps for ties |
+| `COUNT()` | Counts rows in the window frame |
+| `SUM()` | Calculates sum of values in the window frame |
+| `AVG()` | Calculates average of values in the window frame |
+| `MIN()` | Returns minimum value in the window frame |
+| `MAX()` | Returns maximum value in the window frame |
+
+#### Syntax
+
+```sql
+function_name() OVER (
+    [PARTITION BY column1, column2, ...]
+    [ORDER BY column [ASC|DESC], ...]
+)
+```
+
+#### Examples
+
+**1. ROW_NUMBER() - Sequential numbering:**
+```sql
+-- Assign row numbers to all rows
+SELECT id, name, amount,
+       ROW_NUMBER() OVER (ORDER BY amount DESC) AS row_num
+FROM sales;
+
+-- Row numbers within each region
+SELECT id, region, amount,
+       ROW_NUMBER() OVER (PARTITION BY region ORDER BY amount DESC) AS row_num
+FROM sales;
+```
+
+**2. RANK() and DENSE_RANK() - Ranking:**
+```sql
+-- RANK with gaps for ties
+SELECT id, name, score,
+       RANK() OVER (ORDER BY score DESC) AS rank
+FROM students;
+
+-- DENSE_RANK without gaps
+SELECT id, name, score,
+       DENSE_RANK() OVER (ORDER BY score DESC) AS dense_rank
+FROM students;
+```
+
+**3. Aggregate Window Functions:**
+```sql
+-- Running total
+SELECT id, amount,
+       SUM(amount) OVER (ORDER BY id) AS running_total
+FROM sales;
+
+-- Total and regional sum
+SELECT id, region, amount,
+       SUM(amount) OVER () AS total_sales,
+       SUM(amount) OVER (PARTITION BY region) AS region_sales
+FROM sales;
+
+-- Average comparison
+SELECT id, name, salary,
+       AVG(salary) OVER () AS avg_salary
+FROM employees;
+```
+
+**4. Multiple Window Functions:**
+```sql
+SELECT
+    id, region, amount,
+    ROW_NUMBER() OVER (PARTITION BY region ORDER BY amount DESC) AS region_rank,
+    SUM(amount) OVER (PARTITION BY region) AS region_total,
+    AVG(amount) OVER () AS global_avg
+FROM sales;
+```
 
 ### User Management
 
