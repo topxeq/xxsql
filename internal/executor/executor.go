@@ -2,8 +2,10 @@
 package executor
 
 import (
+	"encoding/json"
 	"fmt"
 	"math"
+	"math/rand"
 	"regexp"
 	"sort"
 	"strconv"
@@ -5105,7 +5107,8 @@ func (e *Executor) evaluateFunction(fc *sql.FunctionCall, r *row.Row, columnMap 
 			case *sql.Literal:
 				return ex.Value, nil
 			case *sql.ColumnRef:
-				return nil, nil
+				// Return the column name as a string (for cases like TIMESTAMPDIFF(DAY, ...))
+				return ex.Name, nil
 			case *sql.CastExpr:
 				return e.castValueFromExpr(ex)
 			case *sql.FunctionCall:
@@ -6891,6 +6894,806 @@ func (e *Executor) evaluateFunction(fc *sql.FunctionCall, r *row.Row, columnMap 
 		}
 		return matched, nil
 
+	// ========== JSON Functions ==========
+	case "JSON_EXTRACT":
+		if len(fc.Args) < 2 {
+			return nil, fmt.Errorf("JSON_EXTRACT requires at least 2 arguments")
+		}
+		jsonArg, err := evalExpr(fc.Args[0])
+		if err != nil {
+			return nil, err
+		}
+		if jsonArg == nil {
+			return nil, nil
+		}
+		jsonStr, ok := jsonArg.(string)
+		if !ok {
+			jsonStr = fmt.Sprintf("%v", jsonArg)
+		}
+		// Parse JSON
+		var jsonVal interface{}
+		if err := json.Unmarshal([]byte(jsonStr), &jsonVal); err != nil {
+			return nil, fmt.Errorf("JSON_EXTRACT: invalid JSON: %v", err)
+		}
+		// Extract path (simplified - supports $.key and $[index])
+		pathArg, err := evalExpr(fc.Args[1])
+		if err != nil {
+			return nil, err
+		}
+		path, ok := pathArg.(string)
+		if !ok {
+			path = fmt.Sprintf("%v", pathArg)
+		}
+		result := extractJSONPath(jsonVal, path)
+		return result, nil
+
+	case "JSON_ARRAY":
+		arr := make([]interface{}, len(fc.Args))
+		for i, arg := range fc.Args {
+			val, err := evalExpr(arg)
+			if err != nil {
+				return nil, err
+			}
+			arr[i] = val
+		}
+		bytes, err := json.Marshal(arr)
+		if err != nil {
+			return nil, err
+		}
+		return string(bytes), nil
+
+	case "JSON_OBJECT":
+		if len(fc.Args)%2 != 0 {
+			return nil, fmt.Errorf("JSON_OBJECT requires even number of arguments")
+		}
+		obj := make(map[string]interface{})
+		for i := 0; i < len(fc.Args); i += 2 {
+			keyArg, err := evalExpr(fc.Args[i])
+			if err != nil {
+				return nil, err
+			}
+			key, ok := keyArg.(string)
+			if !ok {
+				key = fmt.Sprintf("%v", keyArg)
+			}
+			val, err := evalExpr(fc.Args[i+1])
+			if err != nil {
+				return nil, err
+			}
+			obj[key] = val
+		}
+		bytes, err := json.Marshal(obj)
+		if err != nil {
+			return nil, err
+		}
+		return string(bytes), nil
+
+	case "JSON_TYPE":
+		if len(fc.Args) == 0 {
+			return nil, fmt.Errorf("JSON_TYPE requires 1 argument")
+		}
+		arg, err := evalExpr(fc.Args[0])
+		if err != nil {
+			return nil, err
+		}
+		if arg == nil {
+			return "NULL", nil
+		}
+		jsonStr, ok := arg.(string)
+		if !ok {
+			jsonStr = fmt.Sprintf("%v", arg)
+		}
+		var jsonVal interface{}
+		if err := json.Unmarshal([]byte(jsonStr), &jsonVal); err != nil {
+			return nil, fmt.Errorf("JSON_TYPE: invalid JSON: %v", err)
+		}
+		return getJSONType(jsonVal), nil
+
+	case "JSON_UNQUOTE":
+		if len(fc.Args) == 0 {
+			return nil, fmt.Errorf("JSON_UNQUOTE requires 1 argument")
+		}
+		arg, err := evalExpr(fc.Args[0])
+		if err != nil {
+			return nil, err
+		}
+		if arg == nil {
+			return nil, nil
+		}
+		jsonStr, ok := arg.(string)
+		if !ok {
+			jsonStr = fmt.Sprintf("%v", arg)
+		}
+		var jsonVal interface{}
+		if err := json.Unmarshal([]byte(jsonStr), &jsonVal); err != nil {
+			// Not valid JSON, return as-is
+			return jsonStr, nil
+		}
+		if str, ok := jsonVal.(string); ok {
+			return str, nil
+		}
+		bytes, _ := json.Marshal(jsonVal)
+		return string(bytes), nil
+
+	case "JSON_VALID":
+		if len(fc.Args) == 0 {
+			return nil, fmt.Errorf("JSON_VALID requires 1 argument")
+		}
+		arg, err := evalExpr(fc.Args[0])
+		if err != nil {
+			return nil, err
+		}
+		if arg == nil {
+			return false, nil
+		}
+		jsonStr, ok := arg.(string)
+		if !ok {
+			jsonStr = fmt.Sprintf("%v", arg)
+		}
+		var jsonVal interface{}
+		err = json.Unmarshal([]byte(jsonStr), &jsonVal)
+		return err == nil, nil
+
+	case "JSON_KEYS":
+		if len(fc.Args) == 0 {
+			return nil, fmt.Errorf("JSON_KEYS requires 1 argument")
+		}
+		arg, err := evalExpr(fc.Args[0])
+		if err != nil {
+			return nil, err
+		}
+		if arg == nil {
+			return nil, nil
+		}
+		jsonStr, ok := arg.(string)
+		if !ok {
+			jsonStr = fmt.Sprintf("%v", arg)
+		}
+		var jsonVal interface{}
+		if err := json.Unmarshal([]byte(jsonStr), &jsonVal); err != nil {
+			return nil, fmt.Errorf("JSON_KEYS: invalid JSON: %v", err)
+		}
+		obj, ok := jsonVal.(map[string]interface{})
+		if !ok {
+			return nil, nil
+		}
+		keys := make([]interface{}, 0, len(obj))
+		for k := range obj {
+			keys = append(keys, k)
+		}
+		// Return as JSON array
+		bytes, _ := json.Marshal(keys)
+		return string(bytes), nil
+
+	case "JSON_LENGTH":
+		if len(fc.Args) == 0 {
+			return nil, fmt.Errorf("JSON_LENGTH requires 1 argument")
+		}
+		arg, err := evalExpr(fc.Args[0])
+		if err != nil {
+			return nil, err
+		}
+		if arg == nil {
+			return nil, nil
+		}
+		jsonStr, ok := arg.(string)
+		if !ok {
+			jsonStr = fmt.Sprintf("%v", arg)
+		}
+		var jsonVal interface{}
+		if err := json.Unmarshal([]byte(jsonStr), &jsonVal); err != nil {
+			return nil, fmt.Errorf("JSON_LENGTH: invalid JSON: %v", err)
+		}
+		switch v := jsonVal.(type) {
+		case []interface{}:
+			return int64(len(v)), nil
+		case map[string]interface{}:
+			return int64(len(v)), nil
+		default:
+			return int64(1), nil
+		}
+
+	// ========== Additional Math Functions ==========
+	case "TRUNCATE":
+		if len(fc.Args) < 2 {
+			return nil, fmt.Errorf("TRUNCATE requires 2 arguments")
+		}
+		arg, err := evalExpr(fc.Args[0])
+		if err != nil {
+			return nil, err
+		}
+		if arg == nil {
+			return nil, nil
+		}
+		var val float64
+		switch v := arg.(type) {
+		case int:
+			val = float64(v)
+		case int64:
+			val = float64(v)
+		case float64:
+			val = v
+		default:
+			return nil, fmt.Errorf("TRUNCATE requires numeric argument")
+		}
+		precArg, err := evalExpr(fc.Args[1])
+		if err != nil {
+			return nil, err
+		}
+		var precision int
+		switch v := precArg.(type) {
+		case int:
+			precision = v
+		case int64:
+			precision = int(v)
+		case float64:
+			precision = int(v)
+		}
+		multiplier := math.Pow(10, float64(precision))
+		result := math.Trunc(val*multiplier) / multiplier
+		if precision == 0 {
+			return int64(result), nil
+		}
+		return result, nil
+
+	case "COS":
+		if len(fc.Args) == 0 {
+			return nil, fmt.Errorf("COS requires 1 argument")
+		}
+		arg, err := evalExpr(fc.Args[0])
+		if err != nil {
+			return nil, err
+		}
+		if arg == nil {
+			return nil, nil
+		}
+		var val float64
+		switch v := arg.(type) {
+		case int:
+			val = float64(v)
+		case int64:
+			val = float64(v)
+		case float64:
+			val = v
+		default:
+			return nil, fmt.Errorf("COS requires numeric argument")
+		}
+		return math.Cos(val), nil
+
+	case "SIN":
+		if len(fc.Args) == 0 {
+			return nil, fmt.Errorf("SIN requires 1 argument")
+		}
+		arg, err := evalExpr(fc.Args[0])
+		if err != nil {
+			return nil, err
+		}
+		if arg == nil {
+			return nil, nil
+		}
+		var val float64
+		switch v := arg.(type) {
+		case int:
+			val = float64(v)
+		case int64:
+			val = float64(v)
+		case float64:
+			val = v
+		default:
+			return nil, fmt.Errorf("SIN requires numeric argument")
+		}
+		return math.Sin(val), nil
+
+	case "TAN":
+		if len(fc.Args) == 0 {
+			return nil, fmt.Errorf("TAN requires 1 argument")
+		}
+		arg, err := evalExpr(fc.Args[0])
+		if err != nil {
+			return nil, err
+		}
+		if arg == nil {
+			return nil, nil
+		}
+		var val float64
+		switch v := arg.(type) {
+		case int:
+			val = float64(v)
+		case int64:
+			val = float64(v)
+		case float64:
+			val = v
+		default:
+			return nil, fmt.Errorf("TAN requires numeric argument")
+		}
+		return math.Tan(val), nil
+
+	case "ACOS":
+		if len(fc.Args) == 0 {
+			return nil, fmt.Errorf("ACOS requires 1 argument")
+		}
+		arg, err := evalExpr(fc.Args[0])
+		if err != nil {
+			return nil, err
+		}
+		if arg == nil {
+			return nil, nil
+		}
+		var val float64
+		switch v := arg.(type) {
+		case int:
+			val = float64(v)
+		case int64:
+			val = float64(v)
+		case float64:
+			val = v
+		default:
+			return nil, fmt.Errorf("ACOS requires numeric argument")
+		}
+		if val < -1 || val > 1 {
+			return nil, nil
+		}
+		return math.Acos(val), nil
+
+	case "ASIN":
+		if len(fc.Args) == 0 {
+			return nil, fmt.Errorf("ASIN requires 1 argument")
+		}
+		arg, err := evalExpr(fc.Args[0])
+		if err != nil {
+			return nil, err
+		}
+		if arg == nil {
+			return nil, nil
+		}
+		var val float64
+		switch v := arg.(type) {
+		case int:
+			val = float64(v)
+		case int64:
+			val = float64(v)
+		case float64:
+			val = v
+		default:
+			return nil, fmt.Errorf("ASIN requires numeric argument")
+		}
+		if val < -1 || val > 1 {
+			return nil, nil
+		}
+		return math.Asin(val), nil
+
+	case "ATAN":
+		if len(fc.Args) == 0 {
+			return nil, fmt.Errorf("ATAN requires at least 1 argument")
+		}
+		arg, err := evalExpr(fc.Args[0])
+		if err != nil {
+			return nil, err
+		}
+		if arg == nil {
+			return nil, nil
+		}
+		var val float64
+		switch v := arg.(type) {
+		case int:
+			val = float64(v)
+		case int64:
+			val = float64(v)
+		case float64:
+			val = v
+		default:
+			return nil, fmt.Errorf("ATAN requires numeric argument")
+		}
+		if len(fc.Args) >= 2 {
+			arg2, err := evalExpr(fc.Args[1])
+			if err != nil {
+				return nil, err
+			}
+			var val2 float64
+			switch v := arg2.(type) {
+			case int:
+				val2 = float64(v)
+			case int64:
+				val2 = float64(v)
+			case float64:
+				val2 = v
+			default:
+				return nil, fmt.Errorf("ATAN requires numeric argument")
+			}
+			return math.Atan2(val, val2), nil
+		}
+		return math.Atan(val), nil
+
+	case "ATAN2":
+		if len(fc.Args) < 2 {
+			return nil, fmt.Errorf("ATAN2 requires 2 arguments")
+		}
+		arg1, err := evalExpr(fc.Args[0])
+		if err != nil {
+			return nil, err
+		}
+		arg2, err := evalExpr(fc.Args[1])
+		if err != nil {
+			return nil, err
+		}
+		if arg1 == nil || arg2 == nil {
+			return nil, nil
+		}
+		var y, x float64
+		switch v := arg1.(type) {
+		case int:
+			y = float64(v)
+		case int64:
+			y = float64(v)
+		case float64:
+			y = v
+		}
+		switch v := arg2.(type) {
+		case int:
+			x = float64(v)
+		case int64:
+			x = float64(v)
+		case float64:
+			x = v
+		}
+		return math.Atan2(y, x), nil
+
+	case "COT":
+		if len(fc.Args) == 0 {
+			return nil, fmt.Errorf("COT requires 1 argument")
+		}
+		arg, err := evalExpr(fc.Args[0])
+		if err != nil {
+			return nil, err
+		}
+		if arg == nil {
+			return nil, nil
+		}
+		var val float64
+		switch v := arg.(type) {
+		case int:
+			val = float64(v)
+		case int64:
+			val = float64(v)
+		case float64:
+			val = v
+		default:
+			return nil, fmt.Errorf("COT requires numeric argument")
+		}
+		sinVal := math.Sin(val)
+		if sinVal == 0 {
+			return nil, nil
+		}
+		return math.Cos(val) / sinVal, nil
+
+	case "DEGREES":
+		if len(fc.Args) == 0 {
+			return nil, fmt.Errorf("DEGREES requires 1 argument")
+		}
+		arg, err := evalExpr(fc.Args[0])
+		if err != nil {
+			return nil, err
+		}
+		if arg == nil {
+			return nil, nil
+		}
+		var val float64
+		switch v := arg.(type) {
+		case int:
+			val = float64(v)
+		case int64:
+			val = float64(v)
+		case float64:
+			val = v
+		default:
+			return nil, fmt.Errorf("DEGREES requires numeric argument")
+		}
+		return val * 180 / math.Pi, nil
+
+	case "RADIANS":
+		if len(fc.Args) == 0 {
+			return nil, fmt.Errorf("RADIANS requires 1 argument")
+		}
+		arg, err := evalExpr(fc.Args[0])
+		if err != nil {
+			return nil, err
+		}
+		if arg == nil {
+			return nil, nil
+		}
+		var val float64
+		switch v := arg.(type) {
+		case int:
+			val = float64(v)
+		case int64:
+			val = float64(v)
+		case float64:
+			val = v
+		default:
+			return nil, fmt.Errorf("RADIANS requires numeric argument")
+		}
+		return val * math.Pi / 180, nil
+
+	case "RAND":
+		if len(fc.Args) == 0 {
+			return rand.Float64(), nil
+		}
+		seedArg, err := evalExpr(fc.Args[0])
+		if err != nil {
+			return nil, err
+		}
+		var seed int64
+		switch v := seedArg.(type) {
+		case int:
+			seed = int64(v)
+		case int64:
+			seed = v
+		case float64:
+			seed = int64(v)
+		default:
+			return rand.Float64(), nil
+		}
+		r := rand.New(rand.NewSource(seed))
+		return r.Float64(), nil
+
+	// ========== Additional String Functions ==========
+	case "FORMAT":
+		if len(fc.Args) < 2 {
+			return nil, fmt.Errorf("FORMAT requires at least 2 arguments")
+		}
+		arg, err := evalExpr(fc.Args[0])
+		if err != nil {
+			return nil, err
+		}
+		if arg == nil {
+			return nil, nil
+		}
+		precisionArg, err := evalExpr(fc.Args[1])
+		if err != nil {
+			return nil, err
+		}
+		var precision int
+		switch v := precisionArg.(type) {
+		case int:
+			precision = v
+		case int64:
+			precision = int(v)
+		case float64:
+			precision = int(v)
+		}
+		var val float64
+		switch v := arg.(type) {
+		case int:
+			val = float64(v)
+		case int64:
+			val = float64(v)
+		case float64:
+			val = v
+		default:
+			return fmt.Sprintf("%v", arg), nil
+		}
+		return fmt.Sprintf(fmt.Sprintf("%%.%df", precision), val), nil
+
+	case "SOUNDEX":
+		if len(fc.Args) == 0 {
+			return nil, fmt.Errorf("SOUNDEX requires 1 argument")
+		}
+		arg, err := evalExpr(fc.Args[0])
+		if err != nil {
+			return nil, err
+		}
+		if arg == nil {
+			return nil, nil
+		}
+		str, ok := arg.(string)
+		if !ok {
+			str = fmt.Sprintf("%v", arg)
+		}
+		return soundex(str), nil
+
+	case "DIFFERENCE":
+		if len(fc.Args) < 2 {
+			return nil, fmt.Errorf("DIFFERENCE requires 2 arguments")
+		}
+		arg1, err := evalExpr(fc.Args[0])
+		if err != nil {
+			return nil, err
+		}
+		arg2, err := evalExpr(fc.Args[1])
+		if err != nil {
+			return nil, err
+		}
+		if arg1 == nil || arg2 == nil {
+			return nil, nil
+		}
+		str1, ok := arg1.(string)
+		if !ok {
+			str1 = fmt.Sprintf("%v", arg1)
+		}
+		str2, ok := arg2.(string)
+		if !ok {
+			str2 = fmt.Sprintf("%v", arg2)
+		}
+		return soundexDifference(str1, str2), nil
+
+	// ========== Additional Date Functions ==========
+	case "TIMESTAMPDIFF":
+		if len(fc.Args) < 3 {
+			return nil, fmt.Errorf("TIMESTAMPDIFF requires 3 arguments")
+		}
+		unitArg, err := evalExpr(fc.Args[0])
+		if err != nil {
+			return nil, err
+		}
+		dt1Arg, err := evalExpr(fc.Args[1])
+		if err != nil {
+			return nil, err
+		}
+		dt2Arg, err := evalExpr(fc.Args[2])
+		if err != nil {
+			return nil, err
+		}
+		if dt1Arg == nil || dt2Arg == nil {
+			return nil, nil
+		}
+		unit, ok := unitArg.(string)
+		if !ok {
+			unit = fmt.Sprintf("%v", unitArg)
+		}
+		var t1, t2 time.Time
+		switch v := dt1Arg.(type) {
+		case string:
+			t1, _ = parseDateTime(v)
+		case time.Time:
+			t1 = v
+		}
+		switch v := dt2Arg.(type) {
+		case string:
+			t2, _ = parseDateTime(v)
+		case time.Time:
+			t2 = v
+		}
+		return timestampDiff(unit, t1, t2), nil
+
+	case "MAKEDATE":
+		if len(fc.Args) < 2 {
+			return nil, fmt.Errorf("MAKEDATE requires 2 arguments")
+		}
+		yearArg, err := evalExpr(fc.Args[0])
+		if err != nil {
+			return nil, err
+		}
+		dayArg, err := evalExpr(fc.Args[1])
+		if err != nil {
+			return nil, err
+		}
+		var year, day int
+		switch v := yearArg.(type) {
+		case int:
+			year = v
+		case int64:
+			year = int(v)
+		case float64:
+			year = int(v)
+		}
+		switch v := dayArg.(type) {
+		case int:
+			day = v
+		case int64:
+			day = int(v)
+		case float64:
+			day = int(v)
+		}
+		t := time.Date(year, 1, 1, 0, 0, 0, 0, time.UTC)
+		t = t.AddDate(0, 0, day-1)
+		return t.Format("2006-01-02"), nil
+
+	case "MAKETIME":
+		if len(fc.Args) < 3 {
+			return nil, fmt.Errorf("MAKETIME requires 3 arguments")
+		}
+		hourArg, err := evalExpr(fc.Args[0])
+		if err != nil {
+			return nil, err
+		}
+		minArg, err := evalExpr(fc.Args[1])
+		if err != nil {
+			return nil, err
+		}
+		secArg, err := evalExpr(fc.Args[2])
+		if err != nil {
+			return nil, err
+		}
+		var hour, min, sec int
+		switch v := hourArg.(type) {
+		case int:
+			hour = v
+		case int64:
+			hour = int(v)
+		case float64:
+			hour = int(v)
+		}
+		switch v := minArg.(type) {
+		case int:
+			min = v
+		case int64:
+			min = int(v)
+		case float64:
+			min = int(v)
+		}
+		switch v := secArg.(type) {
+		case int:
+			sec = v
+		case int64:
+			sec = int(v)
+		case float64:
+			sec = int(v)
+		}
+		return fmt.Sprintf("%02d:%02d:%02d", hour, min, sec), nil
+
+	case "SEC_TO_TIME":
+		if len(fc.Args) == 0 {
+			return nil, fmt.Errorf("SEC_TO_TIME requires 1 argument")
+		}
+		arg, err := evalExpr(fc.Args[0])
+		if err != nil {
+			return nil, err
+		}
+		if arg == nil {
+			return nil, nil
+		}
+		var secs int
+		switch v := arg.(type) {
+		case int:
+			secs = v
+		case int64:
+			secs = int(v)
+		case float64:
+			secs = int(v)
+		}
+		hours := secs / 3600
+		secs %= 3600
+		mins := secs / 60
+		secs %= 60
+		return fmt.Sprintf("%02d:%02d:%02d", hours, mins, secs), nil
+
+	case "TIME_TO_SEC":
+		if len(fc.Args) == 0 {
+			return nil, fmt.Errorf("TIME_TO_SEC requires 1 argument")
+		}
+		arg, err := evalExpr(fc.Args[0])
+		if err != nil {
+			return nil, err
+		}
+		if arg == nil {
+			return nil, nil
+		}
+		timeStr, ok := arg.(string)
+		if !ok {
+			timeStr = fmt.Sprintf("%v", arg)
+		}
+		parts := strings.Split(timeStr, ":")
+		if len(parts) >= 2 {
+			hours, _ := strconv.Atoi(parts[0])
+			mins, _ := strconv.Atoi(parts[1])
+			secs := 0
+			if len(parts) >= 3 {
+				secs, _ = strconv.Atoi(parts[2])
+			}
+			return int64(hours*3600 + mins*60 + secs), nil
+		}
+		return int64(0), nil
+
+	// ========== System Functions ==========
+	case "USER", "CURRENT_USER":
+		return "admin", nil // Default user for now
+
+	case "VERSION":
+		return "XxSQL 0.0.5", nil
+
+	case "CONNECTION_ID":
+		return int64(1), nil // Single connection for now
+
 	// ========== More Aggregate Functions ==========
 	// STDDEV and VARIANCE are handled in executeGroupBy
 
@@ -8006,4 +8809,219 @@ type TablePrivilege struct {
 	Create bool
 	Drop   bool
 	Index  bool
+}
+
+// ========== JSON Helper Functions ==========
+
+// extractJSONPath extracts a value from JSON using a path like $.key or $[0]
+func extractJSONPath(jsonVal interface{}, path string) interface{} {
+	// Remove leading $ if present
+	if len(path) > 0 && path[0] == '$' {
+		path = path[1:]
+	}
+	if path == "" {
+		return jsonVal
+	}
+
+	current := jsonVal
+	i := 0
+	for i < len(path) {
+		if path[i] == '.' {
+			// Object key access
+			i++
+			start := i
+			for i < len(path) && path[i] != '.' && path[i] != '[' {
+				i++
+			}
+			key := path[start:i]
+			obj, ok := current.(map[string]interface{})
+			if !ok {
+				return nil
+			}
+			current = obj[key]
+		} else if path[i] == '[' {
+			// Array index access
+			i++
+			start := i
+			for i < len(path) && path[i] != ']' {
+				i++
+			}
+			if i >= len(path) {
+				return nil
+			}
+			indexStr := path[start:i]
+			var index int
+			fmt.Sscanf(indexStr, "%d", &index)
+			i++ // skip ]
+			arr, ok := current.([]interface{})
+			if !ok {
+				return nil
+			}
+			if index < 0 || index >= len(arr) {
+				return nil
+			}
+			current = arr[index]
+		} else {
+			i++
+		}
+	}
+
+	// Convert result to string if it's a JSON string
+	if str, ok := current.(string); ok {
+		return str
+	}
+	// For objects/arrays, return JSON string
+	bytes, err := json.Marshal(current)
+	if err != nil {
+		return current
+	}
+	return string(bytes)
+}
+
+// getJSONType returns the JSON type of a value
+func getJSONType(jsonVal interface{}) string {
+	switch jsonVal.(type) {
+	case nil:
+		return "NULL"
+	case bool:
+		return "BOOLEAN"
+	case float64:
+		return "NUMBER"
+	case string:
+		return "STRING"
+	case []interface{}:
+		return "ARRAY"
+	case map[string]interface{}:
+		return "OBJECT"
+	default:
+		return "UNKNOWN"
+	}
+}
+
+// ========== Soundex Helper Functions ==========
+
+// soundex returns the soundex code for a string
+func soundex(s string) string {
+	if len(s) == 0 {
+		return "0000"
+	}
+
+	// Convert to uppercase and remove non-alpha
+	s = strings.ToUpper(s)
+	var cleaned strings.Builder
+	for _, c := range s {
+		if c >= 'A' && c <= 'Z' {
+			cleaned.WriteRune(c)
+		}
+	}
+	s = cleaned.String()
+	if len(s) == 0 {
+		return "0000"
+	}
+
+	// Soundex mappings
+	mapping := map[byte]byte{
+		'B': '1', 'F': '1', 'P': '1', 'V': '1',
+		'C': '2', 'G': '2', 'J': '2', 'K': '2', 'Q': '2', 'S': '2', 'X': '2', 'Z': '2',
+		'D': '3', 'T': '3',
+		'L': '4',
+		'M': '5', 'N': '5',
+		'R': '6',
+	}
+
+	var result strings.Builder
+	result.WriteByte(s[0]) // First letter
+
+	lastCode := byte('0')
+	if code, ok := mapping[s[0]]; ok {
+		lastCode = code
+	}
+
+	for i := 1; i < len(s) && result.Len() < 4; i++ {
+		code, ok := mapping[s[i]]
+		if ok && code != lastCode {
+			result.WriteByte(code)
+			lastCode = code
+		} else if !ok {
+			// Vowels and H, W don't have codes
+			lastCode = '0'
+		}
+	}
+
+	// Pad with zeros
+	for result.Len() < 4 {
+		result.WriteByte('0')
+	}
+
+	return result.String()
+}
+
+// soundexDifference returns the difference between two soundex codes (0-4)
+func soundexDifference(str1, str2 string) int {
+	s1 := soundex(str1)
+	s2 := soundex(str2)
+
+	diff := 0
+	for i := 0; i < 4; i++ {
+		if s1[i] == s2[i] {
+			diff++
+		}
+	}
+	return diff
+}
+
+// ========== DateTime Helper Functions ==========
+
+// parseDateTime parses a datetime string in various formats
+func parseDateTime(s string) (time.Time, error) {
+	formats := []string{
+		"2006-01-02 15:04:05",
+		"2006-01-02",
+		"2006-01-02T15:04:05",
+		"2006-01-02T15:04:05Z07:00",
+		"2006-01-02 15:04:05.999",
+		"15:04:05",
+		time.RFC3339,
+		time.RFC3339Nano,
+	}
+
+	for _, format := range formats {
+		if t, err := time.Parse(format, s); err == nil {
+			return t, nil
+		}
+	}
+	return time.Time{}, fmt.Errorf("cannot parse datetime: %s", s)
+}
+
+// timestampDiff returns the difference between two timestamps in the specified unit
+func timestampDiff(unit string, t1, t2 time.Time) int64 {
+	if t1.IsZero() || t2.IsZero() {
+		return 0
+	}
+
+	d := t2.Sub(t1)
+	switch strings.ToUpper(unit) {
+	case "MICROSECOND":
+		return int64(d / time.Microsecond)
+	case "SECOND":
+		return int64(d / time.Second)
+	case "MINUTE":
+		return int64(d / time.Minute)
+	case "HOUR":
+		return int64(d / time.Hour)
+	case "DAY":
+		return int64(d / (24 * time.Hour))
+	case "WEEK":
+		return int64(d / (7 * 24 * time.Hour))
+	case "MONTH":
+		// Approximate
+		return int64(int(t2.Month()) - int(t1.Month()) + 12*(t2.Year()-t1.Year()))
+	case "QUARTER":
+		months := int64(int(t2.Month())-int(t1.Month()) + 12*(t2.Year()-t1.Year()))
+		return months / 3
+	case "YEAR":
+		return int64(t2.Year() - t1.Year())
+	default:
+		return int64(d / time.Second)
+	}
 }

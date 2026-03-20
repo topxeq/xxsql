@@ -2,7 +2,9 @@ package integration_test
 
 import (
 	"fmt"
+	"math"
 	"os"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -1725,5 +1727,328 @@ func TestSQL_Triggers(t *testing.T) {
 	// Test 10: List triggers
 	triggers := engine.ListTriggers()
 	t.Logf("Triggers: %v", triggers)
+}
+
+// TestSQL_JSONFunctions tests JSON functions
+func TestSQL_JSONFunctions(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "xxsql-json-test-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	engine := storage.NewEngine(tmpDir)
+	if err := engine.Open(); err != nil {
+		t.Fatalf("Failed to open engine: %v", err)
+	}
+	defer engine.Close()
+
+	exec := executor.NewExecutor(engine)
+	exec.SetDatabase("testdb")
+
+	// Test JSON_ARRAY
+	result, err := exec.Execute("SELECT JSON_ARRAY(1, 2, 'three', NULL)")
+	if err != nil {
+		t.Fatalf("JSON_ARRAY failed: %v", err)
+	}
+	if len(result.Rows) != 1 || len(result.Rows[0]) != 1 {
+		t.Fatalf("Expected 1 row, 1 column, got %d rows, %d columns", len(result.Rows), len(result.Rows[0]))
+	}
+	t.Logf("JSON_ARRAY result: %v", result.Rows[0])
+	jsonStr := fmt.Sprintf("%v", result.Rows[0][0])
+	if !strings.HasPrefix(jsonStr, "[") {
+		t.Fatalf("Expected JSON array, got %v", result.Rows[0][0])
+	}
+
+	// Test JSON_OBJECT
+	result, err = exec.Execute("SELECT JSON_OBJECT('name', 'Alice', 'age', 30)")
+	if err != nil {
+		t.Fatalf("JSON_OBJECT failed: %v", err)
+	}
+	t.Logf("JSON_OBJECT result: %v", result.Rows[0])
+
+	// Test JSON_TYPE
+	result, err = exec.Execute("SELECT JSON_TYPE('[1, 2, 3]')")
+	if err != nil {
+		t.Fatalf("JSON_TYPE failed: %v", err)
+	}
+	if result.Rows[0][0] != "ARRAY" {
+		t.Fatalf("Expected ARRAY, got %v", result.Rows[0][0])
+	}
+	t.Logf("JSON_TYPE result: %v", result.Rows[0])
+
+	result, err = exec.Execute("SELECT JSON_TYPE('{\"key\": \"value\"}')")
+	if err != nil {
+		t.Fatalf("JSON_TYPE for object failed: %v", err)
+	}
+	if result.Rows[0][0] != "OBJECT" {
+		t.Fatalf("Expected OBJECT, got %v", result.Rows[0][0])
+	}
+
+	// Test JSON_VALID
+	result, err = exec.Execute("SELECT JSON_VALID('{\"key\": \"value\"}')")
+	if err != nil {
+		t.Fatalf("JSON_VALID failed: %v", err)
+	}
+	if result.Rows[0][0] != true {
+		t.Fatalf("Expected true for valid JSON, got %v", result.Rows[0][0])
+	}
+
+	result, err = exec.Execute("SELECT JSON_VALID('not valid json')")
+	if err != nil {
+		t.Fatalf("JSON_VALID for invalid failed: %v", err)
+	}
+	if result.Rows[0][0] != false {
+		t.Fatalf("Expected false for invalid JSON, got %v", result.Rows[0][0])
+	}
+
+	// Test JSON_EXTRACT
+	result, err = exec.Execute("SELECT JSON_EXTRACT('{\"name\": \"Alice\", \"age\": 30}', '$.name')")
+	if err != nil {
+		t.Fatalf("JSON_EXTRACT failed: %v", err)
+	}
+	t.Logf("JSON_EXTRACT result: %v", result.Rows[0])
+
+	// Test JSON_UNQUOTE
+	result, err = exec.Execute("SELECT JSON_UNQUOTE('\"hello\"')")
+	if err != nil {
+		t.Fatalf("JSON_UNQUOTE failed: %v", err)
+	}
+	if result.Rows[0][0] != "hello" {
+		t.Fatalf("Expected hello, got %v", result.Rows[0][0])
+	}
+	t.Logf("JSON_UNQUOTE result: %v", result.Rows[0])
+}
+
+// TestSQL_NewMathFunctions tests additional math functions
+func TestSQL_NewMathFunctions(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "xxsql-math-test-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	engine := storage.NewEngine(tmpDir)
+	if err := engine.Open(); err != nil {
+		t.Fatalf("Failed to open engine: %v", err)
+	}
+	defer engine.Close()
+
+	exec := executor.NewExecutor(engine)
+	exec.SetDatabase("testdb")
+
+	// Test TRUNCATE
+	result, err := exec.Execute("SELECT TRUNCATE(3.14159, 2)")
+	if err != nil {
+		t.Fatalf("TRUNCATE failed: %v", err)
+	}
+	t.Logf("TRUNCATE result: %v", result.Rows[0])
+
+	// Test COS
+	result, err = exec.Execute("SELECT COS(0)")
+	if err != nil {
+		t.Fatalf("COS failed: %v", err)
+	}
+	if math.Abs(result.Rows[0][0].(float64)-1.0) > 0.0001 {
+		t.Fatalf("Expected COS(0)=1, got %v", result.Rows[0][0])
+	}
+	t.Logf("COS result: %v", result.Rows[0])
+
+	// Test SIN
+	result, err = exec.Execute("SELECT SIN(0)")
+	if err != nil {
+		t.Fatalf("SIN failed: %v", err)
+	}
+	if math.Abs(result.Rows[0][0].(float64)) > 0.0001 {
+		t.Fatalf("Expected SIN(0)=0, got %v", result.Rows[0][0])
+	}
+	t.Logf("SIN result: %v", result.Rows[0])
+
+	// Test TAN
+	result, err = exec.Execute("SELECT TAN(0)")
+	if err != nil {
+		t.Fatalf("TAN failed: %v", err)
+	}
+	if math.Abs(result.Rows[0][0].(float64)) > 0.0001 {
+		t.Fatalf("Expected TAN(0)=0, got %v", result.Rows[0][0])
+	}
+	t.Logf("TAN result: %v", result.Rows[0])
+
+	// Test RADIANS and DEGREES
+	result, err = exec.Execute("SELECT RADIANS(180)")
+	if err != nil {
+		t.Fatalf("RADIANS failed: %v", err)
+	}
+	t.Logf("RADIANS result: %v", result.Rows[0])
+
+	result, err = exec.Execute("SELECT DEGREES(3.14159265358979)")
+	if err != nil {
+		t.Fatalf("DEGREES failed: %v", err)
+	}
+	t.Logf("DEGREES result: %v", result.Rows[0])
+
+	// Test RAND
+	result, err = exec.Execute("SELECT RAND()")
+	if err != nil {
+		t.Fatalf("RAND failed: %v", err)
+	}
+	randVal := result.Rows[0][0].(float64)
+	if randVal < 0 || randVal >= 1 {
+		t.Fatalf("Expected RAND() in [0, 1), got %v", randVal)
+	}
+	t.Logf("RAND result: %v", result.Rows[0])
+}
+
+// TestSQL_SoundexFunctions tests SOUNDEX and DIFFERENCE functions
+func TestSQL_SoundexFunctions(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "xxsql-soundex-test-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	engine := storage.NewEngine(tmpDir)
+	if err := engine.Open(); err != nil {
+		t.Fatalf("Failed to open engine: %v", err)
+	}
+	defer engine.Close()
+
+	exec := executor.NewExecutor(engine)
+	exec.SetDatabase("testdb")
+
+	// Test SOUNDEX
+	result, err := exec.Execute("SELECT SOUNDEX('Robert')")
+	if err != nil {
+		t.Fatalf("SOUNDEX failed: %v", err)
+	}
+	if result.Rows[0][0] != "R163" {
+		t.Fatalf("Expected R163 for Robert, got %v", result.Rows[0][0])
+	}
+	t.Logf("SOUNDEX('Robert') = %v", result.Rows[0][0])
+
+	result, err = exec.Execute("SELECT SOUNDEX('Rupert')")
+	if err != nil {
+		t.Fatalf("SOUNDEX failed: %v", err)
+	}
+	if result.Rows[0][0] != "R163" {
+		t.Fatalf("Expected R163 for Rupert, got %v", result.Rows[0][0])
+	}
+	t.Logf("SOUNDEX('Rupert') = %v", result.Rows[0][0])
+
+	// Test DIFFERENCE
+	result, err = exec.Execute("SELECT DIFFERENCE('Robert', 'Rupert')")
+	if err != nil {
+		t.Fatalf("DIFFERENCE failed: %v", err)
+	}
+	// Same soundex code should have difference 4
+	if result.Rows[0][0] != 4 {
+		t.Fatalf("Expected DIFFERENCE=4 for same soundex, got %v", result.Rows[0][0])
+	}
+	t.Logf("DIFFERENCE('Robert', 'Rupert') = %v", result.Rows[0][0])
+}
+
+// TestSQL_NewDateTimeFunctions tests additional date/time functions
+func TestSQL_NewDateTimeFunctions(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "xxsql-date-test-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	engine := storage.NewEngine(tmpDir)
+	if err := engine.Open(); err != nil {
+		t.Fatalf("Failed to open engine: %v", err)
+	}
+	defer engine.Close()
+
+	exec := executor.NewExecutor(engine)
+	exec.SetDatabase("testdb")
+
+	// Test TIMESTAMPDIFF
+	result, err := exec.Execute("SELECT TIMESTAMPDIFF(DAY, '2024-01-01', '2024-01-08')")
+	if err != nil {
+		t.Fatalf("TIMESTAMPDIFF failed: %v", err)
+	}
+	if result.Rows[0][0] != int64(7) {
+		t.Fatalf("Expected 7 days, got %v", result.Rows[0][0])
+	}
+	t.Logf("TIMESTAMPDIFF DAY result: %v", result.Rows[0])
+
+	// Test MAKEDATE
+	result, err = exec.Execute("SELECT MAKEDATE(2024, 60)")
+	if err != nil {
+		t.Fatalf("MAKEDATE failed: %v", err)
+	}
+	t.Logf("MAKEDATE result: %v", result.Rows[0])
+
+	// Test MAKETIME
+	result, err = exec.Execute("SELECT MAKETIME(10, 30, 45)")
+	if err != nil {
+		t.Fatalf("MAKETIME failed: %v", err)
+	}
+	t.Logf("MAKETIME result: %v", result.Rows[0])
+
+	// Test SEC_TO_TIME
+	result, err = exec.Execute("SELECT SEC_TO_TIME(3661)")
+	if err != nil {
+		t.Fatalf("SEC_TO_TIME failed: %v", err)
+	}
+	t.Logf("SEC_TO_TIME result: %v", result.Rows[0])
+
+	// Test TIME_TO_SEC
+	result, err = exec.Execute("SELECT TIME_TO_SEC('01:01:01')")
+	if err != nil {
+		t.Fatalf("TIME_TO_SEC failed: %v", err)
+	}
+	if result.Rows[0][0] != int64(3661) {
+		t.Fatalf("Expected 3661 seconds, got %v", result.Rows[0][0])
+	}
+	t.Logf("TIME_TO_SEC result: %v", result.Rows[0])
+}
+
+// TestSQL_SystemFunctions tests system functions
+func TestSQL_SystemFunctions(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "xxsql-sys-test-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	engine := storage.NewEngine(tmpDir)
+	if err := engine.Open(); err != nil {
+		t.Fatalf("Failed to open engine: %v", err)
+	}
+	defer engine.Close()
+
+	exec := executor.NewExecutor(engine)
+	exec.SetDatabase("testdb")
+
+	// Test USER
+	result, err := exec.Execute("SELECT USER()")
+	if err != nil {
+		t.Fatalf("USER failed: %v", err)
+	}
+	t.Logf("USER result: %v", result.Rows[0])
+
+	// Test CURRENT_USER
+	result, err = exec.Execute("SELECT CURRENT_USER()")
+	if err != nil {
+		t.Fatalf("CURRENT_USER failed: %v", err)
+	}
+	t.Logf("CURRENT_USER result: %v", result.Rows[0])
+
+	// Test VERSION
+	result, err = exec.Execute("SELECT VERSION()")
+	if err != nil {
+		t.Fatalf("VERSION failed: %v", err)
+	}
+	t.Logf("VERSION result: %v", result.Rows[0])
+
+	// Test CONNECTION_ID
+	result, err = exec.Execute("SELECT CONNECTION_ID()")
+	if err != nil {
+		t.Fatalf("CONNECTION_ID failed: %v", err)
+	}
+	t.Logf("CONNECTION_ID result: %v", result.Rows[0])
 }
 

@@ -1782,7 +1782,7 @@ func (p *Parser) parsePrimaryExpr() Expression {
 	case TokDouble, TokFloat, TokInt, TokInteger, TokBigInt, TokChar, TokVarchar,
 		TokText, TokDate, TokTime, TokDateTime, TokBool, TokBoolean, TokBlob,
 		TokDecimal, TokNumeric, TokSmallInt, TokTinyInt, TokSeq,
-		TokLeft, TokRight, TokReplace: // LEFT/RIGHT/REPLACE can be keywords or function names
+		TokLeft, TokRight, TokReplace, TokTruncate, TokUser: // LEFT/RIGHT/REPLACE/TRUNCATE/USER can be keywords or function names
 		name := p.currTok.Value
 		p.nextToken()
 		if p.curTokenIs(TokLParen) {
