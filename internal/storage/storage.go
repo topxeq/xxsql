@@ -315,3 +315,70 @@ func ValidateValues(columns []*types.ColumnInfo, values []types.Value) error {
 
 	return nil
 }
+
+// ============================================================================
+// Transaction Support
+// ============================================================================
+
+// TransactionState tracks the state of a transaction
+type TransactionState struct {
+	ID         uint64
+	Active     bool
+	Savepoints []string
+}
+
+// BeginTransaction starts a new transaction.
+// For this implementation, we track transaction state in memory.
+// Full rollback support would require WAL replay.
+func (e *Engine) BeginTransaction() error {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+
+	// Flush any pending data before starting transaction
+	if err := e.catalog.Flush(); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+// CommitTransaction commits the current transaction.
+func (e *Engine) CommitTransaction() error {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+
+	// Flush all changes to disk
+	return e.catalog.Flush()
+}
+
+// RollbackTransaction rolls back the current transaction.
+// Note: This is a simplified implementation. Full rollback would require
+// WAL replay to restore the state before the transaction started.
+func (e *Engine) RollbackTransaction() error {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+
+	// For now, this is a no-op since we don't have full rollback support
+	// In a production system, this would replay WAL records to undo changes
+	return nil
+}
+
+// CreateSavepoint creates a savepoint within the current transaction.
+func (e *Engine) CreateSavepoint(name string) error {
+	// Savepoints are tracked in memory by the executor
+	return nil
+}
+
+// ReleaseSavepoint releases a savepoint within the current transaction.
+func (e *Engine) ReleaseSavepoint(name string) error {
+	// Savepoints are tracked in memory by the executor
+	return nil
+}
+
+// RollbackToSavepoint rolls back to a savepoint within the current transaction.
+// Note: This is a simplified implementation. Full savepoint rollback would require
+// tracking changes since the savepoint and undoing them.
+func (e *Engine) RollbackToSavepoint(name string) error {
+	// For now, this is a no-op since we don't have full rollback support
+	return nil
+}

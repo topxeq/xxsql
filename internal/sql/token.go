@@ -196,6 +196,14 @@ const (
 	TokLet
 	TokBegin
 
+	// Keywords - Transaction
+	TokCommit
+	TokRollback
+	TokTransaction
+	TokSavepoint
+	TokRelease
+	TokWork // optional keyword in COMMIT/ROLLBACK
+
 	// Keywords - Trigger
 	TokTrigger
 	TokBefore
@@ -559,6 +567,18 @@ func (t TokenType) String() string {
 		return "LET"
 	case TokBegin:
 		return "BEGIN"
+	case TokCommit:
+		return "COMMIT"
+	case TokRollback:
+		return "ROLLBACK"
+	case TokTransaction:
+		return "TRANSACTION"
+	case TokSavepoint:
+		return "SAVEPOINT"
+	case TokRelease:
+		return "RELEASE"
+	case TokWork:
+		return "WORK"
 	case TokTrigger:
 		return "TRIGGER"
 	case TokBefore:
@@ -766,6 +786,12 @@ var keywords = map[string]TokenType{
 	"REPLACE":      TokReplace,
 	"LET":          TokLet,
 	"BEGIN":        TokBegin,
+	"COMMIT":       TokCommit,
+	"ROLLBACK":     TokRollback,
+	"TRANSACTION":  TokTransaction,
+	"SAVEPOINT":    TokSavepoint,
+	"RELEASE":      TokRelease,
+	"WORK":         TokWork,
 	"TRIGGER":      TokTrigger,
 	"BEFORE":       TokBefore,
 	"AFTER":        TokAfter,

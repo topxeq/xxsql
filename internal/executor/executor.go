@@ -95,6 +95,10 @@ type Executor struct {
 	cteResults    map[string]*Result     // CTE results for WITH clause support
 	lastInsertID  int64                  // Last auto-generated insert ID
 	lastRowCount  int64                  // Number of rows affected by last operation
+
+	// Transaction state
+	inTransaction bool
+	savepoints    []string // Stack of savepoint names
 }
 
 // Note on Subquery Optimization:
@@ -314,6 +318,16 @@ func (e *Executor) ExecuteWithPerms(sqlStr string, checker PermissionChecker) (*
 			return nil, err
 		}
 		return e.executeWith(s)
+	case *sql.BeginStmt:
+		return e.executeBegin(s)
+	case *sql.CommitStmt:
+		return e.executeCommit(s)
+	case *sql.RollbackStmt:
+		return e.executeRollback(s)
+	case *sql.SavepointStmt:
+		return e.executeSavepoint(s)
+	case *sql.ReleaseSavepointStmt:
+		return e.executeReleaseSavepoint(s)
 	default:
 		return nil, fmt.Errorf("unsupported statement type: %T", stmt)
 	}
@@ -11352,4 +11366,162 @@ func applyDateModifier(t time.Time, modifier string) time.Time {
 	}
 
 	return t
+}
+
+// ============================================================================
+// Transaction Functions
+// ============================================================================
+
+// executeBegin executes a BEGIN [TRANSACTION] statement.
+func (e *Executor) executeBegin(stmt *sql.BeginStmt) (*Result, error) {
+	if e.inTransaction {
+		return nil, fmt.Errorf("already in transaction")
+	}
+
+	// Begin transaction in storage engine
+	if err := e.engine.BeginTransaction(); err != nil {
+		return nil, fmt.Errorf("failed to begin transaction: %w", err)
+	}
+
+	e.inTransaction = true
+	e.savepoints = nil
+
+	return &Result{
+		Columns:  []ColumnInfo{{Name: "Result"}},
+		Rows:     [][]interface{}{{"Transaction started"}},
+		RowCount: 1,
+		Message:  "BEGIN",
+	}, nil
+}
+
+// executeCommit executes a COMMIT [TRANSACTION] statement.
+func (e *Executor) executeCommit(stmt *sql.CommitStmt) (*Result, error) {
+	if !e.inTransaction {
+		return nil, fmt.Errorf("no transaction in progress")
+	}
+
+	// Commit transaction in storage engine
+	if err := e.engine.CommitTransaction(); err != nil {
+		return nil, fmt.Errorf("failed to commit transaction: %w", err)
+	}
+
+	e.inTransaction = false
+	e.savepoints = nil
+
+	return &Result{
+		Columns:  []ColumnInfo{{Name: "Result"}},
+		Rows:     [][]interface{}{{"Transaction committed"}},
+		RowCount: 1,
+		Message:  "COMMIT",
+	}, nil
+}
+
+// executeRollback executes a ROLLBACK [TRANSACTION] [TO SAVEPOINT name] statement.
+func (e *Executor) executeRollback(stmt *sql.RollbackStmt) (*Result, error) {
+	if !e.inTransaction {
+		return nil, fmt.Errorf("no transaction in progress")
+	}
+
+	if stmt.ToSavepoint != "" {
+		// Rollback to savepoint
+		found := false
+		for i, sp := range e.savepoints {
+			if sp == stmt.ToSavepoint {
+				// Remove all savepoints after this one
+				e.savepoints = e.savepoints[:i]
+				found = true
+				break
+			}
+		}
+		if !found {
+			return nil, fmt.Errorf("savepoint '%s' not found", stmt.ToSavepoint)
+		}
+
+		// Rollback to savepoint in storage engine
+		if err := e.engine.RollbackToSavepoint(stmt.ToSavepoint); err != nil {
+			return nil, fmt.Errorf("failed to rollback to savepoint: %w", err)
+		}
+
+		return &Result{
+			Columns:  []ColumnInfo{{Name: "Result"}},
+			Rows:     [][]interface{}{{fmt.Sprintf("Rolled back to savepoint '%s'", stmt.ToSavepoint)}},
+			RowCount: 1,
+			Message:  "ROLLBACK TO SAVEPOINT",
+		}, nil
+	}
+
+	// Full rollback
+	if err := e.engine.RollbackTransaction(); err != nil {
+		return nil, fmt.Errorf("failed to rollback transaction: %w", err)
+	}
+
+	e.inTransaction = false
+	e.savepoints = nil
+
+	return &Result{
+		Columns:  []ColumnInfo{{Name: "Result"}},
+		Rows:     [][]interface{}{{"Transaction rolled back"}},
+		RowCount: 1,
+		Message:  "ROLLBACK",
+	}, nil
+}
+
+// executeSavepoint executes a SAVEPOINT name statement.
+func (e *Executor) executeSavepoint(stmt *sql.SavepointStmt) (*Result, error) {
+	if !e.inTransaction {
+		return nil, fmt.Errorf("no transaction in progress")
+	}
+
+	// Create savepoint in storage engine
+	if err := e.engine.CreateSavepoint(stmt.Name); err != nil {
+		return nil, fmt.Errorf("failed to create savepoint: %w", err)
+	}
+
+	// Add to savepoint stack
+	e.savepoints = append(e.savepoints, stmt.Name)
+
+	return &Result{
+		Columns:  []ColumnInfo{{Name: "Result"}},
+		Rows:     [][]interface{}{{fmt.Sprintf("Savepoint '%s' created", stmt.Name)}},
+		RowCount: 1,
+		Message:  "SAVEPOINT",
+	}, nil
+}
+
+// executeReleaseSavepoint executes a RELEASE SAVEPOINT name statement.
+func (e *Executor) executeReleaseSavepoint(stmt *sql.ReleaseSavepointStmt) (*Result, error) {
+	if !e.inTransaction {
+		return nil, fmt.Errorf("no transaction in progress")
+	}
+
+	// Find and remove savepoint
+	found := false
+	for i, sp := range e.savepoints {
+		if sp == stmt.Name {
+			// Remove this savepoint (and all after it, per SQL spec)
+			e.savepoints = append(e.savepoints[:i], e.savepoints[i+1:]...)
+			found = true
+			break
+		}
+	}
+	if !found {
+		return nil, fmt.Errorf("savepoint '%s' not found", stmt.Name)
+	}
+
+	// Release savepoint in storage engine
+	if err := e.engine.ReleaseSavepoint(stmt.Name); err != nil {
+		return nil, fmt.Errorf("failed to release savepoint: %w", err)
+	}
+
+	return &Result{
+		Columns:  []ColumnInfo{{Name: "Result"}},
+		Rows:     [][]interface{}{{fmt.Sprintf("Savepoint '%s' released", stmt.Name)}},
+		RowCount: 1,
+		Message:  "RELEASE SAVEPOINT",
+	}, nil
+}
+
+// InTransaction returns true if a transaction is currently in progress.
+func (e *Executor) InTransaction() bool {
+	return e.inTransaction
 }

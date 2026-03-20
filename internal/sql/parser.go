@@ -221,6 +221,16 @@ func (p *Parser) parseStatement() Statement {
 		return p.parseRestore()
 	case TokExplain:
 		return p.parseExplain()
+	case TokBegin:
+		return p.parseBegin()
+	case TokCommit:
+		return p.parseCommit()
+	case TokRollback:
+		return p.parseRollback()
+	case TokSavepoint:
+		return p.parseSavepoint()
+	case TokRelease:
+		return p.parseReleaseSavepoint()
 	case TokLParen:
 		// Could be a parenthesized SELECT
 		if withClause != nil {
@@ -1716,6 +1726,89 @@ func (p *Parser) parseExplain() Statement {
 	stmt.Statement = innerStmt
 
 	return stmt
+}
+
+// parseBegin parses a BEGIN [TRANSACTION] statement.
+func (p *Parser) parseBegin() Statement {
+	p.nextToken() // consume BEGIN
+
+	// Optional TRANSACTION or WORK keyword
+	if p.curTokenIs(TokTransaction) || p.curTokenIs(TokWork) {
+		p.nextToken()
+	}
+
+	return &BeginStmt{}
+}
+
+// parseCommit parses a COMMIT [TRANSACTION] statement.
+func (p *Parser) parseCommit() Statement {
+	p.nextToken() // consume COMMIT
+
+	// Optional TRANSACTION or WORK keyword
+	if p.curTokenIs(TokTransaction) || p.curTokenIs(TokWork) {
+		p.nextToken()
+	}
+
+	return &CommitStmt{}
+}
+
+// parseRollback parses a ROLLBACK [TRANSACTION] [TO SAVEPOINT name] statement.
+func (p *Parser) parseRollback() Statement {
+	p.nextToken() // consume ROLLBACK
+
+	// Optional TRANSACTION or WORK keyword
+	if p.curTokenIs(TokTransaction) || p.curTokenIs(TokWork) {
+		p.nextToken()
+	}
+
+	// Check for TO SAVEPOINT
+	if p.curTokenIs(TokTo) {
+		p.nextToken()
+		if !p.expect(TokSavepoint) {
+			return nil
+		}
+		if !p.curTokenIs(TokIdent) {
+			p.error("expected savepoint name")
+			return nil
+		}
+		name := p.currTok.Value
+		p.nextToken()
+		return &RollbackStmt{ToSavepoint: name}
+	}
+
+	return &RollbackStmt{}
+}
+
+// parseSavepoint parses a SAVEPOINT name statement.
+func (p *Parser) parseSavepoint() Statement {
+	p.nextToken() // consume SAVEPOINT
+
+	if !p.curTokenIs(TokIdent) {
+		p.error("expected savepoint name")
+		return nil
+	}
+	name := p.currTok.Value
+	p.nextToken()
+
+	return &SavepointStmt{Name: name}
+}
+
+// parseReleaseSavepoint parses a RELEASE SAVEPOINT name statement.
+func (p *Parser) parseReleaseSavepoint() Statement {
+	p.nextToken() // consume RELEASE
+
+	if !p.expect(TokSavepoint) {
+		return nil
+	}
+
+	if !p.curTokenIs(TokIdent) {
+		p.error("expected savepoint name")
+		return nil
+	}
+	name := p.currTok.Value
+	p.nextToken()
+
+	return &ReleaseSavepointStmt{Name: name}
 }
 
 // parseAlter parses an ALTER statement.

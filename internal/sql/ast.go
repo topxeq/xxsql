@@ -2182,3 +2182,65 @@ type TriggerInfo struct {
 	WhenClause  string // serialized WHEN expression
 	Body        string // serialized body statements
 }
+
+// ============================================================================
+// Transaction Statements
+// ============================================================================
+
+// BeginStmt represents a BEGIN [TRANSACTION] statement.
+type BeginStmt struct {
+	// BEGIN starts a new transaction
+}
+
+func (s *BeginStmt) node()      {}
+func (s *BeginStmt) statement() {}
+func (s *BeginStmt) String() string {
+	return "BEGIN TRANSACTION"
+}
+
+// CommitStmt represents a COMMIT [TRANSACTION] statement.
+type CommitStmt struct {
+	// COMMIT saves all changes made in the current transaction
+}
+
+func (s *CommitStmt) node()      {}
+func (s *CommitStmt) statement() {}
+func (s *CommitStmt) String() string {
+	return "COMMIT TRANSACTION"
+}
+
+// RollbackStmt represents a ROLLBACK [TRANSACTION] [TO SAVEPOINT name] statement.
+type RollbackStmt struct {
+	ToSavepoint string // if non-empty, rollback to this savepoint
+}
+
+func (s *RollbackStmt) node()      {}
+func (s *RollbackStmt) statement() {}
+func (s *RollbackStmt) String() string {
+	if s.ToSavepoint != "" {
+		return fmt.Sprintf("ROLLBACK TO SAVEPOINT %s", s.ToSavepoint)
+	}
+	return "ROLLBACK TRANSACTION"
+}
+
+// SavepointStmt represents a SAVEPOINT name statement.
+type SavepointStmt struct {
+	Name string
+}
+
+func (s *SavepointStmt) node()      {}
+func (s *SavepointStmt) statement() {}
+func (s *SavepointStmt) String() string {
+	return fmt.Sprintf("SAVEPOINT %s", s.Name)
+}
+
+// ReleaseSavepointStmt represents a RELEASE SAVEPOINT name statement.
+type ReleaseSavepointStmt struct {
+	Name string
+}
+
+func (s *ReleaseSavepointStmt) node()      {}
+func (s *ReleaseSavepointStmt) statement() {}
+func (s *ReleaseSavepointStmt) String() string {
+	return fmt.Sprintf("RELEASE SAVEPOINT %s", s.Name)
+}
