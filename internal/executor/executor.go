@@ -5056,6 +5056,935 @@ func (e *Executor) evaluateFunction(fc *sql.FunctionCall, r *row.Row, columnMap 
 		}
 		return math.Sqrt(val), nil
 
+	// ========== Date/Time Functions ==========
+	case "DATE":
+		if len(fc.Args) == 0 {
+			return time.Now().Format("2006-01-02"), nil
+		}
+		arg, err := evalExpr(fc.Args[0])
+		if err != nil {
+			return nil, err
+		}
+		if arg == nil {
+			return nil, nil
+		}
+		// Parse the input and extract date part
+		switch v := arg.(type) {
+		case string:
+			// Try various date formats
+			formats := []string{
+				"2006-01-02 15:04:05",
+				"2006-01-02T15:04:05",
+				"2006-01-02",
+				time.RFC3339,
+			}
+			for _, fmt := range formats {
+				if t, err := time.Parse(fmt, v); err == nil {
+					return t.Format("2006-01-02"), nil
+				}
+			}
+			return v, nil // Return as-is if can't parse
+		case time.Time:
+			return v.Format("2006-01-02"), nil
+		default:
+			return fmt.Sprintf("%v", v), nil
+		}
+
+	case "TIME":
+		if len(fc.Args) == 0 {
+			return time.Now().Format("15:04:05"), nil
+		}
+		arg, err := evalExpr(fc.Args[0])
+		if err != nil {
+			return nil, err
+		}
+		if arg == nil {
+			return nil, nil
+		}
+		switch v := arg.(type) {
+		case string:
+			formats := []string{
+				"2006-01-02 15:04:05",
+				"15:04:05",
+				time.RFC3339,
+			}
+			for _, fmt := range formats {
+				if t, err := time.Parse(fmt, v); err == nil {
+					return t.Format("15:04:05"), nil
+				}
+			}
+			return v, nil
+		case time.Time:
+			return v.Format("15:04:05"), nil
+		default:
+			return fmt.Sprintf("%v", v), nil
+		}
+
+	case "DATETIME":
+		if len(fc.Args) == 0 {
+			return time.Now().Format("2006-01-02 15:04:05"), nil
+		}
+		arg, err := evalExpr(fc.Args[0])
+		if err != nil {
+			return nil, err
+		}
+		if arg == nil {
+			return nil, nil
+		}
+		switch v := arg.(type) {
+		case string:
+			formats := []string{
+				"2006-01-02 15:04:05",
+				"2006-01-02T15:04:05",
+				"2006-01-02",
+				time.RFC3339,
+			}
+			for _, fmt := range formats {
+				if t, err := time.Parse(fmt, v); err == nil {
+					return t.Format("2006-01-02 15:04:05"), nil
+				}
+			}
+			return v, nil
+		case time.Time:
+			return v.Format("2006-01-02 15:04:05"), nil
+		default:
+			return fmt.Sprintf("%v", v), nil
+		}
+
+	case "YEAR":
+		if len(fc.Args) == 0 {
+			return time.Now().Year(), nil
+		}
+		arg, err := evalExpr(fc.Args[0])
+		if err != nil {
+			return nil, err
+		}
+		if arg == nil {
+			return nil, nil
+		}
+		switch v := arg.(type) {
+		case string:
+			if t, err := time.Parse("2006-01-02", v); err == nil {
+				return t.Year(), nil
+			}
+			if t, err := time.Parse("2006-01-02 15:04:05", v); err == nil {
+				return t.Year(), nil
+			}
+			return nil, fmt.Errorf("YEAR: invalid date format")
+		case time.Time:
+			return v.Year(), nil
+		default:
+			return nil, fmt.Errorf("YEAR requires date argument")
+		}
+
+	case "MONTH":
+		if len(fc.Args) == 0 {
+			return int(time.Now().Month()), nil
+		}
+		arg, err := evalExpr(fc.Args[0])
+		if err != nil {
+			return nil, err
+		}
+		if arg == nil {
+			return nil, nil
+		}
+		switch v := arg.(type) {
+		case string:
+			if t, err := time.Parse("2006-01-02", v); err == nil {
+				return int(t.Month()), nil
+			}
+			if t, err := time.Parse("2006-01-02 15:04:05", v); err == nil {
+				return int(t.Month()), nil
+			}
+			return nil, fmt.Errorf("MONTH: invalid date format")
+		case time.Time:
+			return int(v.Month()), nil
+		default:
+			return nil, fmt.Errorf("MONTH requires date argument")
+		}
+
+	case "DAY":
+		if len(fc.Args) == 0 {
+			return time.Now().Day(), nil
+		}
+		arg, err := evalExpr(fc.Args[0])
+		if err != nil {
+			return nil, err
+		}
+		if arg == nil {
+			return nil, nil
+		}
+		switch v := arg.(type) {
+		case string:
+			if t, err := time.Parse("2006-01-02", v); err == nil {
+				return t.Day(), nil
+			}
+			if t, err := time.Parse("2006-01-02 15:04:05", v); err == nil {
+				return t.Day(), nil
+			}
+			return nil, fmt.Errorf("DAY: invalid date format")
+		case time.Time:
+			return v.Day(), nil
+		default:
+			return nil, fmt.Errorf("DAY requires date argument")
+		}
+
+	case "HOUR":
+		if len(fc.Args) == 0 {
+			return time.Now().Hour(), nil
+		}
+		arg, err := evalExpr(fc.Args[0])
+		if err != nil {
+			return nil, err
+		}
+		if arg == nil {
+			return nil, nil
+		}
+		switch v := arg.(type) {
+		case string:
+			if t, err := time.Parse("15:04:05", v); err == nil {
+				return t.Hour(), nil
+			}
+			if t, err := time.Parse("2006-01-02 15:04:05", v); err == nil {
+				return t.Hour(), nil
+			}
+			return nil, fmt.Errorf("HOUR: invalid time format")
+		case time.Time:
+			return v.Hour(), nil
+		default:
+			return nil, fmt.Errorf("HOUR requires time argument")
+		}
+
+	case "MINUTE":
+		if len(fc.Args) == 0 {
+			return time.Now().Minute(), nil
+		}
+		arg, err := evalExpr(fc.Args[0])
+		if err != nil {
+			return nil, err
+		}
+		if arg == nil {
+			return nil, nil
+		}
+		switch v := arg.(type) {
+		case string:
+			if t, err := time.Parse("15:04:05", v); err == nil {
+				return t.Minute(), nil
+			}
+			if t, err := time.Parse("2006-01-02 15:04:05", v); err == nil {
+				return t.Minute(), nil
+			}
+			return nil, fmt.Errorf("MINUTE: invalid time format")
+		case time.Time:
+			return v.Minute(), nil
+		default:
+			return nil, fmt.Errorf("MINUTE requires time argument")
+		}
+
+	case "SECOND":
+		if len(fc.Args) == 0 {
+			return time.Now().Second(), nil
+		}
+		arg, err := evalExpr(fc.Args[0])
+		if err != nil {
+			return nil, err
+		}
+		if arg == nil {
+			return nil, nil
+		}
+		switch v := arg.(type) {
+		case string:
+			if t, err := time.Parse("15:04:05", v); err == nil {
+				return t.Second(), nil
+			}
+			if t, err := time.Parse("2006-01-02 15:04:05", v); err == nil {
+				return t.Second(), nil
+			}
+			return nil, fmt.Errorf("SECOND: invalid time format")
+		case time.Time:
+			return v.Second(), nil
+		default:
+			return nil, fmt.Errorf("SECOND requires time argument")
+		}
+
+	case "DATE_ADD":
+		if len(fc.Args) < 2 {
+			return nil, fmt.Errorf("DATE_ADD requires 2 arguments")
+		}
+		dateArg, err := evalExpr(fc.Args[0])
+		if err != nil {
+			return nil, err
+		}
+		intervalArg, err := evalExpr(fc.Args[1])
+		if err != nil {
+			return nil, err
+		}
+		if dateArg == nil {
+			return nil, nil
+		}
+
+		// Parse date
+		var t time.Time
+		switch v := dateArg.(type) {
+		case string:
+			if parsed, err := time.Parse("2006-01-02", v); err == nil {
+				t = parsed
+			} else if parsed, err := time.Parse("2006-01-02 15:04:05", v); err == nil {
+				t = parsed
+			} else {
+				return nil, fmt.Errorf("DATE_ADD: invalid date format")
+			}
+		case time.Time:
+			t = v
+		default:
+			return nil, fmt.Errorf("DATE_ADD requires date argument")
+		}
+
+		// Get interval value
+		var interval int
+		switch v := intervalArg.(type) {
+		case int:
+			interval = v
+		case int64:
+			interval = int(v)
+		case float64:
+			interval = int(v)
+		default:
+			return nil, fmt.Errorf("DATE_ADD: interval must be numeric")
+		}
+
+		// Add days (default unit)
+		return t.AddDate(0, 0, interval).Format("2006-01-02"), nil
+
+	case "DATE_SUB":
+		if len(fc.Args) < 2 {
+			return nil, fmt.Errorf("DATE_SUB requires 2 arguments")
+		}
+		dateArg, err := evalExpr(fc.Args[0])
+		if err != nil {
+			return nil, err
+		}
+		intervalArg, err := evalExpr(fc.Args[1])
+		if err != nil {
+			return nil, err
+		}
+		if dateArg == nil {
+			return nil, nil
+		}
+
+		var t time.Time
+		switch v := dateArg.(type) {
+		case string:
+			if parsed, err := time.Parse("2006-01-02", v); err == nil {
+				t = parsed
+			} else if parsed, err := time.Parse("2006-01-02 15:04:05", v); err == nil {
+				t = parsed
+			} else {
+				return nil, fmt.Errorf("DATE_SUB: invalid date format")
+			}
+		case time.Time:
+			t = v
+		default:
+			return nil, fmt.Errorf("DATE_SUB requires date argument")
+		}
+
+		var interval int
+		switch v := intervalArg.(type) {
+		case int:
+			interval = v
+		case int64:
+			interval = int(v)
+		case float64:
+			interval = int(v)
+		default:
+			return nil, fmt.Errorf("DATE_SUB: interval must be numeric")
+		}
+
+		return t.AddDate(0, 0, -interval).Format("2006-01-02"), nil
+
+	case "DATEDIFF", "DATE_DIFF":
+		if len(fc.Args) < 2 {
+			return nil, fmt.Errorf("%s requires 2 arguments", funcName)
+		}
+		date1Arg, err := evalExpr(fc.Args[0])
+		if err != nil {
+			return nil, err
+		}
+		date2Arg, err := evalExpr(fc.Args[1])
+		if err != nil {
+			return nil, err
+		}
+		if date1Arg == nil || date2Arg == nil {
+			return nil, nil
+		}
+
+		var t1, t2 time.Time
+		switch v := date1Arg.(type) {
+		case string:
+			if parsed, err := time.Parse("2006-01-02", v); err == nil {
+				t1 = parsed
+			} else {
+				return nil, fmt.Errorf("%s: invalid date format", funcName)
+			}
+		case time.Time:
+			t1 = v
+		}
+		switch v := date2Arg.(type) {
+		case string:
+			if parsed, err := time.Parse("2006-01-02", v); err == nil {
+				t2 = parsed
+			} else {
+				return nil, fmt.Errorf("%s: invalid date format", funcName)
+			}
+		case time.Time:
+			t2 = v
+		}
+
+		diff := t1.Sub(t2)
+		return int(diff.Hours() / 24), nil
+
+	case "STRFTIME", "DATE_FORMAT":
+		if len(fc.Args) < 2 {
+			return nil, fmt.Errorf("%s requires 2 arguments", funcName)
+		}
+		dateArg, err := evalExpr(fc.Args[0])
+		if err != nil {
+			return nil, err
+		}
+		formatArg, err := evalExpr(fc.Args[1])
+		if err != nil {
+			return nil, err
+		}
+		if dateArg == nil {
+			return nil, nil
+		}
+
+		var t time.Time
+		switch v := dateArg.(type) {
+		case string:
+			if parsed, err := time.Parse("2006-01-02 15:04:05", v); err == nil {
+				t = parsed
+			} else if parsed, err := time.Parse("2006-01-02", v); err == nil {
+				t = parsed
+			} else {
+				return nil, fmt.Errorf("%s: invalid date format", funcName)
+			}
+		case time.Time:
+			t = v
+		default:
+			return nil, fmt.Errorf("%s requires date argument", funcName)
+		}
+
+		format, ok := formatArg.(string)
+		if !ok {
+			return nil, fmt.Errorf("%s: format must be string", funcName)
+		}
+
+		// Convert SQLite-style format to Go format
+		format = strings.ReplaceAll(format, "%Y", "2006")
+		format = strings.ReplaceAll(format, "%m", "01")
+		format = strings.ReplaceAll(format, "%d", "02")
+		format = strings.ReplaceAll(format, "%H", "15")
+		format = strings.ReplaceAll(format, "%M", "04")
+		format = strings.ReplaceAll(format, "%S", "05")
+		format = strings.ReplaceAll(format, "%s", "05")
+
+		return t.Format(format), nil
+
+	// ========== String Functions ==========
+	case "TRIM":
+		if len(fc.Args) == 0 {
+			return nil, fmt.Errorf("TRIM requires at least 1 argument")
+		}
+		arg, err := evalExpr(fc.Args[0])
+		if err != nil {
+			return nil, err
+		}
+		if arg == nil {
+			return nil, nil
+		}
+		str, ok := arg.(string)
+		if !ok {
+			str = fmt.Sprintf("%v", arg)
+		}
+		return strings.TrimSpace(str), nil
+
+	case "LTRIM":
+		if len(fc.Args) == 0 {
+			return nil, fmt.Errorf("LTRIM requires at least 1 argument")
+		}
+		arg, err := evalExpr(fc.Args[0])
+		if err != nil {
+			return nil, err
+		}
+		if arg == nil {
+			return nil, nil
+		}
+		str, ok := arg.(string)
+		if !ok {
+			str = fmt.Sprintf("%v", arg)
+		}
+		return strings.TrimLeft(str, " \t\n\r"), nil
+
+	case "RTRIM":
+		if len(fc.Args) == 0 {
+			return nil, fmt.Errorf("RTRIM requires at least 1 argument")
+		}
+		arg, err := evalExpr(fc.Args[0])
+		if err != nil {
+			return nil, err
+		}
+		if arg == nil {
+			return nil, nil
+		}
+		str, ok := arg.(string)
+		if !ok {
+			str = fmt.Sprintf("%v", arg)
+		}
+		return strings.TrimRight(str, " \t\n\r"), nil
+
+	case "INSTR", "POSITION":
+		if len(fc.Args) < 2 {
+			return nil, fmt.Errorf("%s requires 2 arguments", funcName)
+		}
+		strArg, err := evalExpr(fc.Args[0])
+		if err != nil {
+			return nil, err
+		}
+		subArg, err := evalExpr(fc.Args[1])
+		if err != nil {
+			return nil, err
+		}
+		if strArg == nil || subArg == nil {
+			return nil, nil
+		}
+		str, ok := strArg.(string)
+		if !ok {
+			str = fmt.Sprintf("%v", strArg)
+		}
+		sub, ok := subArg.(string)
+		if !ok {
+			sub = fmt.Sprintf("%v", subArg)
+		}
+		return strings.Index(str, sub) + 1, nil // 1-indexed, 0 if not found
+
+	case "LPAD":
+		if len(fc.Args) < 2 {
+			return nil, fmt.Errorf("LPAD requires at least 2 arguments")
+		}
+		strArg, err := evalExpr(fc.Args[0])
+		if err != nil {
+			return nil, err
+		}
+		lenArg, err := evalExpr(fc.Args[1])
+		if err != nil {
+			return nil, err
+		}
+		if strArg == nil {
+			return nil, nil
+		}
+		str, ok := strArg.(string)
+		if !ok {
+			str = fmt.Sprintf("%v", strArg)
+		}
+		targetLen := 0
+		switch v := lenArg.(type) {
+		case int:
+			targetLen = v
+		case int64:
+			targetLen = int(v)
+		case float64:
+			targetLen = int(v)
+		}
+
+		padStr := " "
+		if len(fc.Args) >= 3 {
+			padArg, err := evalExpr(fc.Args[2])
+			if err != nil {
+				return nil, err
+			}
+			if padArg != nil {
+				if ps, ok := padArg.(string); ok {
+					padStr = ps
+				}
+			}
+		}
+
+		if len(str) >= targetLen {
+			return str[:targetLen], nil
+		}
+		padLen := targetLen - len(str)
+		padding := strings.Repeat(padStr, (padLen+len(padStr)-1)/len(padStr))
+		return padding[:padLen] + str, nil
+
+	case "RPAD":
+		if len(fc.Args) < 2 {
+			return nil, fmt.Errorf("RPAD requires at least 2 arguments")
+		}
+		strArg, err := evalExpr(fc.Args[0])
+		if err != nil {
+			return nil, err
+		}
+		lenArg, err := evalExpr(fc.Args[1])
+		if err != nil {
+			return nil, err
+		}
+		if strArg == nil {
+			return nil, nil
+		}
+		str, ok := strArg.(string)
+		if !ok {
+			str = fmt.Sprintf("%v", strArg)
+		}
+		targetLen := 0
+		switch v := lenArg.(type) {
+		case int:
+			targetLen = v
+		case int64:
+			targetLen = int(v)
+		case float64:
+			targetLen = int(v)
+		}
+
+		padStr := " "
+		if len(fc.Args) >= 3 {
+			padArg, err := evalExpr(fc.Args[2])
+			if err != nil {
+				return nil, err
+			}
+			if padArg != nil {
+				if ps, ok := padArg.(string); ok {
+					padStr = ps
+				}
+			}
+		}
+
+		if len(str) >= targetLen {
+			return str[:targetLen], nil
+		}
+		padLen := targetLen - len(str)
+		padding := strings.Repeat(padStr, (padLen+len(padStr)-1)/len(padStr))
+		return str + padding[:padLen], nil
+
+	case "REVERSE":
+		if len(fc.Args) == 0 {
+			return nil, fmt.Errorf("REVERSE requires 1 argument")
+		}
+		arg, err := evalExpr(fc.Args[0])
+		if err != nil {
+			return nil, err
+		}
+		if arg == nil {
+			return nil, nil
+		}
+		str, ok := arg.(string)
+		if !ok {
+			str = fmt.Sprintf("%v", arg)
+		}
+		runes := []rune(str)
+		for i, j := 0, len(runes)-1; i < j; i, j = i+1, j-1 {
+			runes[i], runes[j] = runes[j], runes[i]
+		}
+		return string(runes), nil
+
+	case "LEFT":
+		if len(fc.Args) < 2 {
+			return nil, fmt.Errorf("LEFT requires 2 arguments")
+		}
+		strArg, err := evalExpr(fc.Args[0])
+		if err != nil {
+			return nil, err
+		}
+		nArg, err := evalExpr(fc.Args[1])
+		if err != nil {
+			return nil, err
+		}
+		if strArg == nil {
+			return nil, nil
+		}
+		str, ok := strArg.(string)
+		if !ok {
+			str = fmt.Sprintf("%v", strArg)
+		}
+		n := 0
+		switch v := nArg.(type) {
+		case int:
+			n = v
+		case int64:
+			n = int(v)
+		case float64:
+			n = int(v)
+		}
+		runes := []rune(str)
+		if n > len(runes) {
+			n = len(runes)
+		}
+		if n < 0 {
+			n = 0
+		}
+		return string(runes[:n]), nil
+
+	case "RIGHT":
+		if len(fc.Args) < 2 {
+			return nil, fmt.Errorf("RIGHT requires 2 arguments")
+		}
+		strArg, err := evalExpr(fc.Args[0])
+		if err != nil {
+			return nil, err
+		}
+		nArg, err := evalExpr(fc.Args[1])
+		if err != nil {
+			return nil, err
+		}
+		if strArg == nil {
+			return nil, nil
+		}
+		str, ok := strArg.(string)
+		if !ok {
+			str = fmt.Sprintf("%v", strArg)
+		}
+		n := 0
+		switch v := nArg.(type) {
+		case int:
+			n = v
+		case int64:
+			n = int(v)
+		case float64:
+			n = int(v)
+		}
+		runes := []rune(str)
+		if n > len(runes) {
+			n = len(runes)
+		}
+		if n < 0 {
+			n = 0
+		}
+		return string(runes[len(runes)-n:]), nil
+
+	// ========== Utility Functions ==========
+	case "TYPEOF":
+		if len(fc.Args) == 0 {
+			return "null", nil
+		}
+		arg, err := evalExpr(fc.Args[0])
+		if err != nil {
+			return nil, err
+		}
+		if arg == nil {
+			return "null", nil
+		}
+		switch arg.(type) {
+		case int, int64:
+			return "integer", nil
+		case float64:
+			return "real", nil
+		case string:
+			return "text", nil
+		case bool:
+			return "boolean", nil
+		case []byte:
+			return "blob", nil
+		case time.Time:
+			return "datetime", nil
+		default:
+			return "unknown", nil
+		}
+
+	case "IIF":
+		if len(fc.Args) < 3 {
+			return nil, fmt.Errorf("IIF requires 3 arguments")
+		}
+		condArg, err := evalExpr(fc.Args[0])
+		if err != nil {
+			return nil, err
+		}
+		cond, ok := condArg.(bool)
+		if !ok {
+			cond = condArg != nil && condArg != false && condArg != 0 && condArg != ""
+		}
+		if cond {
+			return evalExpr(fc.Args[1])
+		}
+		return evalExpr(fc.Args[2])
+
+	case "GREATEST":
+		if len(fc.Args) == 0 {
+			return nil, fmt.Errorf("GREATEST requires at least 1 argument")
+		}
+		var maxVal interface{}
+		for i, arg := range fc.Args {
+			val, err := evalExpr(arg)
+			if err != nil {
+				return nil, err
+			}
+			if i == 0 {
+				maxVal = val
+				continue
+			}
+			if val == nil {
+				continue
+			}
+			if maxVal == nil {
+				maxVal = val
+				continue
+			}
+			cmp := compareValues(maxVal, val)
+			if cmp < 0 {
+				maxVal = val
+			}
+		}
+		return maxVal, nil
+
+	case "LEAST":
+		if len(fc.Args) == 0 {
+			return nil, fmt.Errorf("LEAST requires at least 1 argument")
+		}
+		var minVal interface{}
+		for i, arg := range fc.Args {
+			val, err := evalExpr(arg)
+			if err != nil {
+				return nil, err
+			}
+			if i == 0 {
+				minVal = val
+				continue
+			}
+			if val == nil {
+				continue
+			}
+			if minVal == nil {
+				minVal = val
+				continue
+			}
+			cmp := compareValues(minVal, val)
+			if cmp > 0 {
+				minVal = val
+			}
+		}
+		return minVal, nil
+
+	// ========== More Math Functions ==========
+	case "SIGN":
+		if len(fc.Args) == 0 {
+			return nil, fmt.Errorf("SIGN requires 1 argument")
+		}
+		arg, err := evalExpr(fc.Args[0])
+		if err != nil {
+			return nil, err
+		}
+		if arg == nil {
+			return nil, nil
+		}
+		switch v := arg.(type) {
+		case int:
+			if v > 0 {
+				return 1, nil
+			} else if v < 0 {
+				return -1, nil
+			}
+			return 0, nil
+		case int64:
+			if v > 0 {
+				return 1, nil
+			} else if v < 0 {
+				return -1, nil
+			}
+			return 0, nil
+		case float64:
+			if v > 0 {
+				return 1, nil
+			} else if v < 0 {
+				return -1, nil
+			}
+			return 0, nil
+		default:
+			return nil, fmt.Errorf("SIGN requires numeric argument")
+		}
+
+	case "RANDOM":
+		return time.Now().UnixNano(), nil
+
+	case "LOG":
+		if len(fc.Args) == 0 {
+			return nil, fmt.Errorf("LOG requires 1 argument")
+		}
+		arg, err := evalExpr(fc.Args[0])
+		if err != nil {
+			return nil, err
+		}
+		if arg == nil {
+			return nil, nil
+		}
+		var val float64
+		switch v := arg.(type) {
+		case int:
+			val = float64(v)
+		case int64:
+			val = float64(v)
+		case float64:
+			val = v
+		default:
+			return nil, fmt.Errorf("LOG requires numeric argument")
+		}
+		if val <= 0 {
+			return nil, fmt.Errorf("LOG of non-positive number")
+		}
+		return math.Log(val), nil
+
+	case "LOG10":
+		if len(fc.Args) == 0 {
+			return nil, fmt.Errorf("LOG10 requires 1 argument")
+		}
+		arg, err := evalExpr(fc.Args[0])
+		if err != nil {
+			return nil, err
+		}
+		if arg == nil {
+			return nil, nil
+		}
+		var val float64
+		switch v := arg.(type) {
+		case int:
+			val = float64(v)
+		case int64:
+			val = float64(v)
+		case float64:
+			val = v
+		default:
+			return nil, fmt.Errorf("LOG10 requires numeric argument")
+		}
+		if val <= 0 {
+			return nil, fmt.Errorf("LOG10 of non-positive number")
+		}
+		return math.Log10(val), nil
+
+	case "EXP":
+		if len(fc.Args) == 0 {
+			return nil, fmt.Errorf("EXP requires 1 argument")
+		}
+		arg, err := evalExpr(fc.Args[0])
+		if err != nil {
+			return nil, err
+		}
+		if arg == nil {
+			return nil, nil
+		}
+		var val float64
+		switch v := arg.(type) {
+		case int:
+			val = float64(v)
+		case int64:
+			val = float64(v)
+		case float64:
+			val = v
+		default:
+			return nil, fmt.Errorf("EXP requires numeric argument")
+		}
+		return math.Exp(val), nil
+
+	case "PI":
+		return math.Pi, nil
+
 	default:
 		// Check for user-defined function
 		if e.udfManager != nil {

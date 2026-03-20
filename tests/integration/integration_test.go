@@ -603,6 +603,267 @@ func TestSQL_GroupConcat(t *testing.T) {
 	}
 }
 
+func TestSQL_DateTimeFunctions(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "xxsql-datetime-test-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	engine := storage.NewEngine(tmpDir)
+	if err := engine.Open(); err != nil {
+		t.Fatalf("Failed to open engine: %v", err)
+	}
+	defer engine.Close()
+
+	exec := executor.NewExecutor(engine)
+	exec.SetDatabase("testdb")
+
+	// Create table with dates
+	_, _ = exec.Execute("CREATE TABLE events (id INT, name VARCHAR(50), created_at VARCHAR(30))")
+	exec.Execute("INSERT INTO events VALUES (1, 'Event 1', '2024-03-15 10:30:00')")
+	exec.Execute("INSERT INTO events VALUES (2, 'Event 2', '2024-06-20 14:45:00')")
+
+	// Test DATE
+	result, err := exec.Execute("SELECT DATE(created_at) FROM events WHERE id = 1")
+	if err != nil {
+		t.Fatalf("DATE failed: %v", err)
+	}
+	t.Logf("DATE result: %v", result.Rows)
+
+	// Test TIME
+	result, err = exec.Execute("SELECT TIME(created_at) FROM events WHERE id = 1")
+	if err != nil {
+		t.Fatalf("TIME failed: %v", err)
+	}
+	t.Logf("TIME result: %v", result.Rows)
+
+	// Test DATETIME
+	result, err = exec.Execute("SELECT DATETIME(created_at) FROM events WHERE id = 1")
+	if err != nil {
+		t.Fatalf("DATETIME failed: %v", err)
+	}
+	t.Logf("DATETIME result: %v", result.Rows)
+
+	// Test YEAR, MONTH, DAY
+	result, err = exec.Execute("SELECT YEAR(created_at), MONTH(created_at), DAY(created_at) FROM events WHERE id = 1")
+	if err != nil {
+		t.Fatalf("YEAR/MONTH/DAY failed: %v", err)
+	}
+	t.Logf("YEAR/MONTH/DAY result: %v", result.Rows)
+
+	// Test HOUR, MINUTE, SECOND
+	result, err = exec.Execute("SELECT HOUR(created_at), MINUTE(created_at), SECOND(created_at) FROM events WHERE id = 1")
+	if err != nil {
+		t.Fatalf("HOUR/MINUTE/SECOND failed: %v", err)
+	}
+	t.Logf("HOUR/MINUTE/SECOND result: %v", result.Rows)
+
+	// Test DATE_ADD
+	result, err = exec.Execute("SELECT DATE_ADD('2024-03-15', 7)")
+	if err != nil {
+		t.Fatalf("DATE_ADD failed: %v", err)
+	}
+	t.Logf("DATE_ADD result: %v", result.Rows)
+
+	// Test DATE_SUB
+	result, err = exec.Execute("SELECT DATE_SUB('2024-03-15', 7)")
+	if err != nil {
+		t.Fatalf("DATE_SUB failed: %v", err)
+	}
+	t.Logf("DATE_SUB result: %v", result.Rows)
+
+	// Test DATEDIFF
+	result, err = exec.Execute("SELECT DATEDIFF('2024-03-22', '2024-03-15')")
+	if err != nil {
+		t.Fatalf("DATEDIFF failed: %v", err)
+	}
+	t.Logf("DATEDIFF result: %v", result.Rows)
+}
+
+func TestSQL_StringFunctions(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "xxsql-string-test-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	engine := storage.NewEngine(tmpDir)
+	if err := engine.Open(); err != nil {
+		t.Fatalf("Failed to open engine: %v", err)
+	}
+	defer engine.Close()
+
+	exec := executor.NewExecutor(engine)
+	exec.SetDatabase("testdb")
+
+	// Test TRIM
+	result, err := exec.Execute("SELECT TRIM('  hello  ')")
+	if err != nil {
+		t.Fatalf("TRIM failed: %v", err)
+	}
+	t.Logf("TRIM result: %v", result.Rows)
+
+	// Test LTRIM
+	result, err = exec.Execute("SELECT LTRIM('  hello  ')")
+	if err != nil {
+		t.Fatalf("LTRIM failed: %v", err)
+	}
+	t.Logf("LTRIM result: %v", result.Rows)
+
+	// Test RTRIM
+	result, err = exec.Execute("SELECT RTRIM('  hello  ')")
+	if err != nil {
+		t.Fatalf("RTRIM failed: %v", err)
+	}
+	t.Logf("RTRIM result: %v", result.Rows)
+
+	// Test INSTR
+	result, err = exec.Execute("SELECT INSTR('hello world', 'world')")
+	if err != nil {
+		t.Fatalf("INSTR failed: %v", err)
+	}
+	t.Logf("INSTR result: %v", result.Rows)
+
+	// Test LPAD
+	result, err = exec.Execute("SELECT LPAD('hi', 5, '*')")
+	if err != nil {
+		t.Fatalf("LPAD failed: %v", err)
+	}
+	t.Logf("LPAD result: %v", result.Rows)
+
+	// Test RPAD
+	result, err = exec.Execute("SELECT RPAD('hi', 5, '*')")
+	if err != nil {
+		t.Fatalf("RPAD failed: %v", err)
+	}
+	t.Logf("RPAD result: %v", result.Rows)
+
+	// Test REVERSE
+	result, err = exec.Execute("SELECT REVERSE('hello')")
+	if err != nil {
+		t.Fatalf("REVERSE failed: %v", err)
+	}
+	t.Logf("REVERSE result: %v", result.Rows)
+
+	// Test LEFT
+	result, err = exec.Execute("SELECT LEFT('hello world', 5)")
+	if err != nil {
+		t.Fatalf("LEFT failed: %v", err)
+	}
+	t.Logf("LEFT result: %v", result.Rows)
+
+	// Test RIGHT
+	result, err = exec.Execute("SELECT RIGHT('hello world', 5)")
+	if err != nil {
+		t.Fatalf("RIGHT failed: %v", err)
+	}
+	t.Logf("RIGHT result: %v", result.Rows)
+}
+
+func TestSQL_UtilityFunctions(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "xxsql-utility-test-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	engine := storage.NewEngine(tmpDir)
+	if err := engine.Open(); err != nil {
+		t.Fatalf("Failed to open engine: %v", err)
+	}
+	defer engine.Close()
+
+	exec := executor.NewExecutor(engine)
+	exec.SetDatabase("testdb")
+
+	// Test TYPEOF
+	result, err := exec.Execute("SELECT TYPEOF(123), TYPEOF('hello'), TYPEOF(3.14)")
+	if err != nil {
+		t.Fatalf("TYPEOF failed: %v", err)
+	}
+	t.Logf("TYPEOF result: %v", result.Rows)
+
+	// Test IIF
+	result, err = exec.Execute("SELECT IIF(1 > 0, 'yes', 'no')")
+	if err != nil {
+		t.Fatalf("IIF failed: %v", err)
+	}
+	t.Logf("IIF result: %v", result.Rows)
+
+	result, err = exec.Execute("SELECT IIF(1 < 0, 'yes', 'no')")
+	if err != nil {
+		t.Fatalf("IIF failed: %v", err)
+	}
+	t.Logf("IIF result: %v", result.Rows)
+
+	// Test GREATEST
+	result, err = exec.Execute("SELECT GREATEST(10, 5, 20, 3)")
+	if err != nil {
+		t.Fatalf("GREATEST failed: %v", err)
+	}
+	t.Logf("GREATEST result: %v", result.Rows)
+
+	// Test LEAST
+	result, err = exec.Execute("SELECT LEAST(10, 5, 20, 3)")
+	if err != nil {
+		t.Fatalf("LEAST failed: %v", err)
+	}
+	t.Logf("LEAST result: %v", result.Rows)
+}
+
+func TestSQL_MoreMathFunctions(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "xxsql-math2-test-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	engine := storage.NewEngine(tmpDir)
+	if err := engine.Open(); err != nil {
+		t.Fatalf("Failed to open engine: %v", err)
+	}
+	defer engine.Close()
+
+	exec := executor.NewExecutor(engine)
+	exec.SetDatabase("testdb")
+
+	// Test SIGN
+	result, err := exec.Execute("SELECT SIGN(-10), SIGN(0), SIGN(5)")
+	if err != nil {
+		t.Fatalf("SIGN failed: %v", err)
+	}
+	t.Logf("SIGN result: %v", result.Rows)
+
+	// Test LOG
+	result, err = exec.Execute("SELECT LOG(10)")
+	if err != nil {
+		t.Fatalf("LOG failed: %v", err)
+	}
+	t.Logf("LOG result: %v", result.Rows)
+
+	// Test LOG10
+	result, err = exec.Execute("SELECT LOG10(100)")
+	if err != nil {
+		t.Fatalf("LOG10 failed: %v", err)
+	}
+	t.Logf("LOG10 result: %v", result.Rows)
+
+	// Test EXP
+	result, err = exec.Execute("SELECT EXP(1)")
+	if err != nil {
+		t.Fatalf("EXP failed: %v", err)
+	}
+	t.Logf("EXP result: %v", result.Rows)
+
+	// Test PI
+	result, err = exec.Execute("SELECT PI()")
+	if err != nil {
+		t.Fatalf("PI failed: %v", err)
+	}
+	t.Logf("PI result: %v", result.Rows)
+}
+
 func TestSQL_OrderByLimit(t *testing.T) {
 	tmpDir, err := os.MkdirTemp("", "xxsql-order-test-*")
 	if err != nil {

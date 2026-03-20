@@ -1670,7 +1670,8 @@ func (p *Parser) parsePrimaryExpr() Expression {
 	// If followed by (, treat as function call
 	case TokDouble, TokFloat, TokInt, TokInteger, TokBigInt, TokChar, TokVarchar,
 		TokText, TokDate, TokTime, TokDateTime, TokBool, TokBoolean, TokBlob,
-		TokDecimal, TokNumeric, TokSmallInt, TokTinyInt, TokSeq:
+		TokDecimal, TokNumeric, TokSmallInt, TokTinyInt, TokSeq,
+		TokLeft, TokRight: // LEFT/RIGHT can be JOIN keywords or function names
 		name := p.currTok.Value
 		p.nextToken()
 		if p.curTokenIs(TokLParen) {
