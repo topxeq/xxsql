@@ -334,7 +334,16 @@ func (e *Executor) executeSelect(stmt *sql.SelectStmt) (*Result, error) {
 
 	// Check if this is a derived table (subquery in FROM clause)
 	if stmt.From.Table.Subquery != nil {
+		// Check for LATERAL
+		if stmt.From.Table.Lateral {
+			return e.executeSelectFromLateral(stmt)
+		}
 		return e.executeSelectFromDerivedTable(stmt)
+	}
+
+	// Check if this is a VALUES table constructor
+	if stmt.From.Table.Values != nil {
+		return e.executeSelectFromValues(stmt)
 	}
 
 	tableName := stmt.From.Table.Name
@@ -1120,6 +1129,18 @@ func (e *Executor) computeWindowFunction(wf *sql.WindowFuncCall, partition []int
 
 	case "MAX":
 		e.computeMaxWindow(partition, rows, wf, windowValues, colIndex, colIdxMap)
+
+	case "LEAD":
+		e.computeLeadLag(partition, rows, wf, windowValues, colIndex, colIdxMap, true)
+
+	case "LAG":
+		e.computeLeadLag(partition, rows, wf, windowValues, colIndex, colIdxMap, false)
+
+	case "FIRST_VALUE":
+		e.computeFirstLastValue(partition, rows, wf, windowValues, colIndex, colIdxMap, true)
+
+	case "LAST_VALUE":
+		e.computeFirstLastValue(partition, rows, wf, windowValues, colIndex, colIdxMap, false)
 	}
 }
 
@@ -1246,6 +1267,135 @@ func (e *Executor) computeMaxWindow(partition []int, rows []*row.Row, wf *sql.Wi
 	}
 	for _, rowIdx := range partition {
 		windowValues[rowIdx][colIndex] = maxVal
+	}
+}
+
+// computeLeadLag computes LEAD or LAG window function.
+// LEAD(col, offset, default) - access value from a following row
+// LAG(col, offset, default) - access value from a preceding row
+func (e *Executor) computeLeadLag(partition []int, rows []*row.Row, wf *sql.WindowFuncCall, windowValues []map[int]interface{}, colIndex int, colIdxMap map[string]int, isLead bool) {
+	// Get offset (default is 1)
+	offset := 1
+	if len(wf.Func.Args) >= 2 {
+		if lit, ok := wf.Func.Args[1].(*sql.Literal); ok {
+			if strVal, ok := lit.Value.(string); ok {
+				if n, err := strconv.ParseInt(strVal, 10, 64); err == nil && n > 0 {
+					offset = int(n)
+				}
+			}
+		}
+	}
+
+	// Get default value (default is NULL)
+	var defaultVal interface{}
+	if len(wf.Func.Args) >= 3 {
+		if lit, ok := wf.Func.Args[2].(*sql.Literal); ok {
+			defaultVal = lit.Value
+		}
+	}
+
+	// Get column index for the first argument
+	if len(wf.Func.Args) == 0 {
+		return
+	}
+
+	var colIdx int
+	if colRef, ok := wf.Func.Args[0].(*sql.ColumnRef); ok {
+		var found bool
+		colIdx, found = colIdxMap[strings.ToLower(colRef.Name)]
+		if !found {
+			return
+		}
+	} else {
+		return
+	}
+
+	// Compute LEAD/LAG for each row
+	for i, rowIdx := range partition {
+		var targetIdx int
+		if isLead {
+			targetIdx = i + offset
+		} else {
+			targetIdx = i - offset
+		}
+
+		if targetIdx >= 0 && targetIdx < len(partition) {
+			targetRowIdx := partition[targetIdx]
+			r := rows[targetRowIdx]
+			if colIdx < len(r.Values) && !r.Values[colIdx].Null {
+				val := e.valueToInterface(r.Values[colIdx])
+				// Handle IGNORE NULLS
+				if wf.IgnoreNulls && val == nil {
+					// Skip NULL values, look for next non-NULL
+					found := false
+					for j := targetIdx + 1; j < len(partition) && !found; j++ {
+						checkRow := rows[partition[j]]
+						if colIdx < len(checkRow.Values) && !checkRow.Values[colIdx].Null {
+							val = e.valueToInterface(checkRow.Values[colIdx])
+							found = true
+						}
+					}
+					if !found {
+						windowValues[rowIdx][colIndex] = defaultVal
+						continue
+					}
+				}
+				windowValues[rowIdx][colIndex] = val
+			} else {
+				windowValues[rowIdx][colIndex] = defaultVal
+			}
+		} else {
+			windowValues[rowIdx][colIndex] = defaultVal
+		}
+	}
+}
+
+// computeFirstLastValue computes FIRST_VALUE or LAST_VALUE window function.
+func (e *Executor) computeFirstLastValue(partition []int, rows []*row.Row, wf *sql.WindowFuncCall, windowValues []map[int]interface{}, colIndex int, colIdxMap map[string]int, isFirst bool) {
+	if len(wf.Func.Args) == 0 {
+		return
+	}
+
+	var colIdx int
+	if colRef, ok := wf.Func.Args[0].(*sql.ColumnRef); ok {
+		var found bool
+		colIdx, found = colIdxMap[strings.ToLower(colRef.Name)]
+		if !found {
+			return
+		}
+	} else {
+		return
+	}
+
+	// For FIRST_VALUE, use the first row in the partition
+	// For LAST_VALUE, use the last row in the partition
+	var targetRowIdx int
+	if isFirst {
+		targetRowIdx = partition[0]
+	} else {
+		targetRowIdx = partition[len(partition)-1]
+	}
+
+	r := rows[targetRowIdx]
+	var val interface{}
+	if colIdx < len(r.Values) && !r.Values[colIdx].Null {
+		val = e.valueToInterface(r.Values[colIdx])
+	}
+
+	// Handle IGNORE NULLS
+	if wf.IgnoreNulls && val == nil {
+		// Find first non-NULL value
+		for _, rowIdx := range partition {
+			checkRow := rows[rowIdx]
+			if colIdx < len(checkRow.Values) && !checkRow.Values[colIdx].Null {
+				val = e.valueToInterface(checkRow.Values[colIdx])
+				break
+			}
+		}
+	}
+
+	for _, rowIdx := range partition {
+		windowValues[rowIdx][colIndex] = val
 	}
 }
 
@@ -2413,6 +2563,274 @@ func (e *Executor) executeSelectFromDerivedTable(stmt *sql.SelectStmt) (*Result,
 	}
 
 	// Apply ORDER BY (simplified - just pass through for now)
+	// Apply LIMIT/OFFSET
+	if stmt.Limit != nil {
+		offset := 0
+		if stmt.Offset != nil {
+			offset = int(*stmt.Offset)
+		}
+		limit := int(*stmt.Limit)
+		if offset < len(result.Rows) {
+			end := offset + limit
+			if end > len(result.Rows) {
+				end = len(result.Rows)
+			}
+			result.Rows = result.Rows[offset:end]
+		} else {
+			result.Rows = nil
+		}
+	}
+
+	result.RowCount = len(result.Rows)
+	return result, nil
+}
+
+// executeSelectFromValues handles SELECT from a VALUES table constructor.
+func (e *Executor) executeSelectFromValues(stmt *sql.SelectStmt) (*Result, error) {
+	valuesExpr := stmt.From.Table.Values
+	tableAlias := stmt.From.Table.Alias
+	if tableAlias == "" {
+		tableAlias = "values_table"
+	}
+
+	// Build column info
+	numCols := 0
+	if len(valuesExpr.Rows) > 0 {
+		numCols = len(valuesExpr.Rows[0])
+	}
+
+	// Create column names (use provided names or generate default names)
+	colNames := valuesExpr.Columns
+	if len(colNames) == 0 {
+		for i := 0; i < numCols; i++ {
+			colNames = append(colNames, fmt.Sprintf("column%d", i+1))
+		}
+	}
+
+	// Build column order for expression evaluation
+	columnOrder := make([]*types.ColumnInfo, numCols)
+	for i := 0; i < numCols; i++ {
+		columnOrder[i] = &types.ColumnInfo{
+			Name: colNames[i],
+			Type: types.TypeVarchar,
+		}
+	}
+
+	// Build column index map
+	colIdxMap := make(map[string]int)
+	for i, name := range colNames {
+		colIdxMap[strings.ToLower(name)] = i
+	}
+
+	// Convert VALUES rows to result rows
+	var rows []*row.Row
+	for _, valueRow := range valuesExpr.Rows {
+		r := &row.Row{Values: make([]types.Value, numCols)}
+		for i, expr := range valueRow {
+			if i < numCols {
+				// Evaluate the expression
+				switch ex := expr.(type) {
+				case *sql.Literal:
+					switch ex.Type {
+					case sql.LiteralNumber:
+						// Number can be stored as int64, float64, or string
+						switch v := ex.Value.(type) {
+						case int64:
+							r.Values[i] = types.NewIntValue(v)
+						case float64:
+							r.Values[i] = types.NewFloatValue(v)
+						case string:
+							if n, err := strconv.ParseInt(v, 10, 64); err == nil {
+								r.Values[i] = types.NewIntValue(n)
+							} else if f, err := strconv.ParseFloat(v, 64); err == nil {
+								r.Values[i] = types.NewFloatValue(f)
+							} else {
+								r.Values[i] = types.NewStringValue(v, types.TypeVarchar)
+							}
+						}
+					case sql.LiteralString:
+						if strVal, ok := ex.Value.(string); ok {
+							r.Values[i] = types.NewStringValue(strVal, types.TypeVarchar)
+						}
+					case sql.LiteralBool:
+						r.Values[i] = types.NewIntValue(0)
+						if b, ok := ex.Value.(bool); ok && b {
+							r.Values[i] = types.NewIntValue(1)
+						}
+					case sql.LiteralNull:
+						r.Values[i] = types.Value{Null: true}
+					default:
+						r.Values[i] = types.NewStringValue(fmt.Sprintf("%v", ex.Value), types.TypeVarchar)
+					}
+				default:
+					// Default to string representation
+					r.Values[i] = types.NewStringValue(expr.String(), types.TypeVarchar)
+				}
+			}
+		}
+		rows = append(rows, r)
+	}
+
+	// Build result columns
+	result := &Result{
+		Columns: make([]ColumnInfo, numCols),
+		Rows:    make([][]interface{}, 0),
+	}
+	for i, name := range colNames {
+		result.Columns[i] = ColumnInfo{
+			Name: name,
+			Type: "VARCHAR",
+		}
+	}
+
+	// Process each row
+	for _, r := range rows {
+		resultRow := make([]interface{}, numCols)
+		for i := 0; i < numCols; i++ {
+			if i < len(r.Values) && !r.Values[i].Null {
+				resultRow[i] = e.valueToInterface(r.Values[i])
+			}
+		}
+		result.Rows = append(result.Rows, resultRow)
+	}
+
+	// Apply WHERE clause if present
+	if stmt.Where != nil {
+		filteredRows := make([][]interface{}, 0)
+		for i, resultRow := range result.Rows {
+			r := rows[i]
+			match, err := e.evaluateWhereForRow(stmt.Where, r, columnOrder, colIdxMap)
+			if err != nil {
+				return nil, err
+			}
+			if match {
+				filteredRows = append(filteredRows, resultRow)
+			}
+		}
+		result.Rows = filteredRows
+	}
+
+	// Apply ORDER BY if present
+	if len(stmt.OrderBy) > 0 {
+		result.Rows = e.sortRows(stmt.OrderBy, result.Columns, result.Rows)
+	}
+
+	// Apply LIMIT/OFFSET
+	if stmt.Limit != nil {
+		offset := 0
+		if stmt.Offset != nil {
+			offset = int(*stmt.Offset)
+		}
+		limit := int(*stmt.Limit)
+		if offset < len(result.Rows) {
+			end := offset + limit
+			if end > len(result.Rows) {
+				end = len(result.Rows)
+			}
+			result.Rows = result.Rows[offset:end]
+		} else {
+			result.Rows = nil
+		}
+	}
+
+	result.RowCount = len(result.Rows)
+	return result, nil
+}
+
+// executeSelectFromLateral handles SELECT from a LATERAL subquery.
+func (e *Executor) executeSelectFromLateral(stmt *sql.SelectStmt) (*Result, error) {
+	// LATERAL allows the subquery to reference columns from tables
+	// that appear earlier in the FROM clause
+
+	// For now, execute the subquery with outer context
+	// In a full implementation, this would be joined with preceding tables
+	subquery := stmt.From.Table.Subquery
+
+	// Execute the lateral subquery
+	derivedResult, err := e.executeStatement(subquery.Select)
+	if err != nil {
+		return nil, fmt.Errorf("lateral subquery error: %w", err)
+	}
+
+	// Use the alias if provided
+	tableAlias := stmt.From.Table.Alias
+	if tableAlias == "" {
+		tableAlias = "lateral_table"
+	}
+
+	// Build column index map for the lateral result
+	colIdxMap := make(map[string]int)
+	for i, col := range derivedResult.Columns {
+		colIdxMap[strings.ToLower(col.Name)] = i
+	}
+
+	// Build result columns
+	result := &Result{
+		Columns: make([]ColumnInfo, 0),
+		Rows:    make([][]interface{}, 0),
+	}
+
+	for _, colExpr := range stmt.Columns {
+		switch expr := colExpr.(type) {
+		case *sql.StarExpr:
+			for _, col := range derivedResult.Columns {
+				result.Columns = append(result.Columns, col)
+			}
+		case *sql.ColumnRef:
+			colName := strings.ToLower(expr.Name)
+			if _, ok := colIdxMap[colName]; !ok {
+				return nil, fmt.Errorf("unknown column: %s", expr.Name)
+			}
+			ci := ColumnInfo{
+				Name: expr.Name,
+				Type: "VARCHAR",
+			}
+			if expr.Alias != "" {
+				ci.Alias = expr.Alias
+			}
+			result.Columns = append(result.Columns, ci)
+		default:
+			ci := ColumnInfo{
+				Name: fmt.Sprintf("expr_%d", len(result.Columns)+1),
+				Type: "VARCHAR",
+			}
+			result.Columns = append(result.Columns, ci)
+		}
+	}
+
+	// Process each row
+	for _, srcRow := range derivedResult.Rows {
+		resultRow := make([]interface{}, len(result.Columns))
+		colIdx := 0
+		for _, colExpr := range stmt.Columns {
+			switch expr := colExpr.(type) {
+			case *sql.StarExpr:
+				for _, srcVal := range srcRow {
+					resultRow[colIdx] = srcVal
+					colIdx++
+				}
+			case *sql.ColumnRef:
+				colName := strings.ToLower(expr.Name)
+				if idx, ok := colIdxMap[colName]; ok && idx < len(srcRow) {
+					resultRow[colIdx] = srcRow[idx]
+				}
+				colIdx++
+			default:
+				// For complex expressions, just use the first column
+				if len(srcRow) > 0 {
+					resultRow[colIdx] = srcRow[0]
+				}
+				colIdx++
+			}
+		}
+		result.Rows = append(result.Rows, resultRow)
+	}
+
+	// Apply ORDER BY if present
+	if len(stmt.OrderBy) > 0 {
+		result.Rows = e.sortRows(stmt.OrderBy, result.Columns, result.Rows)
+	}
+
 	// Apply LIMIT/OFFSET
 	if stmt.Limit != nil {
 		offset := 0

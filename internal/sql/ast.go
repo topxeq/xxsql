@@ -1245,9 +1245,11 @@ func (w *WindowSpec) String() string {
 
 // WindowFuncCall represents a window function call with OVER clause.
 type WindowFuncCall struct {
-	Func   *FunctionCall // The function being called
-	Window *WindowSpec   // The window specification
-	Alias  string        // optional alias
+	Func        *FunctionCall // The function being called
+	Window      *WindowSpec   // The window specification
+	Alias       string        // optional alias
+	IgnoreNulls bool          // IGNORE NULLS (for LEAD/LAG/FIRST_VALUE/LAST_VALUE)
+	RespectNulls bool         // RESPECT NULLS (default behavior, explicitly stated)
 }
 
 func (w *WindowFuncCall) node()       {}
@@ -1255,6 +1257,11 @@ func (w *WindowFuncCall) expression() {}
 func (w *WindowFuncCall) String() string {
 	var sb strings.Builder
 	sb.WriteString(w.Func.String())
+	if w.IgnoreNulls {
+		sb.WriteString(" IGNORE NULLS")
+	} else if w.RespectNulls {
+		sb.WriteString(" RESPECT NULLS")
+	}
 	sb.WriteString(" ")
 	sb.WriteString(w.Window.String())
 	return sb.String()
@@ -1363,18 +1370,30 @@ func (w *CaseWhen) String() string {
 
 // TableRef represents a table reference (either a named table or a subquery).
 type TableRef struct {
-	Name     string       // Table name (if referencing a real table)
-	Alias    string       // Optional alias
+	Name     string        // Table name (if referencing a real table)
+	Alias    string        // Optional alias
 	Subquery *SubqueryExpr // Subquery (if this is a derived table)
+	Lateral  bool          // LATERAL keyword for correlated subqueries
+	Values   *ValuesExpr   // VALUES constructor (if this is a values table)
 }
 
 func (t *TableRef) node() {}
 func (t *TableRef) String() string {
-	if t.Subquery != nil {
+	if t.Values != nil {
 		if t.Alias != "" {
-			return fmt.Sprintf("(%s) AS %s", t.Subquery.String(), t.Alias)
+			return fmt.Sprintf("%s AS %s", t.Values.String(), t.Alias)
 		}
-		return fmt.Sprintf("(%s)", t.Subquery.String())
+		return t.Values.String()
+	}
+	if t.Subquery != nil {
+		prefix := ""
+		if t.Lateral {
+			prefix = "LATERAL "
+		}
+		if t.Alias != "" {
+			return fmt.Sprintf("%s(%s) AS %s", prefix, t.Subquery.String(), t.Alias)
+		}
+		return fmt.Sprintf("%s(%s)", prefix, t.Subquery.String())
 	}
 	if t.Alias != "" {
 		return fmt.Sprintf("%s AS %s", t.Name, t.Alias)
@@ -1402,6 +1421,35 @@ func (e *SubqueryExpr) node()       {}
 func (e *SubqueryExpr) expression() {}
 func (e *SubqueryExpr) String() string {
 	return fmt.Sprintf("(%s)", e.Select.String())
+}
+
+// ValuesExpr represents a VALUES table constructor.
+// Example: VALUES (1, 'a'), (2, 'b')
+type ValuesExpr struct {
+	Rows   [][]Expression // Each row is a list of expressions
+	Alias  string         // Optional table alias
+	Columns []string      // Optional column aliases
+}
+
+func (e *ValuesExpr) node()       {}
+func (e *ValuesExpr) expression() {}
+func (e *ValuesExpr) String() string {
+	var sb strings.Builder
+	sb.WriteString("VALUES ")
+	for i, row := range e.Rows {
+		if i > 0 {
+			sb.WriteString(", ")
+		}
+		sb.WriteString("(")
+		for j, val := range row {
+			if j > 0 {
+				sb.WriteString(", ")
+			}
+			sb.WriteString(val.String())
+		}
+		sb.WriteString(")")
+	}
+	return sb.String()
 }
 
 // ExistsExpr represents an EXISTS subquery expression.

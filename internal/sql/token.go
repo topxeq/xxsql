@@ -171,6 +171,16 @@ const (
 	TokPreceding
 	TokFollowing
 	TokCurrent
+	TokLead       // LEAD window function
+	TokLag        // LAG window function
+	TokNtile      // NTILE window function
+	TokFirstValue // FIRST_VALUE window function
+	TokLastValue  // LAST_VALUE window function
+	TokIgnore     // IGNORE NULLS
+	TokRespect    // RESPECT NULLS
+
+	// Keywords - LATERAL
+	TokLateral // LATERAL for correlated subqueries
 
 	// Keywords - UDF
 	TokFunction
@@ -503,6 +513,22 @@ func (t TokenType) String() string {
 		return "FOLLOWING"
 	case TokCurrent:
 		return "CURRENT"
+	case TokLead:
+		return "LEAD"
+	case TokLag:
+		return "LAG"
+	case TokNtile:
+		return "NTILE"
+	case TokFirstValue:
+		return "FIRST_VALUE"
+	case TokLastValue:
+		return "LAST_VALUE"
+	case TokIgnore:
+		return "IGNORE"
+	case TokRespect:
+		return "RESPECT"
+	case TokLateral:
+		return "LATERAL"
 	case TokFunction:
 		return "FUNCTION"
 	case TokReturns:
@@ -704,6 +730,14 @@ var keywords = map[string]TokenType{
 	"PRECEDING":    TokPreceding,
 	"FOLLOWING":    TokFollowing,
 	"CURRENT":      TokCurrent,
+	"LEAD":         TokLead,
+	"LAG":          TokLag,
+	"NTILE":        TokNtile,
+	"FIRST_VALUE":  TokFirstValue,
+	"LAST_VALUE":   TokLastValue,
+	"IGNORE":       TokIgnore,
+	"RESPECT":      TokRespect,
+	"LATERAL":      TokLateral,
 	"FUNCTION":     TokFunction,
 	"RETURNS":      TokReturns,
 	"RETURN":       TokReturn,

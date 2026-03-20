@@ -571,7 +571,38 @@ func (p *Parser) parseJoin() *JoinClause {
 func (p *Parser) parseTableRef() *TableRef {
 	tr := &TableRef{}
 
-	// Check for subquery: (SELECT ...) AS alias
+	// Check for LATERAL keyword
+	if p.curTokenIs(TokLateral) {
+		tr.Lateral = true
+		p.nextToken() // consume LATERAL
+	}
+
+	// Check for VALUES table constructor
+	if p.curTokenIs(TokValues) {
+		tr.Values = p.parseValuesExpr()
+		if tr.Values == nil {
+			return nil
+		}
+		// Parse optional alias
+		if p.curTokenIs(TokAs) {
+			p.nextToken()
+		}
+		if p.curTokenIs(TokIdent) {
+			tr.Alias = p.currTok.Value
+			p.nextToken()
+			// Check for column aliases: AS t(col1, col2)
+			if p.curTokenIs(TokLParen) {
+				p.nextToken()
+				tr.Values.Columns = p.parseIdentifierList()
+				if !p.expect(TokRParen) {
+					return nil
+				}
+			}
+		}
+		return tr
+	}
+
+	// Check for subquery: (SELECT ...) AS alias or (VALUES ...) AS alias
 	if p.curTokenIs(TokLParen) {
 		p.nextToken() // consume (
 		if p.curTokenIs(TokSelect) {
@@ -595,7 +626,34 @@ func (p *Parser) parseTableRef() *TableRef {
 			}
 			return tr
 		}
-		p.error("expected SELECT or table name")
+		// Check for VALUES inside parentheses
+		if p.curTokenIs(TokValues) {
+			tr.Values = p.parseValuesExpr()
+			if tr.Values == nil {
+				return nil
+			}
+			if !p.expect(TokRParen) {
+				return nil
+			}
+			// Parse optional alias
+			if p.curTokenIs(TokAs) {
+				p.nextToken()
+			}
+			if p.curTokenIs(TokIdent) {
+				tr.Alias = p.currTok.Value
+				p.nextToken()
+				// Check for column aliases: AS t(col1, col2)
+				if p.curTokenIs(TokLParen) {
+					p.nextToken()
+					tr.Values.Columns = p.parseIdentifierList()
+					if !p.expect(TokRParen) {
+						return nil
+					}
+				}
+			}
+			return tr
+		}
+		p.error("expected SELECT, VALUES or table name")
 		return nil
 	}
 
@@ -623,6 +681,36 @@ func (p *Parser) parseTableRef() *TableRef {
 	}
 
 	return tr
+}
+
+// parseValuesExpr parses a VALUES table constructor.
+// Syntax: VALUES (expr1, expr2, ...), (expr3, expr4, ...)
+func (p *Parser) parseValuesExpr() *ValuesExpr {
+	ve := &ValuesExpr{}
+	p.nextToken() // consume VALUES
+
+	for {
+		if !p.expect(TokLParen) {
+			return nil
+		}
+
+		row := p.parseExpressionList()
+		if row == nil {
+			return nil
+		}
+		ve.Rows = append(ve.Rows, row)
+
+		if !p.expect(TokRParen) {
+			return nil
+		}
+
+		if !p.curTokenIs(TokComma) {
+			break
+		}
+		p.nextToken() // consume ,
+	}
+
+	return ve
 }
 
 // parseOrderBy parses an ORDER BY clause.
@@ -1976,6 +2064,9 @@ func (p *Parser) parsePrimaryExpr() Expression {
 	// Handle function keywords (COUNT, SUM, AVG, MIN, MAX, COALESCE, NULLIF)
 	case TokCount, TokSum, TokAvg, TokMin, TokMax, TokCoalesce, TokNullIf:
 		return p.parseFunctionKeyword()
+	// Window function keywords (LEAD, LAG, FIRST_VALUE, LAST_VALUE, NTILE)
+	case TokLead, TokLag, TokNtile, TokFirstValue, TokLastValue:
+		return p.parseFunctionKeyword()
 	// UDF expressions
 	case TokIf:
 		return p.parseIfExpr()
@@ -2090,21 +2181,40 @@ func (p *Parser) parseFunctionCall(name string) Expression {
 		}
 	}
 
+	// Check for IGNORE NULLS or RESPECT NULLS (for window functions like LEAD/LAG)
+	ignoreNulls := false
+	respectNulls := false
+	if p.curTokenIs(TokIgnore) {
+		p.nextToken() // consume IGNORE
+		if !p.expect(TokNull) {
+			return nil
+		}
+		ignoreNulls = true
+	} else if p.curTokenIs(TokRespect) {
+		p.nextToken() // consume RESPECT
+		if !p.expect(TokNull) {
+			return nil
+		}
+		respectNulls = true
+	}
+
 	// Check for OVER clause (window function)
 	if p.curTokenIs(TokOver) {
-		return p.parseWindowFunction(fc)
+		return p.parseWindowFunction(fc, ignoreNulls, respectNulls)
 	}
 
 	return fc
 }
 
 // parseWindowFunction parses a window function with OVER clause.
-func (p *Parser) parseWindowFunction(fc *FunctionCall) Expression {
+func (p *Parser) parseWindowFunction(fc *FunctionCall, ignoreNulls, respectNulls bool) Expression {
 	p.nextToken() // consume OVER
 
 	wfc := &WindowFuncCall{
-		Func:   fc,
-		Window: &WindowSpec{},
+		Func:         fc,
+		Window:       &WindowSpec{},
+		IgnoreNulls:  ignoreNulls,
+		RespectNulls: respectNulls,
 	}
 
 	// Check for named window reference or window specification
