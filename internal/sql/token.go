@@ -29,6 +29,18 @@ const (
 	TokDatabase
 	TokSchema
 
+	// Keywords - Bulk Import/Export
+	TokCopy
+	TokLoad
+	TokData
+	TokInfile
+	TokFields
+	TokTerminated
+	TokLines
+	TokEnclosed
+	TokEscaped
+	TokOptionally
+
 	// Keywords - DML
 	TokSelect
 	TokFrom
@@ -313,6 +325,26 @@ func (t TokenType) String() string {
 		return "SET"
 	case TokDelete:
 		return "DELETE"
+	case TokCopy:
+		return "COPY"
+	case TokLoad:
+		return "LOAD"
+	case TokData:
+		return "DATA"
+	case TokInfile:
+		return "INFILE"
+	case TokFields:
+		return "FIELDS"
+	case TokTerminated:
+		return "TERMINATED"
+	case TokLines:
+		return "LINES"
+	case TokEnclosed:
+		return "ENCLOSED"
+	case TokEscaped:
+		return "ESCAPED"
+	case TokOptionally:
+		return "OPTIONALLY"
 	case TokAnd:
 		return "AND"
 	case TokOr:
@@ -655,6 +687,16 @@ var keywords = map[string]TokenType{
 	"MODIFY":       TokModify,
 	"DATABASE":     TokDatabase,
 	"SCHEMA":       TokSchema,
+	"COPY":         TokCopy,
+	"LOAD":         TokLoad,
+	"DATA":         TokData,
+	"INFILE":       TokInfile,
+	"FIELDS":       TokFields,
+	"TERMINATED":   TokTerminated,
+	"LINES":        TokLines,
+	"ENCLOSED":     TokEnclosed,
+	"ESCAPED":      TokEscaped,
+	"OPTIONALLY":   TokOptionally,
 	"AND":          TokAnd,
 	"OR":           TokOr,
 	"NOT":          TokNot,

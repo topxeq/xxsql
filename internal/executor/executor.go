@@ -2,10 +2,14 @@
 package executor
 
 import (
+	"bufio"
+	"encoding/csv"
 	"encoding/json"
 	"fmt"
+	"io"
 	"math"
 	"math/rand"
+	"os"
 	"regexp"
 	"sort"
 	"strconv"
@@ -328,6 +332,16 @@ func (e *Executor) ExecuteWithPerms(sqlStr string, checker PermissionChecker) (*
 		return e.executeSavepoint(s)
 	case *sql.ReleaseSavepointStmt:
 		return e.executeReleaseSavepoint(s)
+	case *sql.CopyStmt:
+		if err := checkPerm(PermInsert); err != nil {
+			return nil, err
+		}
+		return e.executeCopy(s)
+	case *sql.LoadDataStmt:
+		if err := checkPerm(PermInsert); err != nil {
+			return nil, err
+		}
+		return e.executeLoadData(s)
 	default:
 		return nil, fmt.Errorf("unsupported statement type: %T", stmt)
 	}
@@ -11524,4 +11538,389 @@ func (e *Executor) executeReleaseSavepoint(stmt *sql.ReleaseSavepointStmt) (*Res
 // InTransaction returns true if a transaction is currently in progress.
 func (e *Executor) InTransaction() bool {
 	return e.inTransaction
+}
+
+// ============================================================================
+// Bulk Import/Export Functions
+// ============================================================================
+
+// executeCopy executes a COPY statement for bulk import/export.
+func (e *Executor) executeCopy(stmt *sql.CopyStmt) (*Result, error) {
+	if stmt.Direction == "FROM" {
+		return e.executeCopyFrom(stmt)
+	}
+	return e.executeCopyTo(stmt)
+}
+
+// executeCopyFrom executes COPY table FROM 'file.csv'
+func (e *Executor) executeCopyFrom(stmt *sql.CopyStmt) (*Result, error) {
+	// Open the file
+	file, err := os.Open(stmt.FileName)
+	if err != nil {
+		return nil, fmt.Errorf("failed to open file '%s': %w", stmt.FileName, err)
+	}
+	defer file.Close()
+
+	// Get table schema
+	table, err := e.engine.GetTable(stmt.TableName)
+	if err != nil {
+		return nil, fmt.Errorf("table '%s' not found", stmt.TableName)
+	}
+	columns := table.Columns()
+
+	// Create CSV reader
+	reader := csv.NewReader(file)
+	reader.Comma = []rune(stmt.Delimiter)[0]
+	reader.LazyQuotes = true
+
+	// Skip header if specified
+	if stmt.Header {
+		_, err = reader.Read()
+		if err != nil {
+			return nil, fmt.Errorf("failed to read header: %w", err)
+		}
+	}
+
+	// Read and insert rows
+	rowCount := 0
+	for {
+		record, err := reader.Read()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return nil, fmt.Errorf("failed to read record: %w", err)
+		}
+
+		// Convert record to values
+		values := make([]types.Value, len(columns))
+		for i, col := range columns {
+			if i >= len(record) {
+				values[i] = types.Value{Null: true}
+				continue
+			}
+
+			strVal := record[i]
+			// Handle NULL
+			if stmt.NullString != "" && strVal == stmt.NullString {
+				values[i] = types.Value{Null: true}
+				continue
+			}
+
+			// Convert based on column type
+			val, err := e.parseValueForColumn(strVal, col)
+			if err != nil {
+				return nil, fmt.Errorf("row %d, column %s: %w", rowCount+1, col.Name, err)
+			}
+			values[i] = val
+		}
+
+		// Insert row
+		_, err = e.engine.Insert(stmt.TableName, values)
+		if err != nil {
+			return nil, fmt.Errorf("failed to insert row %d: %w", rowCount+1, err)
+		}
+		rowCount++
+	}
+
+	return &Result{
+		Columns:  []ColumnInfo{{Name: "Rows Imported"}},
+		Rows:     [][]interface{}{{rowCount}},
+		RowCount: 1,
+		Message:  fmt.Sprintf("COPY FROM: %d rows imported", rowCount),
+	}, nil
+}
+
+// executeCopyTo executes COPY (SELECT ...) TO 'file.csv'
+func (e *Executor) executeCopyTo(stmt *sql.CopyStmt) (*Result, error) {
+	// Execute the query
+	var result *Result
+	var err error
+
+	if stmt.Query != nil {
+		// Execute the query statement
+		result, err = e.executeStatementForExport(stmt.Query)
+		if err != nil {
+			return nil, fmt.Errorf("query execution failed: %w", err)
+		}
+	} else {
+		// Select all from table
+		result, err = e.Execute(fmt.Sprintf("SELECT * FROM %s", stmt.TableName))
+		if err != nil {
+			return nil, fmt.Errorf("failed to select from table: %w", err)
+		}
+	}
+
+	// Create the file
+	file, err := os.Create(stmt.FileName)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create file '%s': %w", stmt.FileName, err)
+	}
+	defer file.Close()
+
+	// Create CSV writer
+	writer := csv.NewWriter(file)
+	writer.Comma = []rune(stmt.Delimiter)[0]
+
+	// Write header if specified
+	if stmt.Header {
+		header := make([]string, len(result.Columns))
+		for i, col := range result.Columns {
+			header[i] = col.Name
+		}
+		if err := writer.Write(header); err != nil {
+			return nil, fmt.Errorf("failed to write header: %w", err)
+		}
+	}
+
+	// Write rows
+	for _, row := range result.Rows {
+		record := make([]string, len(row))
+		for i, val := range row {
+			if val == nil {
+				if stmt.NullString != "" {
+					record[i] = stmt.NullString
+				} else {
+					record[i] = ""
+				}
+			} else {
+				record[i] = fmt.Sprintf("%v", val)
+			}
+		}
+		if err := writer.Write(record); err != nil {
+			return nil, fmt.Errorf("failed to write record: %w", err)
+		}
+	}
+
+	writer.Flush()
+	if err := writer.Error(); err != nil {
+		return nil, fmt.Errorf("failed to flush writer: %w", err)
+	}
+
+	return &Result{
+		Columns:  []ColumnInfo{{Name: "Rows Exported"}},
+		Rows:     [][]interface{}{{result.RowCount}},
+		RowCount: 1,
+		Message:  fmt.Sprintf("COPY TO: %d rows exported to %s", result.RowCount, stmt.FileName),
+	}, nil
+}
+
+// executeLoadData executes a LOAD DATA INFILE statement (MySQL style).
+func (e *Executor) executeLoadData(stmt *sql.LoadDataStmt) (*Result, error) {
+	// Open the file
+	file, err := os.Open(stmt.FileName)
+	if err != nil {
+		return nil, fmt.Errorf("failed to open file '%s': %w", stmt.FileName, err)
+	}
+	defer file.Close()
+
+	// Get table schema
+	table, err := e.engine.GetTable(stmt.TableName)
+	if err != nil {
+		return nil, fmt.Errorf("table '%s' not found", stmt.TableName)
+	}
+	columns := table.Columns()
+
+	// Create scanner for line-by-line reading
+	scanner := bufio.NewScanner(file)
+
+	// Set custom line separator
+	if stmt.LinesTerminated != "" {
+		// For custom line terminators, we need to read the whole file and split
+		content, err := io.ReadAll(file)
+		if err != nil {
+			return nil, fmt.Errorf("failed to read file: %w", err)
+		}
+		lines := strings.Split(string(content), stmt.LinesTerminated)
+		return e.processLoadDataLines(lines, stmt, columns)
+	}
+
+	// Process line by line
+	lines := []string{}
+	for scanner.Scan() {
+		lines = append(lines, scanner.Text())
+	}
+
+	return e.processLoadDataLines(lines, stmt, columns)
+}
+
+// processLoadDataLines processes lines from a LOAD DATA file
+func (e *Executor) processLoadDataLines(lines []string, stmt *sql.LoadDataStmt, columns []*types.ColumnInfo) (*Result, error) {
+	// Get target columns
+	targetColumns := columns
+	if len(stmt.ColumnList) > 0 {
+		// Map column names to indices
+		targetColumns = make([]*types.ColumnInfo, len(stmt.ColumnList))
+		colMap := make(map[string]*types.ColumnInfo)
+		for _, col := range columns {
+			colMap[strings.ToLower(col.Name)] = col
+		}
+		for i, colName := range stmt.ColumnList {
+			col, ok := colMap[strings.ToLower(colName)]
+			if !ok {
+				return nil, fmt.Errorf("column '%s' not found", colName)
+			}
+			targetColumns[i] = col
+		}
+	}
+
+	// Skip lines if specified
+	startLine := stmt.IgnoreRows
+	if startLine > len(lines) {
+		startLine = len(lines)
+	}
+
+	// Process rows
+	rowCount := 0
+	for i := startLine; i < len(lines); i++ {
+		line := lines[i]
+		if line == "" {
+			continue
+		}
+
+		// Parse the line
+		fields := e.parseLoadDataLine(line, stmt)
+
+		// Build values array
+		values := make([]types.Value, len(columns))
+		for j := range columns {
+			values[j] = types.Value{Null: true}
+		}
+
+		for j, field := range fields {
+			if j >= len(targetColumns) {
+				break
+			}
+
+			col := targetColumns[j]
+			colIdx := -1
+			for k, c := range columns {
+				if c.Name == col.Name {
+					colIdx = k
+					break
+				}
+			}
+
+			if colIdx == -1 {
+				continue
+			}
+
+			// Handle empty field
+			if field == "" {
+				values[colIdx] = types.Value{Null: true}
+				continue
+			}
+
+			// Convert value
+			val, err := e.parseValueForColumn(field, col)
+			if err != nil {
+				return nil, fmt.Errorf("line %d, column %s: %w", i+1, col.Name, err)
+			}
+			values[colIdx] = val
+		}
+
+		// Insert row
+		_, err := e.engine.Insert(stmt.TableName, values)
+		if err != nil {
+			return nil, fmt.Errorf("failed to insert row %d: %w", i+1, err)
+		}
+		rowCount++
+	}
+
+	return &Result{
+		Columns:  []ColumnInfo{{Name: "Rows Imported"}},
+		Rows:     [][]interface{}{{rowCount}},
+		RowCount: 1,
+		Message:  fmt.Sprintf("LOAD DATA: %d rows imported", rowCount),
+	}, nil
+}
+
+// parseLoadDataLine parses a single line according to LOAD DATA syntax
+func (e *Executor) parseLoadDataLine(line string, stmt *sql.LoadDataStmt) []string {
+	// Remove line starting prefix if specified
+	if stmt.LinesStarting != "" {
+		line = strings.TrimPrefix(line, stmt.LinesStarting)
+	}
+
+	// Parse fields
+	separator := stmt.FieldsTerminated
+	if separator == "" {
+		separator = "\t"
+	}
+
+	// Simple split for now (doesn't handle quoted fields with separators inside)
+	// A more sophisticated parser would be needed for production
+	fields := strings.Split(line, separator)
+
+	// Handle enclosed fields
+	if stmt.FieldsEnclosed != "" {
+		for i, field := range fields {
+			fields[i] = strings.Trim(field, stmt.FieldsEnclosed)
+		}
+	}
+
+	return fields
+}
+
+// parseValueForColumn parses a string value according to column type
+func (e *Executor) parseValueForColumn(strVal string, col *types.ColumnInfo) (types.Value, error) {
+	if strVal == "" || strVal == "NULL" {
+		return types.Value{Null: true}, nil
+	}
+
+	switch col.Type {
+	case types.TypeInt, types.TypeSeq:
+		var val int64
+		_, err := fmt.Sscanf(strVal, "%d", &val)
+		if err != nil {
+			return types.Value{}, fmt.Errorf("invalid integer: %s", strVal)
+		}
+		return types.NewIntValue(val), nil
+
+	case types.TypeFloat:
+		var val float64
+		_, err := fmt.Sscanf(strVal, "%f", &val)
+		if err != nil {
+			return types.Value{}, fmt.Errorf("invalid float: %s", strVal)
+		}
+		return types.NewFloatValue(val), nil
+
+	case types.TypeBool:
+		lower := strings.ToLower(strVal)
+		if lower == "true" || lower == "1" || lower == "yes" {
+			return types.NewBoolValue(true), nil
+		}
+		if lower == "false" || lower == "0" || lower == "no" {
+			return types.NewBoolValue(false), nil
+		}
+		return types.Value{}, fmt.Errorf("invalid boolean: %s", strVal)
+
+	case types.TypeDate, types.TypeTime, types.TypeDatetime:
+		return types.NewStringValue(strVal, col.Type), nil
+
+	case types.TypeChar, types.TypeVarchar, types.TypeText:
+		return types.NewStringValue(strVal, col.Type), nil
+
+	case types.TypeBlob:
+		// Assume hex encoding for blobs
+		return types.NewStringValue(strVal, col.Type), nil
+
+	case types.TypeDecimal:
+		return types.NewStringValue(strVal, col.Type), nil
+
+	default:
+		return types.NewStringValue(strVal, col.Type), nil
+	}
+}
+
+// executeStatementForExport executes a statement for export purposes
+func (e *Executor) executeStatementForExport(stmt sql.Statement) (*Result, error) {
+	switch s := stmt.(type) {
+	case *sql.SelectStmt:
+		return e.executeSelect(s)
+	case *sql.UnionStmt:
+		return e.executeUnion(s)
+	default:
+		return nil, fmt.Errorf("unsupported statement for export: %T", stmt)
+	}
 }

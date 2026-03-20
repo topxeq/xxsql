@@ -2244,3 +2244,144 @@ func (s *ReleaseSavepointStmt) statement() {}
 func (s *ReleaseSavepointStmt) String() string {
 	return fmt.Sprintf("RELEASE SAVEPOINT %s", s.Name)
 }
+
+// ============================================================================
+// Bulk Import/Export Statements
+// ============================================================================
+
+// CopyStmt represents a COPY statement for bulk import/export.
+// COPY table FROM 'file.csv' WITH (FORMAT csv, HEADER true, DELIMITER ',')
+// COPY (SELECT ...) TO 'file.csv' WITH (FORMAT csv, HEADER true)
+type CopyStmt struct {
+	TableName   string    // For COPY table FROM
+	Query       Statement // For COPY (SELECT ...) TO
+	FileName    string
+	Direction   string // "FROM" or "TO"
+	Format      string // csv, tsv, text (default: csv)
+	Header      bool   // First row is header
+	Delimiter   string // Field delimiter (default: comma)
+	Quote       string // Quote character (default: ")
+	NullString  string // String representing NULL (default: \N)
+	Encoding    string // File encoding (default: utf-8)
+}
+
+func (s *CopyStmt) node()      {}
+func (s *CopyStmt) statement() {}
+func (s *CopyStmt) String() string {
+	var sb strings.Builder
+	sb.WriteString("COPY ")
+	if s.Query != nil {
+		sb.WriteString("(")
+		sb.WriteString(s.Query.String())
+		sb.WriteString(")")
+	} else {
+		sb.WriteString(s.TableName)
+	}
+	sb.WriteString(" ")
+	sb.WriteString(s.Direction)
+	sb.WriteString(" '")
+	sb.WriteString(s.FileName)
+	sb.WriteString("'")
+	if s.Format != "" || s.Header || s.Delimiter != "" {
+		sb.WriteString(" WITH (")
+		first := true
+		if s.Format != "" {
+			if !first {
+				sb.WriteString(", ")
+			}
+			sb.WriteString("FORMAT ")
+			sb.WriteString(s.Format)
+			first = false
+		}
+		if s.Header {
+			if !first {
+				sb.WriteString(", ")
+			}
+			sb.WriteString("HEADER true")
+			first = false
+		}
+		if s.Delimiter != "" {
+			if !first {
+				sb.WriteString(", ")
+			}
+			sb.WriteString("DELIMITER '")
+			sb.WriteString(s.Delimiter)
+			sb.WriteString("'")
+		}
+		sb.WriteString(")")
+	}
+	return sb.String()
+}
+
+// LoadDataStmt represents a LOAD DATA INFILE statement (MySQL style).
+// LOAD DATA INFILE 'file.csv' INTO TABLE table_name
+//   FIELDS TERMINATED BY ',' ENCLOSED BY '"' LINES TERMINATED BY '\n'
+//   IGNORE 1 ROWS;
+type LoadDataStmt struct {
+	FileName        string
+	TableName       string
+	FieldsTerminated string // default: '\t'
+	FieldsEnclosed   string // default: ''
+	FieldsEscaped    string // default: '\\'
+	LinesTerminated  string // default: '\n'
+	LinesStarting    string // default: ''
+	IgnoreRows       int
+	ColumnList       []string // Optional column list
+}
+
+func (s *LoadDataStmt) node()      {}
+func (s *LoadDataStmt) statement() {}
+func (s *LoadDataStmt) String() string {
+	var sb strings.Builder
+	sb.WriteString("LOAD DATA INFILE '")
+	sb.WriteString(s.FileName)
+	sb.WriteString("' INTO TABLE ")
+	sb.WriteString(s.TableName)
+	if s.FieldsTerminated != "" || s.FieldsEnclosed != "" || s.FieldsEscaped != "" {
+		sb.WriteString(" FIELDS")
+		if s.FieldsTerminated != "" {
+			sb.WriteString(" TERMINATED BY '")
+			sb.WriteString(s.FieldsTerminated)
+			sb.WriteString("'")
+		}
+		if s.FieldsEnclosed != "" {
+			sb.WriteString(" ENCLOSED BY '")
+			sb.WriteString(s.FieldsEnclosed)
+			sb.WriteString("'")
+		}
+		if s.FieldsEscaped != "" {
+			sb.WriteString(" ESCAPED BY '")
+			sb.WriteString(s.FieldsEscaped)
+			sb.WriteString("'")
+		}
+	}
+	if s.LinesTerminated != "" || s.LinesStarting != "" {
+		sb.WriteString(" LINES")
+		if s.LinesStarting != "" {
+			sb.WriteString(" STARTING BY '")
+			sb.WriteString(s.LinesStarting)
+			sb.WriteString("'")
+		}
+		if s.LinesTerminated != "" {
+			sb.WriteString(" TERMINATED BY '")
+			sb.WriteString(s.LinesTerminated)
+			sb.WriteString("'")
+		}
+	}
+	if s.IgnoreRows > 0 {
+		sb.WriteString(" IGNORE ")
+		sb.WriteString(fmt.Sprintf("%d", s.IgnoreRows))
+		sb.WriteString(" ROWS")
+	}
+	if len(s.ColumnList) > 0 {
+		sb.WriteString(" (")
+		for i, col := range s.ColumnList {
+			if i > 0 {
+				sb.WriteString(", ")
+			}
+			sb.WriteString(col)
+		}
+		sb.WriteString(")")
+	}
+	return sb.String()
+}

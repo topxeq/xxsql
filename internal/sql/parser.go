@@ -136,11 +136,19 @@ func (p *Parser) isKeywordAsIdent() bool {
 		TokPreceding, TokFollowing, TokCurrent,
 		TokReturns, TokReturn, TokReplace, TokLet,
 		TokBefore, TokAfter, TokInstead, TokEach, TokRow, TokStatement,
-		TokOf:
+		TokOf,
+		// Bulk import/export keywords that can be used as identifiers
+		TokData, TokLoad, TokCopy, TokInfile, TokFields, TokLines,
+		TokTerminated, TokEnclosed, TokEscaped, TokOptionally:
 		return true
 	default:
 		return false
 	}
+}
+
+// isIdentOrKeyword checks if current token is an identifier or a keyword that can be used as identifier.
+func (p *Parser) isIdentOrKeyword() bool {
+	return p.curTokenIs(TokIdent) || p.isKeywordAsIdent()
 }
 
 // peekTokenIs checks if the peek token is of the given type.
@@ -231,6 +239,10 @@ func (p *Parser) parseStatement() Statement {
 		return p.parseSavepoint()
 	case TokRelease:
 		return p.parseReleaseSavepoint()
+	case TokCopy:
+		return p.parseCopy()
+	case TokLoad:
+		return p.parseLoadData()
 	case TokLParen:
 		// Could be a parenthesized SELECT
 		if withClause != nil {
@@ -272,7 +284,7 @@ func (p *Parser) parseWithClause() *WithClause {
 		if p.curTokenIs(TokLParen) {
 			p.nextToken()
 			for {
-				if !p.curTokenIs(TokIdent) {
+				if !p.isIdentOrKeyword() {
 					p.error("expected column name, got %s", p.currTok.Type)
 					return nil
 				}
@@ -684,7 +696,7 @@ func (p *Parser) parseTableRef() *TableRef {
 	}
 
 	// Regular table name
-	if !p.curTokenIs(TokIdent) {
+	if !p.isIdentOrKeyword() {
 		p.error("expected table name")
 		return nil
 	}
@@ -1587,7 +1599,7 @@ func (p *Parser) parseDropTable() *DropTableStmt {
 	}
 
 	// Table name - check if present
-	if !p.curTokenIs(TokIdent) {
+	if !p.isIdentOrKeyword() {
 		p.error("expected table name")
 		return nil
 	}
@@ -1811,6 +1823,351 @@ func (p *Parser) parseReleaseSavepoint() Statement {
 	return &ReleaseSavepointStmt{Name: name}
 }
 
+// parseCopy parses a COPY statement for bulk import/export.
+// Syntax:
+//   COPY table FROM 'file.csv' WITH (FORMAT csv, HEADER true, DELIMITER ',')
+//   COPY (SELECT ...) TO 'file.csv' WITH (FORMAT csv, HEADER true)
+func (p *Parser) parseCopy() Statement {
+	p.nextToken() // consume COPY
+
+	stmt := &CopyStmt{}
+
+	// Check for parenthesized query (COPY (SELECT ...) TO ...)
+	if p.curTokenIs(TokLParen) {
+		p.nextToken()
+		stmt.Query = p.parseSelect()
+		if stmt.Query == nil {
+			return nil
+		}
+		if !p.expect(TokRParen) {
+			return nil
+		}
+	} else {
+		// Table name
+		if !p.isIdentOrKeyword() {
+			p.error("expected table name or (SELECT ...)")
+			return nil
+		}
+		stmt.TableName = p.currTok.Value
+		p.nextToken()
+	}
+
+	// Direction: FROM or TO
+	if p.curTokenIs(TokFrom) {
+		stmt.Direction = "FROM"
+	} else if p.curTokenIs(TokTo) {
+		stmt.Direction = "TO"
+	} else {
+		p.error("expected FROM or TO")
+		return nil
+	}
+	p.nextToken()
+
+	// File name
+	if !p.curTokenIs(TokString) {
+		p.error("expected file name string")
+		return nil
+	}
+	stmt.FileName = p.currTok.Value
+	p.nextToken()
+
+	// Optional WITH clause
+	if p.curTokenIs(TokWith) {
+		p.nextToken()
+		if !p.expect(TokLParen) {
+			return nil
+		}
+
+		for {
+			// Option name can be identifier or keyword (like NULL)
+			var option string
+			if p.curTokenIs(TokIdent) {
+				option = strings.ToUpper(p.currTok.Value)
+				p.nextToken()
+			} else if p.curTokenIs(TokNull) {
+				option = "NULL"
+				p.nextToken()
+			} else {
+				break
+			}
+
+			switch option {
+				case "FORMAT":
+					if !p.curTokenIs(TokIdent) {
+						p.error("expected format value")
+						return nil
+					}
+					stmt.Format = strings.ToLower(p.currTok.Value)
+					p.nextToken()
+
+				case "HEADER":
+					if p.curTokenIs(TokBoolLit) || p.curTokenIs(TokIdent) {
+						if p.currTok.Value == "true" || p.currTok.Value == "TRUE" {
+							stmt.Header = true
+						}
+						p.nextToken()
+					} else if p.curTokenIs(TokNumber) {
+						if p.currTok.Value == "1" {
+							stmt.Header = true
+						}
+						p.nextToken()
+					}
+
+				case "DELIMITER":
+					if !p.curTokenIs(TokString) {
+						p.error("expected delimiter string")
+						return nil
+					}
+					stmt.Delimiter = p.currTok.Value
+					p.nextToken()
+
+				case "QUOTE":
+					if !p.curTokenIs(TokString) {
+						p.error("expected quote string")
+						return nil
+					}
+					stmt.Quote = p.currTok.Value
+					p.nextToken()
+
+				case "NULL":
+					if !p.curTokenIs(TokString) {
+						p.error("expected null string")
+						return nil
+					}
+					stmt.NullString = p.currTok.Value
+					p.nextToken()
+
+				case "ENCODING":
+					if !p.curTokenIs(TokIdent) {
+						p.error("expected encoding value")
+						return nil
+					}
+					stmt.Encoding = strings.ToLower(p.currTok.Value)
+					p.nextToken()
+				}
+
+			if !p.curTokenIs(TokComma) {
+				break
+			}
+			p.nextToken()
+		}
+
+		if !p.expect(TokRParen) {
+			return nil
+		}
+	}
+
+	// Set defaults
+	if stmt.Format == "" {
+		stmt.Format = "csv"
+	}
+	if stmt.Delimiter == "" {
+		stmt.Delimiter = ","
+	}
+	if stmt.Quote == "" {
+		stmt.Quote = "\""
+	}
+
+	return stmt
+}
+
+// parseLoadData parses a LOAD DATA INFILE statement (MySQL style).
+// Syntax:
+//   LOAD DATA INFILE 'file.csv' [IGNORE] INTO TABLE table_name
+//     FIELDS TERMINATED BY ',' ENCLOSED BY '"' ESCAPED BY '\\'
+//     LINES TERMINATED BY '\n' STARTING BY ''
+//     IGNORE 1 ROWS
+//     (col1, col2, ...)
+func (p *Parser) parseLoadData() Statement {
+	p.nextToken() // consume LOAD
+
+	if !p.expect(TokData) {
+		return nil
+	}
+
+	if !p.expect(TokInfile) {
+		return nil
+	}
+
+	stmt := &LoadDataStmt{}
+
+	// File name
+	if !p.curTokenIs(TokString) {
+		p.error("expected file name string")
+		return nil
+	}
+	stmt.FileName = p.currTok.Value
+	p.nextToken()
+
+	// Optional IGNORE (for duplicate key handling, before INTO TABLE)
+	// Note: This IGNORE is different from IGNORE n ROWS
+	if p.curTokenIs(TokIgnore) {
+		p.nextToken()
+		// Check if this is IGNORE n ROWS (skip lines)
+		if p.curTokenIs(TokNumber) {
+			var n int
+			fmt.Sscanf(p.currTok.Value, "%d", &n)
+			stmt.IgnoreRows = n
+			p.nextToken()
+			// Optional ROWS keyword
+			if p.curTokenIs(TokIdent) && strings.ToUpper(p.currTok.Value) == "ROWS" {
+				p.nextToken()
+			}
+		}
+		// Otherwise it's IGNORE for duplicate keys (we just consume it)
+	}
+
+	// INTO TABLE
+	if p.curTokenIs(TokInto) {
+		p.nextToken()
+	}
+	if !p.expect(TokTable) {
+		return nil
+	}
+
+	// Table name (can be identifier or reserved word like 'data')
+	if !p.isIdentOrKeyword() {
+		p.error("expected table name")
+		return nil
+	}
+	stmt.TableName = p.currTok.Value
+	p.nextToken()
+
+	// Optional FIELDS clause
+	if p.curTokenIs(TokFields) {
+		p.nextToken()
+
+		for {
+			if p.curTokenIs(TokTerminated) {
+				p.nextToken()
+				if !p.expect(TokBy) {
+					return nil
+				}
+				if !p.curTokenIs(TokString) {
+					p.error("expected string for FIELDS TERMINATED BY")
+					return nil
+				}
+				stmt.FieldsTerminated = p.currTok.Value
+				p.nextToken()
+			} else if p.curTokenIs(TokEnclosed) {
+				p.nextToken()
+				if !p.expect(TokBy) {
+					return nil
+				}
+				// Optionally enclosed?
+				if p.curTokenIs(TokOptionally) {
+					p.nextToken()
+				}
+				if !p.curTokenIs(TokString) {
+					p.error("expected string for FIELDS ENCLOSED BY")
+					return nil
+				}
+				stmt.FieldsEnclosed = p.currTok.Value
+				p.nextToken()
+			} else if p.curTokenIs(TokEscaped) {
+				p.nextToken()
+				if !p.expect(TokBy) {
+					return nil
+				}
+				if !p.curTokenIs(TokString) {
+					p.error("expected string for FIELDS ESCAPED BY")
+					return nil
+				}
+				stmt.FieldsEscaped = p.currTok.Value
+				p.nextToken()
+			} else {
+				break
+			}
+		}
+	}
+
+	// Optional LINES clause
+	if p.curTokenIs(TokLines) {
+		p.nextToken()
+
+		for {
+			if p.curTokenIs(TokTerminated) {
+				p.nextToken()
+				if !p.expect(TokBy) {
+					return nil
+				}
+				if !p.curTokenIs(TokString) {
+					p.error("expected string for LINES TERMINATED BY")
+					return nil
+				}
+				stmt.LinesTerminated = p.currTok.Value
+				p.nextToken()
+			} else if p.curTokenIs(TokIdent) && strings.ToUpper(p.currTok.Value) == "STARTING" {
+				p.nextToken()
+				if !p.expect(TokBy) {
+					return nil
+				}
+				if !p.curTokenIs(TokString) {
+					p.error("expected string for LINES STARTING BY")
+					return nil
+				}
+				stmt.LinesStarting = p.currTok.Value
+				p.nextToken()
+			} else {
+				break
+			}
+		}
+	}
+
+	// Optional IGNORE n ROWS
+	if p.curTokenIs(TokIgnore) {
+		p.nextToken()
+		if !p.curTokenIs(TokNumber) {
+			p.error("expected number after IGNORE")
+			return nil
+		}
+		// Parse the number
+		var n int
+		fmt.Sscanf(p.currTok.Value, "%d", &n)
+		stmt.IgnoreRows = n
+		p.nextToken()
+
+		// Optional ROWS keyword
+		if p.curTokenIs(TokIdent) && strings.ToUpper(p.currTok.Value) == "ROWS" {
+			p.nextToken()
+		}
+	}
+
+	// Optional column list
+	if p.curTokenIs(TokLParen) {
+		p.nextToken()
+		for {
+			if !p.isIdentOrKeyword() {
+				p.error("expected column name")
+				return nil
+			}
+			stmt.ColumnList = append(stmt.ColumnList, p.currTok.Value)
+			p.nextToken()
+
+			if !p.curTokenIs(TokComma) {
+				break
+			}
+			p.nextToken()
+		}
+		if !p.expect(TokRParen) {
+			return nil
+		}
+	}
+
+	// Set defaults
+	if stmt.FieldsTerminated == "" {
+		stmt.FieldsTerminated = "\t"
+	}
+	if stmt.LinesTerminated == "" {
+		stmt.LinesTerminated = "\n"
+	}
+	if stmt.FieldsEscaped == "" {
+		stmt.FieldsEscaped = "\\"
+	}
+
+	return stmt
+}
+
 // parseAlter parses an ALTER statement.
 func (p *Parser) parseAlter() Statement {
 	p.nextToken() // consume ALTER
@@ -1920,7 +2277,7 @@ func (p *Parser) parseAlterDropColumn() AlterAction {
 		p.nextToken()
 	}
 
-	if !p.curTokenIs(TokIdent) {
+	if !p.isIdentOrKeyword() {
 		p.error("expected column name")
 		return nil
 	}
@@ -1956,7 +2313,7 @@ func (p *Parser) parseAlterRename() AlterAction {
 		// RENAME COLUMN old TO new
 		p.nextToken()
 
-		if !p.curTokenIs(TokIdent) {
+		if !p.isIdentOrKeyword() {
 			p.error("expected old column name")
 			return nil
 		}
@@ -1967,7 +2324,7 @@ func (p *Parser) parseAlterRename() AlterAction {
 			return nil
 		}
 
-		if !p.curTokenIs(TokIdent) {
+		if !p.isIdentOrKeyword() {
 			p.error("expected new column name")
 			return nil
 		}
@@ -2187,7 +2544,9 @@ func (p *Parser) parsePrimaryExpr() Expression {
 	case TokDouble, TokFloat, TokInt, TokInteger, TokBigInt, TokChar, TokVarchar,
 		TokText, TokDate, TokTime, TokDateTime, TokBool, TokBoolean, TokBlob,
 		TokDecimal, TokNumeric, TokSmallInt, TokTinyInt, TokSeq,
-		TokLeft, TokRight, TokReplace, TokTruncate, TokUser: // LEFT/RIGHT/REPLACE/TRUNCATE/USER can be keywords or function names
+		TokLeft, TokRight, TokReplace, TokTruncate, TokUser, // LEFT/RIGHT/REPLACE/TRUNCATE/USER can be keywords or function names
+		TokData, TokLoad, TokCopy, TokInfile, TokFields, TokLines,
+		TokTerminated, TokEnclosed, TokEscaped, TokOptionally: // Bulk import/export keywords can be column names
 		name := p.currTok.Value
 		p.nextToken()
 		if p.curTokenIs(TokLParen) {
@@ -2218,7 +2577,7 @@ func (p *Parser) parseIdentOrFunction() Expression {
 			p.nextToken()
 			return &StarExpr{Table: name}
 		}
-		if !p.curTokenIs(TokIdent) {
+		if !p.isIdentOrKeyword() {
 			p.error("expected column name after dot")
 			return nil
 		}
@@ -2647,7 +3006,7 @@ func (p *Parser) parseIdentifierList() []string {
 	var ids []string
 
 	for {
-		if !p.curTokenIs(TokIdent) {
+		if !p.isIdentOrKeyword() {
 			break
 		}
 		ids = append(ids, p.currTok.Value)
@@ -3360,7 +3719,7 @@ func (p *Parser) parseCreateTrigger() *CreateTriggerStmt {
 	if !p.expect(TokOn) {
 		return nil
 	}
-	if !p.curTokenIs(TokIdent) {
+	if !p.isIdentOrKeyword() {
 		p.error("expected table name")
 		return nil
 	}
