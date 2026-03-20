@@ -856,6 +856,132 @@ Examples:
 - Using existing MySQL tooling
 - When private protocol port is not available
 
+### Using Other MySQL Drivers
+
+Since XxSql implements the MySQL wire protocol, you can use any MySQL driver to connect. Here are examples for popular Go MySQL drivers:
+
+#### go-sql-driver/mysql
+
+The most popular MySQL driver for Go:
+
+```go
+import (
+    "database/sql"
+    _ "github.com/go-sql-driver/mysql"
+)
+
+func main() {
+    // DSN format: username:password@tcp(host:port)/dbname
+    db, err := sql.Open("mysql", "admin:password@tcp(localhost:3306)/testdb")
+    if err != nil {
+        log.Fatal(err)
+    }
+    defer db.Close()
+
+    // Use as normal MySQL connection
+    rows, _ := db.Query("SELECT * FROM users")
+    // ...
+}
+```
+
+#### MySQL DSN Format for XxSql
+
+| DSN Component | Example | Description |
+|---------------|---------|-------------|
+| Basic | `admin:password@tcp(localhost:3306)/testdb` | Username, password, host, database |
+| Without password | `admin@tcp(localhost:3306)/testdb` | No password |
+| Custom port | `admin:password@tcp(192.168.1.100:3307)/mydb` | Custom host and port |
+| With parameters | `admin:password@tcp(localhost:3306)/testdb?charset=utf8mb4&parseTime=true` | With options |
+
+#### SQLBoiler / GORM / Other ORMs
+
+Most Go ORMs support MySQL driver:
+
+```go
+// GORM example
+import (
+    "gorm.io/driver/mysql"
+    "gorm.io/gorm"
+)
+
+dsn := "admin:password@tcp(localhost:3306)/testdb?charset=utf8mb4&parseTime=True&loc=Local"
+db, err := gorm.Open(mysql.Open(dsn), &gorm.Config{})
+```
+
+```go
+// SQLBoiler example (in boilConfig.toml)
+[mysql]
+dbname = "testdb"
+host = "localhost"
+port = 3306
+user = "admin"
+pass = "password"
+```
+
+#### Other Language MySQL Drivers
+
+Since XxSql speaks MySQL protocol, any MySQL client works:
+
+**Python (mysql-connector-python):**
+```python
+import mysql.connector
+
+conn = mysql.connector.connect(
+    host='localhost',
+    port=3306,
+    user='admin',
+    password='password',
+    database='testdb'
+)
+```
+
+**Python (PyMySQL):**
+```python
+import pymysql
+
+conn = pymysql.connect(
+    host='localhost',
+    port=3306,
+    user='admin',
+    password='password',
+    database='testdb'
+)
+```
+
+**Node.js (mysql2):**
+```javascript
+const mysql = require('mysql2');
+
+const connection = mysql.createConnection({
+    host: 'localhost',
+    port: 3306,
+    user: 'admin',
+    password: 'password',
+    database: 'testdb'
+});
+```
+
+**Java (JDBC):**
+```java
+String url = "jdbc:mysql://localhost:3306/testdb?user=admin&password=password";
+Connection conn = DriverManager.getConnection(url);
+```
+
+**Rust (mysql crate):**
+```rust
+let url = "mysql://admin:password@localhost:3306/testdb";
+let pool = mysql::Pool::new(url)?;
+```
+
+**PHP (PDO):**
+```php
+$pdo = new PDO(
+    'mysql:host=localhost;port=3306;dbname=testdb',
+    'admin',
+    'password'
+);
+```
+
 ## CLI Client
 
 The `xxsqlc` CLI client provides an interactive REPL for SQL execution.
