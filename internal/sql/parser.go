@@ -373,20 +373,28 @@ func (p *Parser) parseSelectColumn() Expression {
 	if p.curTokenIs(TokAs) {
 		p.nextToken()
 		if p.curTokenIs(TokIdent) {
-			if cr, ok := expr.(*ColumnRef); ok {
-				cr.Alias = p.currTok.Value
-			}
+			setAlias(expr, p.currTok.Value)
 			p.nextToken()
 		}
 	} else if p.curTokenIs(TokIdent) {
 		// Implicit alias (without AS)
-		if cr, ok := expr.(*ColumnRef); ok {
-			cr.Alias = p.currTok.Value
-		}
+		setAlias(expr, p.currTok.Value)
 		p.nextToken()
 	}
 
 	return expr
+}
+
+// setAlias sets the alias on an expression if supported.
+func setAlias(expr Expression, alias string) {
+	switch e := expr.(type) {
+	case *ColumnRef:
+		e.Alias = alias
+	case *Literal:
+		e.Alias = alias
+	case *BinaryExpr:
+		e.Alias = alias
+	}
 }
 
 // parseFromClause parses a FROM clause.

@@ -93,7 +93,7 @@ The following comparison highlights key differences between XxSql and SQLite acr
 | **Subqueries** | Full support (all locations) | SELECT list, WHERE, HAVING, FROM clause |
 | **Correlated Subqueries** | Yes | Yes |
 | **Window Functions** | Yes | No |
-| **CTE (WITH clause)** | Yes (recursive too) | Yes (non-recursive) |
+| **CTE (WITH clause)** | Yes (recursive too) | Yes (with recursive support) |
 | **GROUP BY** | Yes | Yes |
 | **HAVING** | Yes | Yes (with subquery support) |
 | **ORDER BY** | Yes | Yes |
@@ -640,15 +640,25 @@ XxSql supports Common Table Expressions (CTEs) using the `WITH` clause. CTEs all
 | **Multiple CTEs** | ✅ | Define multiple CTEs separated by commas |
 | **Column aliases** | ✅ | `WITH cte(col1, col2) AS (...)` |
 | **CTE with UNION** | ✅ | CTEs can contain UNION queries |
-| **Recursive CTEs** | ❌ | Not supported |
+| **Recursive CTEs** | ✅ | WITH RECURSIVE for hierarchical queries |
+| **CTE in JOINs** | ✅ | CTEs can be used in JOIN operations |
 
 #### Syntax
 
 ```sql
+-- Non-recursive CTE
 WITH cte_name [(column_names)] AS (
     subquery
 )
 [, cte_name2 AS (...)]
+SELECT ... FROM cte_name ...;
+
+-- Recursive CTE
+WITH RECURSIVE cte_name AS (
+    base_query
+    UNION ALL
+    recursive_query  -- references cte_name
+)
 SELECT ... FROM cte_name ...;
 ```
 
@@ -717,6 +727,34 @@ WITH monthly_sales AS (
 SELECT * FROM monthly_sales
 WHERE total > 10000
 ORDER BY year, month;
+```
+
+**6. Recursive CTE - Generate Sequence:**
+```sql
+-- Generate numbers 1 to 10
+WITH RECURSIVE nums AS (
+    SELECT 1 AS n
+    UNION ALL
+    SELECT n + 1 FROM nums WHERE n < 10
+)
+SELECT * FROM nums;
+```
+
+**7. Recursive CTE - Employee Hierarchy:**
+```sql
+-- Find all employees under a manager
+WITH RECURSIVE org_chart AS (
+    -- Base case: start with CEO
+    SELECT id, name, manager_id
+    FROM employees
+    WHERE id = 1
+    UNION ALL
+    -- Recursive: find direct reports
+    SELECT e.id, e.name, e.manager_id
+    FROM employees e
+    JOIN org_chart oc ON e.manager_id = oc.id
+)
+SELECT * FROM org_chart;
 ```
 
 #### Usage Notes

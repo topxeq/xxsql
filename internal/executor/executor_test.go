@@ -1415,3 +1415,126 @@ func TestExecutorCTE(t *testing.T) {
 		t.Logf("CTE with LIMIT result (%d rows): %v", len(result.Rows), result.Rows)
 	})
 }
+
+func TestExecutorRecursiveCTE(t *testing.T) {
+	// Create temp directory
+	tmpDir, err := os.MkdirTemp("", "xxsql-executor-test-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	// Create storage engine
+	engine := storage.NewEngine(tmpDir)
+	if err := engine.Open(); err != nil {
+		t.Fatalf("Failed to open engine: %v", err)
+	}
+	defer engine.Close()
+
+	// Create executor
+	exec := executor.NewExecutor(engine)
+
+	// Test 1: Simple recursive CTE - generate sequence
+	t.Run("GenerateSequence", func(t *testing.T) {
+		// Generate numbers 1 to 5 using recursive CTE
+		result, err := exec.Execute(`
+			WITH RECURSIVE nums AS (
+				SELECT 1 AS n
+				UNION ALL
+				SELECT n + 1 FROM nums WHERE n < 5
+			)
+			SELECT * FROM nums
+		`)
+		if err != nil {
+			t.Fatalf("Recursive CTE failed: %v", err)
+		}
+		// Should have 5 rows: 1, 2, 3, 4, 5
+		if len(result.Rows) != 5 {
+			t.Errorf("Expected 5 rows, got %d", len(result.Rows))
+		}
+		t.Logf("Generate sequence result (%d rows): %v", len(result.Rows), result.Rows)
+	})
+
+	// Test 2: Recursive CTE with table - employee hierarchy
+	t.Run("EmployeeHierarchy", func(t *testing.T) {
+		// Create employees table with manager_id for hierarchy
+		_, err := exec.Execute("CREATE TABLE staff (id INT, name VARCHAR(50), manager_id INT)")
+		if err != nil {
+			t.Fatalf("Failed to create table: %v", err)
+		}
+
+		// Insert hierarchical data
+		// CEO (id=1) has no manager
+		exec.Execute("INSERT INTO staff VALUES (1, 'CEO', NULL)")
+		// Managers
+		exec.Execute("INSERT INTO staff VALUES (2, 'Manager A', 1)")
+		exec.Execute("INSERT INTO staff VALUES (3, 'Manager B', 1)")
+		// Employees
+		exec.Execute("INSERT INTO staff VALUES (4, 'Employee 1', 2)")
+		exec.Execute("INSERT INTO staff VALUES (5, 'Employee 2', 2)")
+		exec.Execute("INSERT INTO staff VALUES (6, 'Employee 3', 3)")
+
+		// Find all employees under CEO (id=1)
+		result, err := exec.Execute(`
+			WITH RECURSIVE org_chart AS (
+				SELECT id, name, manager_id, 0 AS level
+				FROM staff
+				WHERE id = 1
+				UNION ALL
+				SELECT s.id, s.name, s.manager_id, oc.level + 1
+				FROM staff s
+				JOIN org_chart oc ON s.manager_id = oc.id
+			)
+			SELECT * FROM org_chart
+		`)
+		if err != nil {
+			t.Fatalf("Employee hierarchy CTE failed: %v", err)
+		}
+		// Should have 6 rows (all employees)
+		if len(result.Rows) != 6 {
+			t.Errorf("Expected 6 rows, got %d", len(result.Rows))
+		}
+		t.Logf("Employee hierarchy result (%d rows): %v", len(result.Rows), result.Rows)
+	})
+
+	// Test 3: Recursive CTE with depth limit using simpler query
+	t.Run("DepthLimitedRecursion", func(t *testing.T) {
+		// Generate numbers 1 to 3 using recursive CTE with limit in WHERE
+		result, err := exec.Execute(`
+			WITH RECURSIVE limited_nums AS (
+				SELECT 1 AS n
+				UNION ALL
+				SELECT n + 1 FROM limited_nums WHERE n < 3
+			)
+			SELECT * FROM limited_nums
+		`)
+		if err != nil {
+			t.Fatalf("Depth limited CTE failed: %v", err)
+		}
+		// Should have 3 rows: 1, 2, 3
+		if len(result.Rows) != 3 {
+			t.Errorf("Expected 3 rows, got %d", len(result.Rows))
+		}
+		t.Logf("Depth limited result (%d rows): %v", len(result.Rows), result.Rows)
+	})
+
+	// Test 4: Recursive CTE with multiple columns (simpler)
+	t.Run("MultipleColumns", func(t *testing.T) {
+		result, err := exec.Execute(`
+			WITH RECURSIVE pairs AS (
+				SELECT 1 AS a, 1 AS b
+				UNION ALL
+				SELECT a + 1, b + 1 FROM pairs WHERE a < 3
+			)
+			SELECT * FROM pairs
+		`)
+		if err != nil {
+			t.Fatalf("Multiple columns CTE failed: %v", err)
+		}
+		// Should have 3 rows
+		if len(result.Rows) != 3 {
+			t.Errorf("Expected 3 rows, got %d", len(result.Rows))
+		}
+		t.Logf("Multiple columns result (%d rows): %v", len(result.Rows), result.Rows)
+	})
+}

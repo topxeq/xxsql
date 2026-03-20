@@ -808,6 +808,7 @@ const (
 type Literal struct {
 	Value interface{}
 	Type  LiteralType
+	Alias string // optional alias
 }
 
 type LiteralType int
@@ -873,6 +874,7 @@ type BinaryExpr struct {
 	Left  Expression
 	Op    BinaryOp
 	Right Expression
+	Alias string // optional alias
 }
 
 type BinaryOp int

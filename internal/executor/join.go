@@ -139,6 +139,13 @@ func (e *Executor) buildJoinContext(tableRef *sql.TableRef) (*joinContext, error
 // loadJoinTable loads a table for joining.
 func (e *Executor) loadJoinTable(tableRef *sql.TableRef, startIdx int) (*joinTable, error) {
 	tableName := tableRef.Name
+	tableNameLower := strings.ToLower(tableName)
+
+	// Check if this is a CTE table
+	if cteResult, ok := e.cteResults[tableNameLower]; ok {
+		return e.loadJoinTableFromCTE(tableName, tableRef.Alias, cteResult, startIdx)
+	}
+
 	if !e.engine.TableExists(tableName) {
 		return nil, fmt.Errorf("table %s does not exist", tableName)
 	}
@@ -163,6 +170,52 @@ func (e *Executor) loadJoinTable(tableRef *sql.TableRef, startIdx int) (*joinTab
 		name:     tableName,
 		alias:    tableRef.Alias,
 		columns:  tblInfo.Columns,
+		rows:     rows,
+		colIndex: colIndex,
+		startIdx: startIdx,
+	}, nil
+}
+
+// loadJoinTableFromCTE creates a joinTable from a CTE result.
+func (e *Executor) loadJoinTableFromCTE(tableName, alias string, cteResult *Result, startIdx int) (*joinTable, error) {
+	// Build column info for the CTE
+	columns := make([]*types.ColumnInfo, len(cteResult.Columns))
+	colIndex := make(map[string]int)
+	for i, col := range cteResult.Columns {
+		columns[i] = &types.ColumnInfo{
+			Name: col.Name,
+			Type: types.TypeVarchar,
+		}
+		colIndex[strings.ToLower(col.Name)] = i
+	}
+
+	// Convert CTE rows to row.Row format
+	rows := make([]*row.Row, len(cteResult.Rows))
+	for i, srcRow := range cteResult.Rows {
+		values := make([]types.Value, len(srcRow))
+		for j, v := range srcRow {
+			switch val := v.(type) {
+			case int:
+				values[j] = types.NewIntValue(int64(val))
+			case int64:
+				values[j] = types.NewIntValue(val)
+			case float64:
+				values[j] = types.NewFloatValue(val)
+			case string:
+				values[j] = types.NewStringValue(val, types.TypeVarchar)
+			case []byte:
+				values[j] = types.NewBlobValue(val)
+			default:
+				values[j] = types.NewStringValue(fmt.Sprintf("%v", val), types.TypeVarchar)
+			}
+		}
+		rows[i] = &row.Row{Values: values}
+	}
+
+	return &joinTable{
+		name:     tableName,
+		alias:    alias,
+		columns:  columns,
 		rows:     rows,
 		colIndex: colIndex,
 		startIdx: startIdx,

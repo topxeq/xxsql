@@ -1531,7 +1531,17 @@ func (e *Executor) executeWith(stmt *sql.WithStmt) (*Result, error) {
 
 	// Execute each CTE and store the results
 	for _, cte := range stmt.CTEs {
-		cteResult, err := e.executeStatementForCTE(cte.Query)
+		var cteResult *Result
+		var err error
+
+		if cte.Recursive {
+			// Handle recursive CTE
+			cteResult, err = e.executeRecursiveCTE(cte)
+		} else {
+			// Handle non-recursive CTE
+			cteResult, err = e.executeStatementForCTE(cte.Query)
+		}
+
 		if err != nil {
 			return nil, fmt.Errorf("CTE '%s' error: %w", cte.Name, err)
 		}
@@ -1559,6 +1569,83 @@ func (e *Executor) executeWith(stmt *sql.WithStmt) (*Result, error) {
 	e.cteResults = oldCTEResults
 
 	return result, nil
+}
+
+// executeRecursiveCTE executes a recursive CTE.
+// Recursive CTEs must have the form: base_query UNION ALL recursive_query
+func (e *Executor) executeRecursiveCTE(cte sql.CTEDefinition) (*Result, error) {
+	cteName := strings.ToLower(cte.Name)
+
+	// The CTE query must be a UNION ALL
+	unionStmt, ok := cte.Query.(*sql.UnionStmt)
+	if !ok {
+		return nil, fmt.Errorf("recursive CTE '%s' must be a UNION ALL of base and recursive queries", cte.Name)
+	}
+
+	if unionStmt.Op != sql.SetUnion || !unionStmt.All {
+		return nil, fmt.Errorf("recursive CTE '%s' must use UNION ALL (not UNION)", cte.Name)
+	}
+
+	// Execute the base query (left side of UNION ALL)
+	baseResult, err := e.executeStatementForCTE(unionStmt.Left)
+	if err != nil {
+		return nil, fmt.Errorf("recursive CTE '%s' base query error: %w", cte.Name, err)
+	}
+
+	// Initialize the working result with base query results
+	workingResult := &Result{
+		Columns: baseResult.Columns,
+		Rows:    make([][]interface{}, len(baseResult.Rows)),
+	}
+	copy(workingResult.Rows, baseResult.Rows)
+
+	// Store initial result so recursive query can reference it
+	e.cteResults[cteName] = workingResult
+
+	// Maximum iterations to prevent infinite loops
+	const maxIterations = 10000
+
+	// Iterate until no new rows are produced
+	for iteration := 0; iteration < maxIterations; iteration++ {
+		// Execute the recursive query (right side of UNION ALL)
+		recursiveResult, err := e.executeStatementForCTE(unionStmt.Right)
+		if err != nil {
+			return nil, fmt.Errorf("recursive CTE '%s' recursive query error: %w", cte.Name, err)
+		}
+
+		// Check if any new rows were produced
+		if len(recursiveResult.Rows) == 0 {
+			break // No more rows, we're done
+		}
+
+		// Track rows seen for cycle detection
+		seenRows := make(map[string]bool)
+		for _, row := range workingResult.Rows {
+			seenRows[e.rowKey(row)] = true
+		}
+
+		// Add new rows to working result
+		newRowsAdded := 0
+		for _, row := range recursiveResult.Rows {
+			key := e.rowKey(row)
+			if !seenRows[key] {
+				workingResult.Rows = append(workingResult.Rows, row)
+				seenRows[key] = true
+				newRowsAdded++
+			}
+		}
+
+		// If no new rows were added (all were duplicates), we're done
+		if newRowsAdded == 0 {
+			break
+		}
+
+		// Update the CTE result for the next iteration
+		e.cteResults[cteName] = workingResult
+	}
+
+	workingResult.RowCount = len(workingResult.Rows)
+	return workingResult, nil
 }
 
 // executeStatementForCTE executes a statement within a CTE context.
@@ -1787,29 +1874,29 @@ func (e *Executor) executeSelectFromCTE(stmt *sql.SelectStmt, cteResult *Result)
 
 	// Process each row from the CTE
 	for _, srcRow := range cteResult.Rows {
+		// Build a pseudo row.Row for evaluation
+		pseudoRow := &row.Row{}
+		values := make([]types.Value, len(srcRow))
+		for i, v := range srcRow {
+			switch val := v.(type) {
+			case int:
+				values[i] = types.NewIntValue(int64(val))
+			case int64:
+				values[i] = types.NewIntValue(val)
+			case float64:
+				values[i] = types.NewFloatValue(val)
+			case string:
+				values[i] = types.NewStringValue(val, types.TypeVarchar)
+			case []byte:
+				values[i] = types.NewBlobValue(val)
+			default:
+				values[i] = types.NewStringValue(fmt.Sprintf("%v", val), types.TypeVarchar)
+			}
+		}
+		pseudoRow.Values = values
+
 		// Apply WHERE filter if present
 		if stmt.Where != nil {
-			// Build a pseudo row.Row for evaluation
-			pseudoRow := &row.Row{}
-			values := make([]types.Value, len(srcRow))
-			for i, v := range srcRow {
-				switch val := v.(type) {
-				case int:
-					values[i] = types.NewIntValue(int64(val))
-				case int64:
-					values[i] = types.NewIntValue(val)
-				case float64:
-					values[i] = types.NewFloatValue(val)
-				case string:
-					values[i] = types.NewStringValue(val, types.TypeVarchar)
-				case []byte:
-					values[i] = types.NewBlobValue(val)
-				default:
-					values[i] = types.NewStringValue(fmt.Sprintf("%v", val), types.TypeVarchar)
-				}
-			}
-			pseudoRow.Values = values
-
 			match, err := e.evaluateWhereForRow(stmt.Where, pseudoRow, columnOrder, colIdxMap)
 			if err != nil {
 				return nil, err
@@ -1836,7 +1923,12 @@ func (e *Executor) executeSelectFromCTE(stmt *sql.SelectStmt, cteResult *Result)
 				}
 				colIdx++
 			default:
-				// For other expressions, just use nil for now
+				// Evaluate other expressions (like n + 1)
+				val, err := e.evaluateExprForRow(expr, pseudoRow, columnOrder, colIdxMap)
+				if err != nil {
+					return nil, err
+				}
+				resultRow[colIdx] = val
 				colIdx++
 			}
 		}
@@ -1877,14 +1969,22 @@ func (e *Executor) executeSelectWithoutFrom(stmt *sql.SelectStmt) (*Result, erro
 	for _, colExpr := range stmt.Columns {
 		switch expr := colExpr.(type) {
 		case *sql.Literal:
+			colName := fmt.Sprintf("%d", len(result.Columns)+1)
+			if expr.Alias != "" {
+				colName = expr.Alias
+			}
 			result.Columns = append(result.Columns, ColumnInfo{
-				Name: fmt.Sprintf("%d", len(result.Columns)+1),
+				Name: colName,
 				Type: "INT",
 			})
 			row = append(row, expr.Value)
 		case *sql.ColumnRef:
+			colName := expr.Name
+			if expr.Alias != "" {
+				colName = expr.Alias
+			}
 			result.Columns = append(result.Columns, ColumnInfo{
-				Name: expr.Name,
+				Name: colName,
 				Type: "INT",
 			})
 			row = append(row, 1)
@@ -1937,8 +2037,12 @@ func (e *Executor) executeSelectWithoutFrom(stmt *sql.SelectStmt) (*Result, erro
 			if err != nil {
 				return nil, err
 			}
+			colName := "expr"
+			if expr.Alias != "" {
+				colName = expr.Alias
+			}
 			result.Columns = append(result.Columns, ColumnInfo{
-				Name: "expr",
+				Name: colName,
 				Type: "VARCHAR",
 			})
 			row = append(row, val)
