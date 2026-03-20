@@ -8,6 +8,15 @@
 
 A lightweight SQL database implemented in pure Go, featuring a B+ tree storage engine and MySQL-compatible protocol.
 
+## Documentation
+
+| Document | Description |
+|----------|-------------|
+| [Reference Manual](docs/REFERENCE.md) | Complete SQL syntax, data types, functions, and features reference |
+| [Maintenance Manual](docs/MAINTENANCE.md) | Installation, configuration, upgrade, backup, migration, and administration guide |
+| [Testing Guide](docs/TESTING.md) | Testing guidelines and procedures |
+| [Contributing Guide](CONTRIBUTING.md) | How to contribute to XxSql |
+
 ## Goal
 
 XxSql aims to provide a lightweight SQL database with **better concurrency than SQLite** while maintaining similar ease of deployment.
