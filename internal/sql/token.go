@@ -82,6 +82,10 @@ const (
 	TokLimit
 	TokOffset
 	TokOf
+	TokNulls    // NULLS FIRST/LAST
+	TokFirst    // NULLS FIRST
+	TokLast     // NULLS LAST
+	TokFilter   // FILTER (WHERE ...)
 
 	// Keywords - Data types
 	TokSeq      // Auto-increment integer
@@ -329,6 +333,14 @@ func (t TokenType) String() string {
 		return "OFFSET"
 	case TokOf:
 		return "OF"
+	case TokNulls:
+		return "NULLS"
+	case TokFirst:
+		return "FIRST"
+	case TokLast:
+		return "LAST"
+	case TokFilter:
+		return "FILTER"
 	case TokSeq:
 		return "SEQ"
 	case TokInt, TokInteger:
@@ -614,6 +626,10 @@ var keywords = map[string]TokenType{
 	"LIMIT":        TokLimit,
 	"OFFSET":       TokOffset,
 	"OF":           TokOf,
+	"NULLS":        TokNulls,
+	"FIRST":        TokFirst,
+	"LAST":         TokLast,
+	"FILTER":       TokFilter,
 	"SEQ":          TokSeq,
 	"INT":          TokInt,
 	"INTEGER":      TokInteger,

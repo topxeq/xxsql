@@ -80,6 +80,28 @@ func (s *WithStmt) String() string {
 	return sb.String()
 }
 
+// WithClause represents a WITH clause that can be attached to DML statements.
+// It allows CTEs to be used with INSERT, UPDATE, DELETE.
+type WithClause struct {
+	CTEs      []CTEDefinition
+	Recursive bool
+}
+
+func (w *WithClause) String() string {
+	var sb strings.Builder
+	sb.WriteString("WITH ")
+	if w.Recursive {
+		sb.WriteString("RECURSIVE ")
+	}
+	for i, cte := range w.CTEs {
+		if i > 0 {
+			sb.WriteString(", ")
+		}
+		sb.WriteString(cte.String())
+	}
+	return sb.String()
+}
+
 // SelectStmt represents a SELECT statement.
 type SelectStmt struct {
 	Distinct   bool
@@ -154,6 +176,7 @@ type InsertStmt struct {
 	OnDuplicateKeyUpdate []*Assignment    // MySQL-style ON DUPLICATE KEY UPDATE
 	OnConflict           *UpsertClause    // SQLite-style ON CONFLICT
 	Returning            *ReturningClause // RETURNING clause
+	WithClause           *WithClause      // Optional WITH clause
 }
 
 // UpsertClause represents an ON CONFLICT clause (SQLite-style UPSERT).
@@ -222,6 +245,10 @@ func (s *InsertStmt) node()      {}
 func (s *InsertStmt) statement() {}
 func (s *InsertStmt) String() string {
 	var sb strings.Builder
+	if s.WithClause != nil {
+		sb.WriteString(s.WithClause.String())
+		sb.WriteString(" ")
+	}
 	sb.WriteString("INSERT INTO ")
 	sb.WriteString(s.Table)
 	if len(s.Columns) > 0 {
@@ -267,12 +294,17 @@ type UpdateStmt struct {
 	OrderBy     []*OrderByItem
 	Limit       *int
 	Returning   *ReturningClause // RETURNING clause
+	WithClause  *WithClause      // Optional WITH clause
 }
 
 func (s *UpdateStmt) node()      {}
 func (s *UpdateStmt) statement() {}
 func (s *UpdateStmt) String() string {
 	var sb strings.Builder
+	if s.WithClause != nil {
+		sb.WriteString(s.WithClause.String())
+		sb.WriteString(" ")
+	}
 	sb.WriteString("UPDATE ")
 	sb.WriteString(s.Table)
 	sb.WriteString(" SET ")
@@ -295,17 +327,22 @@ func (s *UpdateStmt) String() string {
 
 // DeleteStmt represents a DELETE statement.
 type DeleteStmt struct {
-	Table     string
-	Where     Expression
-	OrderBy   []*OrderByItem
-	Limit     *int
-	Returning *ReturningClause // RETURNING clause
+	Table      string
+	Where      Expression
+	OrderBy    []*OrderByItem
+	Limit      *int
+	Returning  *ReturningClause // RETURNING clause
+	WithClause *WithClause      // Optional WITH clause
 }
 
 func (s *DeleteStmt) node()      {}
 func (s *DeleteStmt) statement() {}
 func (s *DeleteStmt) String() string {
 	var sb strings.Builder
+	if s.WithClause != nil {
+		sb.WriteString(s.WithClause.String())
+		sb.WriteString(" ")
+	}
 	sb.WriteString("DELETE FROM ")
 	sb.WriteString(s.Table)
 	if s.Where != nil {
@@ -775,17 +812,26 @@ const (
 
 // OrderByItem represents an ORDER BY item.
 type OrderByItem struct {
-	Expr      Expression
-	Ascending bool
+	Expr       Expression
+	Ascending  bool
+	NullsFirst bool // NULLS FIRST specified
+	NullsLast  bool // NULLS LAST specified
 }
 
 func (o *OrderByItem) node() {}
 func (o *OrderByItem) String() string {
 	s := o.Expr.String()
 	if o.Ascending {
-		return s + " ASC"
+		s += " ASC"
+	} else {
+		s += " DESC"
 	}
-	return s + " DESC"
+	if o.NullsFirst {
+		s += " NULLS FIRST"
+	} else if o.NullsLast {
+		s += " NULLS LAST"
+	}
+	return s
 }
 
 // Assignment represents a SET assignment.
@@ -1132,9 +1178,10 @@ func (e *UnaryExpr) String() string {
 
 // FunctionCall represents a function call.
 type FunctionCall struct {
-	Name      string
-	Args      []Expression
-	Distinct  bool
+	Name     string
+	Args     []Expression
+	Distinct bool
+	Filter   Expression // FILTER (WHERE ...) clause for aggregates
 }
 
 func (f *FunctionCall) node()       {}
@@ -1153,6 +1200,11 @@ func (f *FunctionCall) String() string {
 		sb.WriteString(arg.String())
 	}
 	sb.WriteString(")")
+	if f.Filter != nil {
+		sb.WriteString(" FILTER (WHERE ")
+		sb.WriteString(f.Filter.String())
+		sb.WriteString(")")
+	}
 	return sb.String()
 }
 

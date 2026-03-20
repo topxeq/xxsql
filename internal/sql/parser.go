@@ -162,17 +162,39 @@ func (p *Parser) error(format string, args ...interface{}) {
 // ============================================================================
 
 func (p *Parser) parseStatement() Statement {
+	// Check for WITH clause before DML statements
+	var withClause *WithClause
+	if p.currTok.Type == TokWith {
+		withClause = p.parseWithClause()
+		if withClause == nil {
+			return nil
+		}
+	}
+
 	switch p.currTok.Type {
-	case TokWith:
-		return p.parseWith()
 	case TokSelect:
+		if withClause != nil {
+			return &WithStmt{CTEs: withClause.CTEs, MainQuery: p.parseSelect()}
+		}
 		return p.parseSelect()
 	case TokInsert:
-		return p.parseInsert()
+		stmt := p.parseInsert()
+		if stmt != nil && withClause != nil {
+			stmt.WithClause = withClause
+		}
+		return stmt
 	case TokUpdate:
-		return p.parseUpdate()
+		stmt := p.parseUpdate()
+		if stmt != nil && withClause != nil {
+			stmt.WithClause = withClause
+		}
+		return stmt
 	case TokDelete:
-		return p.parseDelete()
+		stmt := p.parseDelete()
+		if stmt != nil && withClause != nil {
+			stmt.WithClause = withClause
+		}
+		return stmt
 	case TokCreate:
 		return p.parseCreate()
 	case TokDrop:
@@ -201,6 +223,9 @@ func (p *Parser) parseStatement() Statement {
 		return p.parseExplain()
 	case TokLParen:
 		// Could be a parenthesized SELECT
+		if withClause != nil {
+			return &WithStmt{CTEs: withClause.CTEs, MainQuery: p.parseSelect()}
+		}
 		return p.parseSelect()
 	default:
 		p.error("unexpected token: %s", p.currTok.Type)
@@ -208,23 +233,22 @@ func (p *Parser) parseStatement() Statement {
 	}
 }
 
-// parseWith parses a WITH clause (CTE) statement.
-// Syntax: WITH [RECURSIVE] cte_name [(col1, col2, ...)] AS (query) [, ...] main_query
-func (p *Parser) parseWith() Statement {
+// parseWithClause parses a WITH clause (CTE) and returns a WithClause.
+// Syntax: WITH [RECURSIVE] cte_name [(col1, col2, ...)] AS (query) [, ...]
+func (p *Parser) parseWithClause() *WithClause {
 	p.nextToken() // consume WITH
 
-	withStmt := &WithStmt{}
+	withClause := &WithClause{}
 
 	// Check for RECURSIVE keyword (applies to all CTEs in the WITH clause)
-	hasRecursive := false
 	if p.curTokenIs(TokRecursive) {
-		hasRecursive = true
+		withClause.Recursive = true
 		p.nextToken()
 	}
 
 	// Parse CTE definitions
 	for {
-		cte := CTEDefinition{Recursive: hasRecursive}
+		cte := CTEDefinition{Recursive: withClause.Recursive}
 
 		// Parse CTE name
 		if !p.curTokenIs(TokIdent) {
@@ -272,7 +296,7 @@ func (p *Parser) parseWith() Statement {
 			return nil
 		}
 
-		withStmt.CTEs = append(withStmt.CTEs, cte)
+		withClause.CTEs = append(withClause.CTEs, cte)
 
 		// Check for more CTEs
 		if !p.curTokenIs(TokComma) {
@@ -281,13 +305,24 @@ func (p *Parser) parseWith() Statement {
 		p.nextToken()
 	}
 
-	// Parse the main query
-	withStmt.MainQuery = p.parseStatement()
-	if withStmt.MainQuery == nil {
+	return withClause
+}
+
+// parseWith parses a WITH clause (CTE) statement for SELECT.
+// Syntax: WITH [RECURSIVE] cte_name [(col1, col2, ...)] AS (query) [, ...] main_query
+func (p *Parser) parseWith() Statement {
+	withClause := p.parseWithClause()
+	if withClause == nil {
 		return nil
 	}
 
-	return withStmt
+	// Parse the main query
+	mainQuery := p.parseStatement()
+	if mainQuery == nil {
+		return nil
+	}
+
+	return &WithStmt{CTEs: withClause.CTEs, MainQuery: mainQuery}
 }
 
 // parseSelect parses a SELECT statement.
@@ -614,6 +649,21 @@ func (p *Parser) parseOrderByItems() []*OrderByItem {
 		} else if p.curTokenIs(TokDesc) {
 			item.Ascending = false
 			p.nextToken()
+		}
+
+		// Handle NULLS FIRST or NULLS LAST
+		if p.curTokenIs(TokNulls) {
+			p.nextToken()
+			if p.curTokenIs(TokFirst) {
+				item.NullsFirst = true
+				p.nextToken()
+			} else if p.curTokenIs(TokLast) {
+				item.NullsLast = true
+				p.nextToken()
+			} else {
+				p.error("expected FIRST or LAST after NULLS")
+				return nil
+			}
 		}
 
 		items = append(items, item)
@@ -2019,6 +2069,25 @@ func (p *Parser) parseFunctionCall(name string) Expression {
 
 	if !p.expect(TokRParen) {
 		return nil
+	}
+
+	// Check for FILTER clause (for aggregate functions)
+	// Syntax: FILTER (WHERE condition)
+	if p.curTokenIs(TokFilter) {
+		p.nextToken() // consume FILTER
+		if !p.expect(TokLParen) {
+			return nil
+		}
+		if !p.expect(TokWhere) {
+			return nil
+		}
+		fc.Filter = p.parseExpression()
+		if fc.Filter == nil {
+			return nil
+		}
+		if !p.expect(TokRParen) {
+			return nil
+		}
 	}
 
 	// Check for OVER clause (window function)

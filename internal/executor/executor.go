@@ -383,9 +383,10 @@ func (e *Executor) executeSelect(stmt *sql.SelectStmt) (*Result, error) {
 	var colIndices []int
 	var funcExprs []sql.Expression // Non-aggregate function expressions
 	var aggregateFuncs []struct {
-		name  string
-		arg   string // column name for the aggregate argument
-		index int    // result column index
+		name   string
+		arg    string // column name for the aggregate argument
+		index  int    // result column index
+		filter sql.Expression // FILTER (WHERE ...) clause
 	}
 
 	for _, colExpr := range stmt.Columns {
@@ -453,10 +454,11 @@ func (e *Executor) executeSelect(stmt *sql.SelectStmt) (*Result, error) {
 			})
 			if isAggregate {
 				aggregateFuncs = append(aggregateFuncs, struct {
-					name  string
-					arg   string
-					index int
-				}{funcName, colName, len(resultCols) - 1})
+					name   string
+					arg    string
+					index  int
+					filter sql.Expression
+				}{funcName, colName, len(resultCols) - 1, expr.Filter})
 				colIndices = append(colIndices, -1)
 				funcExprs = append(funcExprs, nil)
 			} else {
@@ -586,10 +588,12 @@ func (e *Executor) sortRows(orderBy []*sql.OrderByItem, cols []ColumnInfo, rows 
 
 	// sortKeyData holds either an index or expression
 	type sortKeyData struct {
-		keyType   sortKeyType
-		index     int
-		expr      sql.Expression
-		ascending bool
+		keyType    sortKeyType
+		index      int
+		expr       sql.Expression
+		ascending  bool
+		nullsFirst bool
+		nullsLast  bool
 	}
 	sortKeys := make([]sortKeyData, 0, len(orderBy))
 
@@ -599,7 +603,13 @@ func (e *Executor) sortRows(orderBy []*sql.OrderByItem, cols []ColumnInfo, rows 
 			colName := strings.ToLower(expr.Name)
 			idx, ok := colIndexMap[colName]
 			if ok {
-				sortKeys = append(sortKeys, sortKeyData{keyType: sortKeyIndex, index: idx, ascending: item.Ascending})
+				sortKeys = append(sortKeys, sortKeyData{
+					keyType:    sortKeyIndex,
+					index:      idx,
+					ascending:  item.Ascending,
+					nullsFirst: item.NullsFirst,
+					nullsLast:  item.NullsLast,
+				})
 			}
 		case *sql.Literal:
 			// Handle numeric column reference (e.g., ORDER BY 1)
@@ -616,12 +626,24 @@ func (e *Executor) sortRows(orderBy []*sql.OrderByItem, cols []ColumnInfo, rows 
 					continue
 				}
 				if idx >= 0 && idx < len(cols) {
-					sortKeys = append(sortKeys, sortKeyData{keyType: sortKeyIndex, index: idx, ascending: item.Ascending})
+					sortKeys = append(sortKeys, sortKeyData{
+						keyType:    sortKeyIndex,
+						index:      idx,
+						ascending:  item.Ascending,
+						nullsFirst: item.NullsFirst,
+						nullsLast:  item.NullsLast,
+					})
 				}
 			}
 		case *sql.BinaryExpr, *sql.UnaryExpr:
 			// Handle expression-based ORDER BY (e.g., ORDER BY amount*2)
-			sortKeys = append(sortKeys, sortKeyData{keyType: sortKeyExpr, expr: expr, ascending: item.Ascending})
+			sortKeys = append(sortKeys, sortKeyData{
+				keyType:    sortKeyExpr,
+				expr:       expr,
+				ascending:  item.Ascending,
+				nullsFirst: item.NullsFirst,
+				nullsLast:  item.NullsLast,
+			})
 		}
 	}
 
@@ -653,6 +675,36 @@ func (e *Executor) sortRows(orderBy []*sql.OrderByItem, cols []ColumnInfo, rows 
 				}
 			}
 
+			// Handle NULL ordering with NULLS FIRST/LAST
+			viIsNull := vi == nil
+			vjIsNull := vj == nil
+
+			if viIsNull && vjIsNull {
+				continue // Both NULL, check next key
+			}
+			if viIsNull || vjIsNull {
+				// One is NULL, handle based on NULLS FIRST/LAST
+				if key.nullsFirst {
+					// NULLS FIRST: NULL comes before non-NULL
+					if viIsNull {
+						return true
+					}
+					return false
+				} else if key.nullsLast {
+					// NULLS LAST: NULL comes after non-NULL
+					if viIsNull {
+						return false
+					}
+					return true
+				}
+				// Default: NULL sorts first (ascending) or last (descending)
+				if key.ascending {
+					return viIsNull // NULL first for ASC
+				}
+				return vjIsNull // NULL last for DESC (non-NULL first)
+			}
+
+			// Both non-NULL, use normal comparison
 			cmp := compareValues(vi, vj)
 			if cmp == 0 {
 				continue
@@ -1222,9 +1274,10 @@ func valuesEqual(a, b interface{}) bool {
 
 // executeGroupBy handles GROUP BY and aggregate functions.
 func (e *Executor) executeGroupBy(stmt *sql.SelectStmt, rows []*row.Row, resultCols []ColumnInfo, colIndices []int, funcExprs []sql.Expression, aggregateFuncs []struct {
-	name  string
-	arg   string
-	index int
+	name   string
+	arg    string
+	index  int
+	filter sql.Expression
 }, tblInfo *table.TableInfo, columnMap map[string]*types.ColumnInfo, columnOrder []*types.ColumnInfo) (*Result, error) {
 	// Build GROUP BY column indices
 	groupByIndices := make([]int, 0)
@@ -1308,12 +1361,27 @@ func (e *Executor) executeGroupBy(stmt *sql.SelectStmt, rows []*row.Row, resultC
 
 		// Compute aggregates for this group
 		for _, agg := range aggregateFuncs {
+			// Apply FILTER clause if present
+			filteredRows := groupRows
+			if agg.filter != nil {
+				filteredRows = make([]*row.Row, 0)
+				for _, r := range groupRows {
+					match, err := e.evaluateWhere(agg.filter, r, columnMap, columnOrder)
+					if err != nil {
+						return nil, fmt.Errorf("FILTER clause error: %w", err)
+					}
+					if match {
+						filteredRows = append(filteredRows, r)
+					}
+				}
+			}
+
 			switch agg.name {
 			case "COUNT":
-				resultRow[agg.index] = len(groupRows)
+				resultRow[agg.index] = len(filteredRows)
 			case "SUM":
 				var sum int64
-				for _, r := range groupRows {
+				for _, r := range filteredRows {
 					if agg.arg != "" && agg.arg != "*" {
 						for j, col := range tblInfo.Columns {
 							if strings.ToLower(col.Name) == agg.arg {
@@ -1328,7 +1396,7 @@ func (e *Executor) executeGroupBy(stmt *sql.SelectStmt, rows []*row.Row, resultC
 			case "AVG":
 				var sum int64
 				count := 0
-				for _, r := range groupRows {
+				for _, r := range filteredRows {
 					if agg.arg != "" {
 						for j, col := range tblInfo.Columns {
 							if strings.ToLower(col.Name) == agg.arg {
@@ -1348,7 +1416,7 @@ func (e *Executor) executeGroupBy(stmt *sql.SelectStmt, rows []*row.Row, resultC
 			case "MIN":
 				var minVal int64
 				hasMin := false
-				for _, r := range groupRows {
+				for _, r := range filteredRows {
 					if agg.arg != "" {
 						for j, col := range tblInfo.Columns {
 							if strings.ToLower(col.Name) == agg.arg {
@@ -1371,7 +1439,7 @@ func (e *Executor) executeGroupBy(stmt *sql.SelectStmt, rows []*row.Row, resultC
 			case "MAX":
 				var maxVal int64
 				hasMax := false
-				for _, r := range groupRows {
+				for _, r := range filteredRows {
 					if agg.arg != "" {
 						for j, col := range tblInfo.Columns {
 							if strings.ToLower(col.Name) == agg.arg {
@@ -1395,7 +1463,7 @@ func (e *Executor) executeGroupBy(stmt *sql.SelectStmt, rows []*row.Row, resultC
 				// GROUP_CONCAT with optional SEPARATOR and ORDER BY
 				// Syntax: GROUP_CONCAT(expr [SEPARATOR str] [ORDER BY col])
 				var parts []string
-				for _, r := range groupRows {
+				for _, r := range filteredRows {
 					if agg.arg != "" {
 						for j, col := range tblInfo.Columns {
 							if strings.ToLower(col.Name) == agg.arg {
@@ -1411,7 +1479,7 @@ func (e *Executor) executeGroupBy(stmt *sql.SelectStmt, rows []*row.Row, resultC
 			case "STDDEV", "STDDEV_SAMP":
 				// Standard deviation (sample)
 				var values []float64
-				for _, r := range groupRows {
+				for _, r := range filteredRows {
 					if agg.arg != "" {
 						for j, col := range tblInfo.Columns {
 							if strings.ToLower(col.Name) == agg.arg {
@@ -1450,7 +1518,7 @@ func (e *Executor) executeGroupBy(stmt *sql.SelectStmt, rows []*row.Row, resultC
 			case "VARIANCE", "VAR_SAMP":
 				// Variance (sample)
 				var values []float64
-				for _, r := range groupRows {
+				for _, r := range filteredRows {
 					if agg.arg != "" {
 						for j, col := range tblInfo.Columns {
 							if strings.ToLower(col.Name) == agg.arg {
@@ -1511,9 +1579,10 @@ func (e *Executor) executeGroupBy(stmt *sql.SelectStmt, rows []*row.Row, resultC
 // evaluateHaving evaluates a HAVING clause expression.
 // It handles aggregate functions and subqueries within the HAVING clause.
 func (e *Executor) evaluateHaving(expr sql.Expression, resultRow []interface{}, resultCols []ColumnInfo, aggregateFuncs []struct {
-	name  string
-	arg   string
-	index int
+	name   string
+	arg    string
+	index  int
+	filter sql.Expression
 }, groupRows []*row.Row, tblInfo *table.TableInfo) (bool, error) {
 	switch ex := expr.(type) {
 	case *sql.BinaryExpr:
@@ -1713,9 +1782,10 @@ func (e *Executor) evaluateHaving(expr sql.Expression, resultRow []interface{}, 
 
 // evaluateHavingExpr evaluates an expression within a HAVING clause.
 func (e *Executor) evaluateHavingExpr(expr sql.Expression, resultRow []interface{}, resultCols []ColumnInfo, aggregateFuncs []struct {
-	name  string
-	arg   string
-	index int
+	name   string
+	arg    string
+	index  int
+	filter sql.Expression
 }, groupRows []*row.Row, tblInfo *table.TableInfo) (interface{}, error) {
 	switch ex := expr.(type) {
 	case *sql.Literal:
@@ -2873,6 +2943,58 @@ func (e *Executor) evaluateBinaryExprWithoutRow(expr *sql.BinaryExpr) (interface
 
 // executeInsert executes an INSERT statement.
 func (e *Executor) executeInsert(stmt *sql.InsertStmt) (*Result, error) {
+	// Handle WITH clause if present
+	if stmt.WithClause != nil {
+		// Initialize CTE results map if needed
+		if e.cteResults == nil {
+			e.cteResults = make(map[string]*Result)
+		}
+
+		// Save current CTE results to restore later
+		oldCTEResults := e.cteResults
+		e.cteResults = make(map[string]*Result)
+		for k, v := range oldCTEResults {
+			e.cteResults[k] = v
+		}
+
+		// Execute each CTE and store the results
+		for _, cte := range stmt.WithClause.CTEs {
+			var cteResult *Result
+			var err error
+			if cte.Recursive {
+				cteResult, err = e.executeRecursiveCTE(cte)
+			} else {
+				cteResult, err = e.executeStatementForCTE(cte.Query)
+			}
+			if err != nil {
+				e.cteResults = oldCTEResults
+				return nil, fmt.Errorf("CTE '%s' error: %w", cte.Name, err)
+			}
+
+			// Validate CTE result
+			if cteResult == nil {
+				e.cteResults = oldCTEResults
+				return nil, fmt.Errorf("CTE '%s' returned nil result", cte.Name)
+			}
+
+			// Store the CTE result
+			e.cteResults[strings.ToLower(cte.Name)] = cteResult
+		}
+
+		// Execute the INSERT statement (can reference CTEs now)
+		result, err := e.executeInsertInternal(stmt)
+
+		// Restore original CTE results
+		e.cteResults = oldCTEResults
+
+		return result, err
+	}
+
+	return e.executeInsertInternal(stmt)
+}
+
+// executeInsertInternal performs the actual INSERT operation.
+func (e *Executor) executeInsertInternal(stmt *sql.InsertStmt) (*Result, error) {
 	tableName := stmt.Table
 	if tableName == "" {
 		return nil, fmt.Errorf("table name is required")
@@ -3230,6 +3352,58 @@ func (e *Executor) valuesEqual(a, b types.Value) bool {
 
 // executeUpdate executes an UPDATE statement.
 func (e *Executor) executeUpdate(stmt *sql.UpdateStmt) (*Result, error) {
+	// Handle WITH clause if present
+	if stmt.WithClause != nil {
+		// Initialize CTE results map if needed
+		if e.cteResults == nil {
+			e.cteResults = make(map[string]*Result)
+		}
+
+		// Save current CTE results to restore later
+		oldCTEResults := e.cteResults
+		e.cteResults = make(map[string]*Result)
+		for k, v := range oldCTEResults {
+			e.cteResults[k] = v
+		}
+
+		// Execute each CTE and store the results
+		for _, cte := range stmt.WithClause.CTEs {
+			var cteResult *Result
+			var err error
+			if cte.Recursive {
+				cteResult, err = e.executeRecursiveCTE(cte)
+			} else {
+				cteResult, err = e.executeStatementForCTE(cte.Query)
+			}
+			if err != nil {
+				e.cteResults = oldCTEResults
+				return nil, fmt.Errorf("CTE '%s' error: %w", cte.Name, err)
+			}
+
+			// Validate CTE result
+			if cteResult == nil {
+				e.cteResults = oldCTEResults
+				return nil, fmt.Errorf("CTE '%s' returned nil result", cte.Name)
+			}
+
+			// Store the CTE result
+			e.cteResults[strings.ToLower(cte.Name)] = cteResult
+		}
+
+		// Execute the UPDATE statement (can reference CTEs now)
+		result, err := e.executeUpdateInternal(stmt)
+
+		// Restore original CTE results
+		e.cteResults = oldCTEResults
+
+		return result, err
+	}
+
+	return e.executeUpdateInternal(stmt)
+}
+
+// executeUpdateInternal performs the actual UPDATE operation.
+func (e *Executor) executeUpdateInternal(stmt *sql.UpdateStmt) (*Result, error) {
 	tableName := stmt.Table
 	if tableName == "" {
 		return nil, fmt.Errorf("table name is required")
@@ -3390,6 +3564,58 @@ func (e *Executor) executeUpdate(stmt *sql.UpdateStmt) (*Result, error) {
 
 // executeDelete executes a DELETE statement.
 func (e *Executor) executeDelete(stmt *sql.DeleteStmt) (*Result, error) {
+	// Handle WITH clause if present
+	if stmt.WithClause != nil {
+		// Initialize CTE results map if needed
+		if e.cteResults == nil {
+			e.cteResults = make(map[string]*Result)
+		}
+
+		// Save current CTE results to restore later
+		oldCTEResults := e.cteResults
+		e.cteResults = make(map[string]*Result)
+		for k, v := range oldCTEResults {
+			e.cteResults[k] = v
+		}
+
+		// Execute each CTE and store the results
+		for _, cte := range stmt.WithClause.CTEs {
+			var cteResult *Result
+			var err error
+			if cte.Recursive {
+				cteResult, err = e.executeRecursiveCTE(cte)
+			} else {
+				cteResult, err = e.executeStatementForCTE(cte.Query)
+			}
+			if err != nil {
+				e.cteResults = oldCTEResults
+				return nil, fmt.Errorf("CTE '%s' error: %w", cte.Name, err)
+			}
+
+			// Validate CTE result
+			if cteResult == nil {
+				e.cteResults = oldCTEResults
+				return nil, fmt.Errorf("CTE '%s' returned nil result", cte.Name)
+			}
+
+			// Store the CTE result
+			e.cteResults[strings.ToLower(cte.Name)] = cteResult
+		}
+
+		// Execute the DELETE statement (can reference CTEs now)
+		result, err := e.executeDeleteInternal(stmt)
+
+		// Restore original CTE results
+		e.cteResults = oldCTEResults
+
+		return result, err
+	}
+
+	return e.executeDeleteInternal(stmt)
+}
+
+// executeDeleteInternal performs the actual DELETE operation.
+func (e *Executor) executeDeleteInternal(stmt *sql.DeleteStmt) (*Result, error) {
 	tableName := stmt.Table
 	if tableName == "" {
 		return nil, fmt.Errorf("table name is required")
