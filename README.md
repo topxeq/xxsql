@@ -127,14 +127,14 @@ The following comparison highlights key differences between XxSql and SQLite acr
 
 | Function Category | SQLite | XxSql |
 |-------------------|--------|-------|
-| **Aggregate** | COUNT, SUM, AVG, MIN, MAX, GROUP_CONCAT | COUNT, SUM, AVG, MIN, MAX, GROUP_CONCAT |
-| **String** | UPPER, LOWER, LENGTH, SUBSTR, REPLACE, etc. | UPPER, LOWER, LENGTH, SUBSTRING, CONCAT, TRIM, LTRIM, RTRIM, INSTR, LPAD, RPAD, REVERSE, LEFT, RIGHT |
+| **Aggregate** | COUNT, SUM, AVG, MIN, MAX, GROUP_CONCAT | COUNT, SUM, AVG, MIN, MAX, GROUP_CONCAT, STDDEV, VARIANCE |
+| **String** | UPPER, LOWER, LENGTH, SUBSTR, REPLACE, etc. | UPPER, LOWER, LENGTH, SUBSTRING, CONCAT, TRIM, LTRIM, RTRIM, INSTR, LPAD, RPAD, REVERSE, LEFT, RIGHT, REPEAT, SPACE, CONCAT_WS |
 | **Math** | ABS, ROUND, CEIL, FLOOR, etc. | ABS, ROUND, CEIL, FLOOR, MOD, POWER, SQRT, SIGN, LOG, LOG10, EXP, PI, RANDOM |
-| **Date/Time** | date(), time(), datetime(), strftime() | DATE, TIME, DATETIME, YEAR, MONTH, DAY, HOUR, MINUTE, SECOND, DATE_ADD, DATE_SUB, DATEDIFF, STRFTIME, NOW, CURRENT_TIMESTAMP |
+| **Date/Time** | date(), time(), datetime(), strftime() | DATE, TIME, DATETIME, YEAR, MONTH, DAY, HOUR, MINUTE, SECOND, WEEKDAY, QUARTER, LAST_DAY, DATE_ADD, DATE_SUB, DATEDIFF, STRFTIME, NOW, CURRENT_TIMESTAMP |
 | **Type Conversion** | CAST, typeof() | CAST, TYPEOF |
-| **NULL Handling** | COALESCE, NULLIF, IFNULL | COALESCE, NULLIF |
+| **NULL Handling** | COALESCE, NULLIF, IFNULL | COALESCE, NULLIF, IFNULL |
 | **Conditional** | CASE, IIF() | CASE/WHEN, IF, IIF |
-| **Utility** | GREATEST, LEAST | GREATEST, LEAST |
+| **Utility** | GREATEST, LEAST | GREATEST, LEAST, REGEXP |
 | **BLOB Operations** | hex(), zeroblob() | HEX, UNHEX, LENGTH |
 
 ### Storage Engine
@@ -289,11 +289,11 @@ The following comparison highlights key differences between XxSql and SQLite acr
 - **DML** - SELECT, INSERT, UPDATE, DELETE, TRUNCATE
 - **JOINs** - INNER, LEFT, RIGHT, CROSS, FULL OUTER JOIN with multiple table support
 - **UNION** - UNION and UNION ALL with duplicate elimination
-- **Aggregates** - COUNT, SUM, AVG, MIN, MAX, GROUP_CONCAT
+- **Aggregates** - COUNT, SUM, AVG, MIN, MAX, GROUP_CONCAT, STDDEV, VARIANCE
 - **Math** - ABS, ROUND, CEIL, FLOOR, MOD, POWER, SQRT, SIGN, LOG, LOG10, EXP, PI, RANDOM
-- **String** - UPPER, LOWER, LENGTH, SUBSTRING, CONCAT, TRIM, LTRIM, RTRIM, INSTR, LPAD, RPAD, REVERSE, LEFT, RIGHT
-- **Date/Time** - DATE, TIME, DATETIME, YEAR, MONTH, DAY, HOUR, MINUTE, SECOND, DATE_ADD, DATE_SUB, DATEDIFF, STRFTIME
-- **Utility** - TYPEOF, IIF, GREATEST, LEAST
+- **String** - UPPER, LOWER, LENGTH, SUBSTRING, CONCAT, TRIM, LTRIM, RTRIM, INSTR, LPAD, RPAD, REVERSE, LEFT, RIGHT, REPEAT, SPACE, CONCAT_WS
+- **Date/Time** - DATE, TIME, DATETIME, YEAR, MONTH, DAY, HOUR, MINUTE, SECOND, WEEKDAY, QUARTER, LAST_DAY, DATE_ADD, DATE_SUB, DATEDIFF, STRFTIME
+- **Utility** - TYPEOF, IIF, IFNULL, GREATEST, LEAST, REGEXP
 - **Subqueries** - Comprehensive subquery support (see details below)
 - **Constraints** - PRIMARY KEY, UNIQUE, NOT NULL, DEFAULT, CHECK
 

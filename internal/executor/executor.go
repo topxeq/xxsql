@@ -402,13 +402,13 @@ func (e *Executor) executeSelect(stmt *sql.SelectStmt) (*Result, error) {
 			}
 
 			// Check if it's an aggregate function
-			isAggregate := funcName == "COUNT" || funcName == "SUM" || funcName == "AVG" || funcName == "MIN" || funcName == "MAX" || funcName == "GROUP_CONCAT"
+			isAggregate := funcName == "COUNT" || funcName == "SUM" || funcName == "AVG" || funcName == "MIN" || funcName == "MAX" || funcName == "GROUP_CONCAT" || funcName == "STDDEV" || funcName == "STDDEV_SAMP" || funcName == "VARIANCE" || funcName == "VAR_SAMP"
 
 			// Determine result type
 			resultType := "VARCHAR"
 			if isAggregate {
 				resultType = "INT"
-				if funcName == "AVG" {
+				if funcName == "AVG" || funcName == "STDDEV" || funcName == "STDDEV_SAMP" || funcName == "VARIANCE" || funcName == "VAR_SAMP" {
 					resultType = "FLOAT"
 				} else if funcName == "GROUP_CONCAT" {
 					resultType = "VARCHAR"
@@ -1366,6 +1366,83 @@ func (e *Executor) executeGroupBy(stmt *sql.SelectStmt, rows []*row.Row, resultC
 				}
 				// Default separator is comma
 				resultRow[agg.index] = strings.Join(parts, ",")
+			case "STDDEV", "STDDEV_SAMP":
+				// Standard deviation (sample)
+				var values []float64
+				for _, r := range groupRows {
+					if agg.arg != "" {
+						for j, col := range tblInfo.Columns {
+							if strings.ToLower(col.Name) == agg.arg {
+								if j < len(r.Values) && !r.Values[j].Null {
+									// Convert to float64 - handle both int and float types
+									var val float64
+									if r.Values[j].Type == types.TypeFloat {
+										val = r.Values[j].AsFloat()
+									} else {
+										val = float64(r.Values[j].AsInt())
+									}
+									values = append(values, val)
+								}
+							}
+						}
+					}
+				}
+				if len(values) < 2 {
+					resultRow[agg.index] = nil
+				} else {
+					// Calculate mean
+					var sum float64
+					for _, v := range values {
+						sum += v
+					}
+					mean := sum / float64(len(values))
+					// Calculate variance
+					var varianceSum float64
+					for _, v := range values {
+						diff := v - mean
+						varianceSum += diff * diff
+					}
+					variance := varianceSum / float64(len(values)-1) // Sample variance
+					resultRow[agg.index] = math.Sqrt(variance)
+				}
+			case "VARIANCE", "VAR_SAMP":
+				// Variance (sample)
+				var values []float64
+				for _, r := range groupRows {
+					if agg.arg != "" {
+						for j, col := range tblInfo.Columns {
+							if strings.ToLower(col.Name) == agg.arg {
+								if j < len(r.Values) && !r.Values[j].Null {
+									// Convert to float64 - handle both int and float types
+									var val float64
+									if r.Values[j].Type == types.TypeFloat {
+										val = r.Values[j].AsFloat()
+									} else {
+										val = float64(r.Values[j].AsInt())
+									}
+									values = append(values, val)
+								}
+							}
+						}
+					}
+				}
+				if len(values) < 2 {
+					resultRow[agg.index] = nil
+				} else {
+					// Calculate mean
+					var sum float64
+					for _, v := range values {
+						sum += v
+					}
+					mean := sum / float64(len(values))
+					// Calculate variance
+					var varianceSum float64
+					for _, v := range values {
+						diff := v - mean
+						varianceSum += diff * diff
+					}
+					resultRow[agg.index] = varianceSum / float64(len(values)-1) // Sample variance
+				}
 			default:
 				resultRow[agg.index] = nil
 			}
@@ -5984,6 +6061,228 @@ func (e *Executor) evaluateFunction(fc *sql.FunctionCall, r *row.Row, columnMap 
 
 	case "PI":
 		return math.Pi, nil
+
+	// ========== More String Functions ==========
+	case "REPEAT":
+		if len(fc.Args) < 2 {
+			return nil, fmt.Errorf("REPEAT requires 2 arguments")
+		}
+		strArg, err := evalExpr(fc.Args[0])
+		if err != nil {
+			return nil, err
+		}
+		nArg, err := evalExpr(fc.Args[1])
+		if err != nil {
+			return nil, err
+		}
+		if strArg == nil {
+			return nil, nil
+		}
+		str, ok := strArg.(string)
+		if !ok {
+			str = fmt.Sprintf("%v", strArg)
+		}
+		n := 0
+		switch v := nArg.(type) {
+		case int:
+			n = v
+		case int64:
+			n = int(v)
+		case float64:
+			n = int(v)
+		}
+		if n < 0 {
+			n = 0
+		}
+		return strings.Repeat(str, n), nil
+
+	case "SPACE":
+		if len(fc.Args) == 0 {
+			return nil, fmt.Errorf("SPACE requires 1 argument")
+		}
+		nArg, err := evalExpr(fc.Args[0])
+		if err != nil {
+			return nil, err
+		}
+		n := 0
+		switch v := nArg.(type) {
+		case int:
+			n = v
+		case int64:
+			n = int(v)
+		case float64:
+			n = int(v)
+		}
+		if n < 0 {
+			n = 0
+		}
+		return strings.Repeat(" ", n), nil
+
+	case "CONCAT_WS":
+		if len(fc.Args) < 2 {
+			return nil, fmt.Errorf("CONCAT_WS requires at least 2 arguments")
+		}
+		sepArg, err := evalExpr(fc.Args[0])
+		if err != nil {
+			return nil, err
+		}
+		sep := ","
+		if sepArg != nil {
+			if s, ok := sepArg.(string); ok {
+				sep = s
+			}
+		}
+
+		var parts []string
+		for i := 1; i < len(fc.Args); i++ {
+			arg, err := evalExpr(fc.Args[i])
+			if err != nil {
+				return nil, err
+			}
+			if arg != nil {
+				if s, ok := arg.(string); ok {
+					parts = append(parts, s)
+				} else {
+					parts = append(parts, fmt.Sprintf("%v", arg))
+				}
+			}
+		}
+		return strings.Join(parts, sep), nil
+
+	// ========== More Date Functions ==========
+	case "WEEKDAY", "DAYOFWEEK":
+		if len(fc.Args) == 0 {
+			return int(time.Now().Weekday()), nil
+		}
+		arg, err := evalExpr(fc.Args[0])
+		if err != nil {
+			return nil, err
+		}
+		if arg == nil {
+			return nil, nil
+		}
+		switch v := arg.(type) {
+		case string:
+			if t, err := time.Parse("2006-01-02", v); err == nil {
+				return int(t.Weekday()), nil
+			}
+			if t, err := time.Parse("2006-01-02 15:04:05", v); err == nil {
+				return int(t.Weekday()), nil
+			}
+			return nil, fmt.Errorf("%s: invalid date format", funcName)
+		case time.Time:
+			return int(v.Weekday()), nil
+		default:
+			return nil, fmt.Errorf("%s requires date argument", funcName)
+		}
+
+	case "QUARTER":
+		if len(fc.Args) == 0 {
+			return (int(time.Now().Month())-1)/3 + 1, nil
+		}
+		arg, err := evalExpr(fc.Args[0])
+		if err != nil {
+			return nil, err
+		}
+		if arg == nil {
+			return nil, nil
+		}
+		var month int
+		switch v := arg.(type) {
+		case string:
+			if t, err := time.Parse("2006-01-02", v); err == nil {
+				month = int(t.Month())
+			} else if t, err := time.Parse("2006-01-02 15:04:05", v); err == nil {
+				month = int(t.Month())
+			} else {
+				return nil, fmt.Errorf("QUARTER: invalid date format")
+			}
+		case time.Time:
+			month = int(v.Month())
+		default:
+			return nil, fmt.Errorf("QUARTER requires date argument")
+		}
+		return (month-1)/3 + 1, nil
+
+	case "LAST_DAY":
+		if len(fc.Args) == 0 {
+			now := time.Now()
+			return time.Date(now.Year(), now.Month()+1, 0, 0, 0, 0, 0, time.UTC).Format("2006-01-02"), nil
+		}
+		arg, err := evalExpr(fc.Args[0])
+		if err != nil {
+			return nil, err
+		}
+		if arg == nil {
+			return nil, nil
+		}
+		var t time.Time
+		switch v := arg.(type) {
+		case string:
+			if parsed, err := time.Parse("2006-01-02", v); err == nil {
+				t = parsed
+			} else if parsed, err := time.Parse("2006-01-02 15:04:05", v); err == nil {
+				t = parsed
+			} else {
+				return nil, fmt.Errorf("LAST_DAY: invalid date format")
+			}
+		case time.Time:
+			t = v
+		default:
+			return nil, fmt.Errorf("LAST_DAY requires date argument")
+		}
+		// Get last day of month
+		lastDay := time.Date(t.Year(), t.Month()+1, 0, 0, 0, 0, 0, time.UTC)
+		return lastDay.Format("2006-01-02"), nil
+
+	// ========== Utility Functions ==========
+	case "IFNULL":
+		if len(fc.Args) < 1 {
+			return nil, fmt.Errorf("IFNULL requires at least 1 argument")
+		}
+		arg, err := evalExpr(fc.Args[0])
+		if err != nil {
+			return nil, err
+		}
+		if arg != nil {
+			return arg, nil
+		}
+		if len(fc.Args) >= 2 {
+			return evalExpr(fc.Args[1])
+		}
+		return nil, nil
+
+	case "REGEXP":
+		if len(fc.Args) < 2 {
+			return nil, fmt.Errorf("REGEXP requires 2 arguments")
+		}
+		strArg, err := evalExpr(fc.Args[0])
+		if err != nil {
+			return nil, err
+		}
+		patternArg, err := evalExpr(fc.Args[1])
+		if err != nil {
+			return nil, err
+		}
+		if strArg == nil || patternArg == nil {
+			return false, nil
+		}
+		str, ok := strArg.(string)
+		if !ok {
+			str = fmt.Sprintf("%v", strArg)
+		}
+		pattern, ok := patternArg.(string)
+		if !ok {
+			pattern = fmt.Sprintf("%v", patternArg)
+		}
+		matched, err := regexp.MatchString(pattern, str)
+		if err != nil {
+			return nil, fmt.Errorf("REGEXP: invalid pattern: %v", err)
+		}
+		return matched, nil
+
+	// ========== More Aggregate Functions ==========
+	// STDDEV and VARIANCE are handled in executeGroupBy
 
 	default:
 		// Check for user-defined function

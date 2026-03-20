@@ -864,6 +864,181 @@ func TestSQL_MoreMathFunctions(t *testing.T) {
 	t.Logf("PI result: %v", result.Rows)
 }
 
+func TestSQL_NewStringFunctions(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "xxsql-str-test-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	engine := storage.NewEngine(tmpDir)
+	if err := engine.Open(); err != nil {
+		t.Fatalf("Failed to open engine: %v", err)
+	}
+	defer engine.Close()
+
+	exec := executor.NewExecutor(engine)
+	exec.SetDatabase("testdb")
+
+	// Test REPEAT
+	result, err := exec.Execute("SELECT REPEAT('ab', 3)")
+	if err != nil {
+		t.Fatalf("REPEAT failed: %v", err)
+	}
+	t.Logf("REPEAT result: %v", result.Rows)
+
+	// Test SPACE
+	result, err = exec.Execute("SELECT SPACE(5)")
+	if err != nil {
+		t.Fatalf("SPACE failed: %v", err)
+	}
+	t.Logf("SPACE result: %v", result.Rows)
+
+	// Test CONCAT_WS
+	result, err = exec.Execute("SELECT CONCAT_WS('-', 'a', 'b', 'c')")
+	if err != nil {
+		t.Fatalf("CONCAT_WS failed: %v", err)
+	}
+	t.Logf("CONCAT_WS result: %v", result.Rows)
+}
+
+func TestSQL_NewDateFunctions(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "xxsql-date-test-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	engine := storage.NewEngine(tmpDir)
+	if err := engine.Open(); err != nil {
+		t.Fatalf("Failed to open engine: %v", err)
+	}
+	defer engine.Close()
+
+	exec := executor.NewExecutor(engine)
+	exec.SetDatabase("testdb")
+
+	// Test WEEKDAY
+	result, err := exec.Execute("SELECT WEEKDAY('2024-03-15')")
+	if err != nil {
+		t.Fatalf("WEEKDAY failed: %v", err)
+	}
+	t.Logf("WEEKDAY result: %v", result.Rows)
+
+	// Test QUARTER
+	result, err = exec.Execute("SELECT QUARTER('2024-03-15')")
+	if err != nil {
+		t.Fatalf("QUARTER failed: %v", err)
+	}
+	t.Logf("QUARTER result: %v", result.Rows)
+
+	// Test LAST_DAY
+	result, err = exec.Execute("SELECT LAST_DAY('2024-02-15')")
+	if err != nil {
+		t.Fatalf("LAST_DAY failed: %v", err)
+	}
+	t.Logf("LAST_DAY result: %v", result.Rows)
+}
+
+func TestSQL_UtilityFunctions2(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "xxsql-util-test-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	engine := storage.NewEngine(tmpDir)
+	if err := engine.Open(); err != nil {
+		t.Fatalf("Failed to open engine: %v", err)
+	}
+	defer engine.Close()
+
+	exec := executor.NewExecutor(engine)
+	exec.SetDatabase("testdb")
+
+	// Test IFNULL
+	result, err := exec.Execute("SELECT IFNULL(NULL, 'default')")
+	if err != nil {
+		t.Fatalf("IFNULL failed: %v", err)
+	}
+	t.Logf("IFNULL result: %v", result.Rows)
+
+	result, err = exec.Execute("SELECT IFNULL('value', 'default')")
+	if err != nil {
+		t.Fatalf("IFNULL failed: %v", err)
+	}
+	t.Logf("IFNULL result: %v", result.Rows)
+
+	// Test REGEXP
+	result, err = exec.Execute("SELECT REGEXP('hello world', '^hello')")
+	if err != nil {
+		t.Fatalf("REGEXP failed: %v", err)
+	}
+	t.Logf("REGEXP result: %v", result.Rows)
+
+	result, err = exec.Execute("SELECT REGEXP('hello world', '^world')")
+	if err != nil {
+		t.Fatalf("REGEXP failed: %v", err)
+	}
+	t.Logf("REGEXP result: %v", result.Rows)
+}
+
+func TestSQL_StatsFunctions(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "xxsql-stats-test-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	engine := storage.NewEngine(tmpDir)
+	if err := engine.Open(); err != nil {
+		t.Fatalf("Failed to open engine: %v", err)
+	}
+	defer engine.Close()
+
+	exec := executor.NewExecutor(engine)
+	exec.SetDatabase("testdb")
+
+	// Create table with numeric values
+	_, _ = exec.Execute("CREATE TABLE stats (id INT, value INT)")
+	exec.Execute("INSERT INTO stats VALUES (1, 10)")
+	exec.Execute("INSERT INTO stats VALUES (2, 20)")
+	exec.Execute("INSERT INTO stats VALUES (3, 30)")
+	exec.Execute("INSERT INTO stats VALUES (4, 40)")
+	exec.Execute("INSERT INTO stats VALUES (5, 50)")
+
+	// Test STDDEV
+	result, err := exec.Execute("SELECT STDDEV(value) FROM stats")
+	if err != nil {
+		t.Fatalf("STDDEV failed: %v", err)
+	}
+	t.Logf("STDDEV result: %v", result.Rows)
+
+	// Test VARIANCE
+	result, err = exec.Execute("SELECT VARIANCE(value) FROM stats")
+	if err != nil {
+		t.Fatalf("VARIANCE failed: %v", err)
+	}
+	t.Logf("VARIANCE result: %v", result.Rows)
+
+	// Test with GROUP BY
+	_, _ = exec.Execute("CREATE TABLE scores (dept VARCHAR(50), score INT)")
+	exec.Execute("INSERT INTO scores VALUES ('A', 80)")
+	exec.Execute("INSERT INTO scores VALUES ('A', 90)")
+	exec.Execute("INSERT INTO scores VALUES ('A', 100)")
+	exec.Execute("INSERT INTO scores VALUES ('B', 70)")
+	exec.Execute("INSERT INTO scores VALUES ('B', 85)")
+
+	result, err = exec.Execute("SELECT dept, STDDEV(score), VARIANCE(score) FROM scores GROUP BY dept")
+	if err != nil {
+		t.Fatalf("STDDEV/VARIANCE with GROUP BY failed: %v", err)
+	}
+	t.Logf("STDDEV/VARIANCE with GROUP BY result: %d rows", result.RowCount)
+	for i, row := range result.Rows {
+		t.Logf("  Row %d: %v", i, row)
+	}
+}
+
 func TestSQL_OrderByLimit(t *testing.T) {
 	tmpDir, err := os.MkdirTemp("", "xxsql-order-test-*")
 	if err != nil {
