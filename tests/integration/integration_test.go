@@ -489,6 +489,120 @@ func TestSQL_AggregateFunctions(t *testing.T) {
 	t.Logf("AVG result: %d rows", result.RowCount)
 }
 
+func TestSQL_MathFunctions(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "xxsql-math-test-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	engine := storage.NewEngine(tmpDir)
+	if err := engine.Open(); err != nil {
+		t.Fatalf("Failed to open engine: %v", err)
+	}
+	defer engine.Close()
+
+	exec := executor.NewExecutor(engine)
+	exec.SetDatabase("testdb")
+
+	// Create table with numeric values
+	_, _ = exec.Execute("CREATE TABLE math_test (id INT, val FLOAT)")
+	exec.Execute("INSERT INTO math_test VALUES (1, -10.5)")
+	exec.Execute("INSERT INTO math_test VALUES (2, 3.7)")
+	exec.Execute("INSERT INTO math_test VALUES (3, 16.0)")
+
+	// Test ABS
+	result, err := exec.Execute("SELECT ABS(val) FROM math_test WHERE id = 1")
+	if err != nil {
+		t.Fatalf("ABS failed: %v", err)
+	}
+	if result.RowCount != 1 {
+		t.Errorf("ABS: expected 1 row, got %d", result.RowCount)
+	}
+	t.Logf("ABS result: %v", result.Rows)
+
+	// Test ROUND
+	result, err = exec.Execute("SELECT ROUND(val, 1) FROM math_test WHERE id = 2")
+	if err != nil {
+		t.Fatalf("ROUND failed: %v", err)
+	}
+	t.Logf("ROUND result: %v", result.Rows)
+
+	// Test CEIL
+	result, err = exec.Execute("SELECT CEIL(val) FROM math_test WHERE id = 2")
+	if err != nil {
+		t.Fatalf("CEIL failed: %v", err)
+	}
+	t.Logf("CEIL result: %v", result.Rows)
+
+	// Test FLOOR
+	result, err = exec.Execute("SELECT FLOOR(val) FROM math_test WHERE id = 2")
+	if err != nil {
+		t.Fatalf("FLOOR failed: %v", err)
+	}
+	t.Logf("FLOOR result: %v", result.Rows)
+
+	// Test SQRT
+	result, err = exec.Execute("SELECT SQRT(val) FROM math_test WHERE id = 3")
+	if err != nil {
+		t.Fatalf("SQRT failed: %v", err)
+	}
+	t.Logf("SQRT result: %v", result.Rows)
+
+	// Test POWER
+	result, err = exec.Execute("SELECT POWER(val, 2) FROM math_test WHERE id = 3")
+	if err != nil {
+		t.Fatalf("POWER failed: %v", err)
+	}
+	t.Logf("POWER result: %v", result.Rows)
+
+	// Test MOD
+	exec.Execute("INSERT INTO math_test VALUES (4, 17.0)")
+	result, err = exec.Execute("SELECT MOD(val, 5) FROM math_test WHERE id = 4")
+	if err != nil {
+		t.Fatalf("MOD failed: %v", err)
+	}
+	t.Logf("MOD result: %v", result.Rows)
+}
+
+func TestSQL_GroupConcat(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "xxsql-groupconcat-test-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	engine := storage.NewEngine(tmpDir)
+	if err := engine.Open(); err != nil {
+		t.Fatalf("Failed to open engine: %v", err)
+	}
+	defer engine.Close()
+
+	exec := executor.NewExecutor(engine)
+	exec.SetDatabase("testdb")
+
+	// Create table
+	_, _ = exec.Execute("CREATE TABLE tags (id INT, category VARCHAR(50), tag_name VARCHAR(50))")
+	exec.Execute("INSERT INTO tags VALUES (1, 'color', 'red')")
+	exec.Execute("INSERT INTO tags VALUES (2, 'color', 'blue')")
+	exec.Execute("INSERT INTO tags VALUES (3, 'color', 'green')")
+	exec.Execute("INSERT INTO tags VALUES (4, 'size', 'small')")
+	exec.Execute("INSERT INTO tags VALUES (5, 'size', 'large')")
+
+	// Test GROUP_CONCAT
+	result, err := exec.Execute("SELECT category, GROUP_CONCAT(tag_name) FROM tags GROUP BY category")
+	if err != nil {
+		t.Fatalf("GROUP_CONCAT failed: %v", err)
+	}
+	if result.RowCount != 2 {
+		t.Errorf("GROUP_CONCAT: expected 2 rows, got %d", result.RowCount)
+	}
+	t.Logf("GROUP_CONCAT result: %d rows", result.RowCount)
+	for i, row := range result.Rows {
+		t.Logf("  Row %d: %v", i, row)
+	}
+}
+
 func TestSQL_OrderByLimit(t *testing.T) {
 	tmpDir, err := os.MkdirTemp("", "xxsql-order-test-*")
 	if err != nil {

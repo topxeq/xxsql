@@ -3,6 +3,7 @@ package executor
 
 import (
 	"fmt"
+	"math"
 	"regexp"
 	"sort"
 	"strconv"
@@ -401,7 +402,7 @@ func (e *Executor) executeSelect(stmt *sql.SelectStmt) (*Result, error) {
 			}
 
 			// Check if it's an aggregate function
-			isAggregate := funcName == "COUNT" || funcName == "SUM" || funcName == "AVG" || funcName == "MIN" || funcName == "MAX"
+			isAggregate := funcName == "COUNT" || funcName == "SUM" || funcName == "AVG" || funcName == "MIN" || funcName == "MAX" || funcName == "GROUP_CONCAT"
 
 			// Determine result type
 			resultType := "VARCHAR"
@@ -409,6 +410,8 @@ func (e *Executor) executeSelect(stmt *sql.SelectStmt) (*Result, error) {
 				resultType = "INT"
 				if funcName == "AVG" {
 					resultType = "FLOAT"
+				} else if funcName == "GROUP_CONCAT" {
+					resultType = "VARCHAR"
 				}
 			}
 
@@ -1346,6 +1349,23 @@ func (e *Executor) executeGroupBy(stmt *sql.SelectStmt, rows []*row.Row, resultC
 				} else {
 					resultRow[agg.index] = nil
 				}
+			case "GROUP_CONCAT":
+				// GROUP_CONCAT with optional SEPARATOR and ORDER BY
+				// Syntax: GROUP_CONCAT(expr [SEPARATOR str] [ORDER BY col])
+				var parts []string
+				for _, r := range groupRows {
+					if agg.arg != "" {
+						for j, col := range tblInfo.Columns {
+							if strings.ToLower(col.Name) == agg.arg {
+								if j < len(r.Values) && !r.Values[j].Null {
+									parts = append(parts, fmt.Sprintf("%v", e.valueToInterface(r.Values[j])))
+								}
+							}
+						}
+					}
+				}
+				// Default separator is comma
+				resultRow[agg.index] = strings.Join(parts, ",")
 			default:
 				resultRow[agg.index] = nil
 			}
@@ -4803,6 +4823,238 @@ func (e *Executor) evaluateFunction(fc *sql.FunctionCall, r *row.Row, columnMap 
 			return e.database, nil
 		}
 		return "", nil
+
+	// Math functions
+	case "ABS":
+		if len(fc.Args) == 0 {
+			return nil, fmt.Errorf("ABS requires 1 argument")
+		}
+		arg, err := evalExpr(fc.Args[0])
+		if err != nil {
+			return nil, err
+		}
+		if arg == nil {
+			return nil, nil
+		}
+		switch v := arg.(type) {
+		case int:
+			if v < 0 {
+				return -v, nil
+			}
+			return v, nil
+		case int64:
+			if v < 0 {
+				return -v, nil
+			}
+			return v, nil
+		case float64:
+			if v < 0 {
+				return -v, nil
+			}
+			return v, nil
+		default:
+			return nil, fmt.Errorf("ABS requires numeric argument")
+		}
+
+	case "ROUND":
+		if len(fc.Args) == 0 {
+			return nil, fmt.Errorf("ROUND requires at least 1 argument")
+		}
+		arg, err := evalExpr(fc.Args[0])
+		if err != nil {
+			return nil, err
+		}
+		if arg == nil {
+			return nil, nil
+		}
+
+		// Get the value to round
+		var val float64
+		switch v := arg.(type) {
+		case int:
+			val = float64(v)
+		case int64:
+			val = float64(v)
+		case float64:
+			val = v
+		default:
+			return nil, fmt.Errorf("ROUND requires numeric argument")
+		}
+
+		// Get precision (default 0)
+		precision := 0
+		if len(fc.Args) >= 2 {
+			precArg, err := evalExpr(fc.Args[1])
+			if err != nil {
+				return nil, err
+			}
+			switch v := precArg.(type) {
+			case int:
+				precision = v
+			case int64:
+				precision = int(v)
+			case float64:
+				precision = int(v)
+			}
+		}
+
+		// Round using math.Round with precision
+		multiplier := math.Pow(10, float64(precision))
+		result := math.Round(val*multiplier) / multiplier
+
+		// Return int64 if precision is 0, otherwise float64
+		if precision == 0 {
+			return int64(result), nil
+		}
+		return result, nil
+
+	case "CEIL", "CEILING":
+		if len(fc.Args) == 0 {
+			return nil, fmt.Errorf("%s requires 1 argument", funcName)
+		}
+		arg, err := evalExpr(fc.Args[0])
+		if err != nil {
+			return nil, err
+		}
+		if arg == nil {
+			return nil, nil
+		}
+		switch v := arg.(type) {
+		case int:
+			return int64(v), nil
+		case int64:
+			return v, nil
+		case float64:
+			return int64(math.Ceil(v)), nil
+		default:
+			return nil, fmt.Errorf("%s requires numeric argument", funcName)
+		}
+
+	case "FLOOR":
+		if len(fc.Args) == 0 {
+			return nil, fmt.Errorf("FLOOR requires 1 argument")
+		}
+		arg, err := evalExpr(fc.Args[0])
+		if err != nil {
+			return nil, err
+		}
+		if arg == nil {
+			return nil, nil
+		}
+		switch v := arg.(type) {
+		case int:
+			return int64(v), nil
+		case int64:
+			return v, nil
+		case float64:
+			return int64(math.Floor(v)), nil
+		default:
+			return nil, fmt.Errorf("FLOOR requires numeric argument")
+		}
+
+	case "MOD":
+		if len(fc.Args) < 2 {
+			return nil, fmt.Errorf("MOD requires 2 arguments")
+		}
+		arg1, err := evalExpr(fc.Args[0])
+		if err != nil {
+			return nil, err
+		}
+		arg2, err := evalExpr(fc.Args[1])
+		if err != nil {
+			return nil, err
+		}
+		if arg1 == nil || arg2 == nil {
+			return nil, nil
+		}
+
+		var dividend, divisor float64
+		switch v := arg1.(type) {
+		case int:
+			dividend = float64(v)
+		case int64:
+			dividend = float64(v)
+		case float64:
+			dividend = v
+		}
+		switch v := arg2.(type) {
+		case int:
+			divisor = float64(v)
+		case int64:
+			divisor = float64(v)
+		case float64:
+			divisor = v
+		}
+
+		if divisor == 0 {
+			return nil, fmt.Errorf("division by zero")
+		}
+		return int64(int(dividend) % int(divisor)), nil
+
+	case "POWER", "POW":
+		if len(fc.Args) < 2 {
+			return nil, fmt.Errorf("%s requires 2 arguments", funcName)
+		}
+		base, err := evalExpr(fc.Args[0])
+		if err != nil {
+			return nil, err
+		}
+		exp, err := evalExpr(fc.Args[1])
+		if err != nil {
+			return nil, err
+		}
+		if base == nil || exp == nil {
+			return nil, nil
+		}
+
+		var baseVal, expVal float64
+		switch v := base.(type) {
+		case int:
+			baseVal = float64(v)
+		case int64:
+			baseVal = float64(v)
+		case float64:
+			baseVal = v
+		}
+		switch v := exp.(type) {
+		case int:
+			expVal = float64(v)
+		case int64:
+			expVal = float64(v)
+		case float64:
+			expVal = v
+		}
+
+		return math.Pow(baseVal, expVal), nil
+
+	case "SQRT":
+		if len(fc.Args) == 0 {
+			return nil, fmt.Errorf("SQRT requires 1 argument")
+		}
+		arg, err := evalExpr(fc.Args[0])
+		if err != nil {
+			return nil, err
+		}
+		if arg == nil {
+			return nil, nil
+		}
+
+		var val float64
+		switch v := arg.(type) {
+		case int:
+			val = float64(v)
+		case int64:
+			val = float64(v)
+		case float64:
+			val = v
+		default:
+			return nil, fmt.Errorf("SQRT requires numeric argument")
+		}
+
+		if val < 0 {
+			return nil, fmt.Errorf("SQRT of negative number")
+		}
+		return math.Sqrt(val), nil
 
 	default:
 		// Check for user-defined function

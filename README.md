@@ -127,9 +127,9 @@ The following comparison highlights key differences between XxSql and SQLite acr
 
 | Function Category | SQLite | XxSql |
 |-------------------|--------|-------|
-| **Aggregate** | COUNT, SUM, AVG, MIN, MAX, GROUP_CONCAT | COUNT, SUM, AVG, MIN, MAX |
+| **Aggregate** | COUNT, SUM, AVG, MIN, MAX, GROUP_CONCAT | COUNT, SUM, AVG, MIN, MAX, GROUP_CONCAT |
 | **String** | UPPER, LOWER, LENGTH, SUBSTR, REPLACE, etc. | UPPER, LOWER, LENGTH, SUBSTRING, CONCAT |
-| **Math** | ABS, ROUND, CEIL, FLOOR, etc. | Basic arithmetic operators |
+| **Math** | ABS, ROUND, CEIL, FLOOR, etc. | ABS, ROUND, CEIL, FLOOR, MOD, POWER, SQRT |
 | **Date/Time** | date(), time(), datetime(), strftime() | NOW, CURRENT_TIMESTAMP |
 | **Type Conversion** | CAST, typeof() | CAST |
 | **NULL Handling** | COALESCE, NULLIF, IFNULL | COALESCE, NULLIF |
@@ -288,7 +288,8 @@ The following comparison highlights key differences between XxSql and SQLite acr
 - **DML** - SELECT, INSERT, UPDATE, DELETE, TRUNCATE
 - **JOINs** - INNER, LEFT, RIGHT, CROSS, FULL OUTER JOIN with multiple table support
 - **UNION** - UNION and UNION ALL with duplicate elimination
-- **Aggregates** - COUNT, SUM, AVG, MIN, MAX
+- **Aggregates** - COUNT, SUM, AVG, MIN, MAX, GROUP_CONCAT
+- **Math** - ABS, ROUND, CEIL, FLOOR, MOD, POWER, SQRT
 - **Subqueries** - Comprehensive subquery support (see details below)
 - **Constraints** - PRIMARY KEY, UNIQUE, NOT NULL, DEFAULT, CHECK
 
