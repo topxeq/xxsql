@@ -36,6 +36,229 @@ If you need:
 
 Then XxSql might be the right choice.
 
+## XxSql vs SQLite Comparison
+
+The following comparison highlights key differences between XxSql and SQLite across various aspects (excluding performance benchmarks).
+
+### Overview
+
+| Aspect | SQLite | XxSql |
+|--------|--------|-------|
+| **Implementation Language** | C | Pure Go (no CGO) |
+| **Deployment Model** | Embedded library | Standalone server |
+| **Distribution** | Single database file | Single binary executable |
+| **Access Method** | In-process API calls | Network protocol (MySQL-compatible) |
+| **License** | Public Domain | MIT |
+
+### Architecture & Deployment
+
+| Feature | SQLite | XxSql |
+|---------|--------|-------|
+| **Runtime Model** | Embedded in application | Independent server process |
+| **Database Files** | Single `.db` file | Multiple files (.xdb, .xwal, .xmeta, .xidx) |
+| **Configuration** | Pragma statements | JSON configuration file |
+| **Startup** | No startup required | Server startup with config options |
+| **Process Isolation** | Same process as application | Separate process, better fault isolation |
+
+### Concurrency & Connections
+
+| Feature | SQLite | XxSql |
+|---------|--------|-------|
+| **Concurrency Model** | Database-level locking | Multi-granularity locking (global, table, page, row) |
+| **Write Concurrency** | Single writer at a time | Multiple concurrent writers |
+| **Read-Write Conflict** | Writes block all reads | Reads and writes can proceed concurrently |
+| **Max Connections** | Limited by file handles | 100+ simultaneous connections |
+| **Connection Pooling** | Not applicable | Built-in connection pool |
+| **Deadlock Detection** | No | Wait-for graph algorithm |
+
+### Protocol & Client Access
+
+| Feature | SQLite | XxSql |
+|---------|--------|-------|
+| **Primary Access** | C API, language bindings | MySQL protocol (TCP) |
+| **Network Access** | Requires wrapper/extension | Built-in network server |
+| **Protocol Compatibility** | Native SQLite format | MySQL wire protocol compatible |
+| **Client Libraries** | Language-specific drivers | Any MySQL client/driver |
+| **Multiple Clients** | Requires careful coordination | Native multi-client support |
+| **Private Protocol** | N/A | Custom binary protocol (port 9527) |
+
+### SQL Feature Support
+
+| Feature | SQLite | XxSql |
+|---------|--------|-------|
+| **DDL** | Full CREATE/ALTER/DROP | CREATE/ALTER/DROP TABLE, INDEX |
+| **DML** | Full INSERT/UPDATE/DELETE/SELECT | INSERT/UPDATE/DELETE/SELECT/TRUNCATE |
+| **JOIN Types** | All standard types | INNER, LEFT, RIGHT, CROSS, FULL OUTER |
+| **UNION** | UNION/UNION ALL/INTERSECT/EXCEPT | UNION/UNION ALL |
+| **Subqueries** | Full support (all locations) | SELECT list, WHERE, HAVING, FROM clause |
+| **Correlated Subqueries** | Yes | Yes |
+| **Window Functions** | Yes | No |
+| **CTE (WITH clause)** | Yes (recursive too) | No |
+| **GROUP BY** | Yes | Yes |
+| **HAVING** | Yes | Yes (with subquery support) |
+| **ORDER BY** | Yes | Yes |
+| **LIMIT/OFFSET** | Yes | Yes |
+| **DISTINCT** | Yes | Yes |
+| **CASE/WHEN** | Yes | Yes |
+| **CAST** | Yes | Yes |
+| **CHECK Constraints** | Yes | Yes |
+| **Foreign Keys** | Yes (optional enable) | Yes |
+| **Triggers** | Yes | No |
+| **Views** | Yes | No |
+| **Stored Procedures** | No | No |
+| **User-Defined Functions** | C/Rust/Python extensions | SQL-based UDFs |
+
+### Data Types
+
+| Type Category | SQLite | XxSql |
+|---------------|--------|-------|
+| **Type System** | Dynamic (affinity-based) | Static (declared types) |
+| **Auto-increment** | INTEGER PRIMARY KEY | SEQ type |
+| **Integer Types** | INTEGER (various sizes) | TINYINT, SMALLINT, INT, BIGINT |
+| **Floating Point** | REAL | FLOAT, DOUBLE |
+| **Decimal** | DECIMAL (via extension) | DECIMAL(p,s), NUMERIC(p,s) |
+| **String Types** | TEXT | CHAR, VARCHAR, TEXT |
+| **Binary** | BLOB | BLOB |
+| **Boolean** | INTEGER (0/1) | BOOL, BOOLEAN |
+| **Date/Time** | TEXT/REAL/INTEGER | DATE, TIME, DATETIME, TIMESTAMP |
+| **Array/JSON** | JSON1 extension | Not supported |
+
+### Built-in Functions
+
+| Function Category | SQLite | XxSql |
+|-------------------|--------|-------|
+| **Aggregate** | COUNT, SUM, AVG, MIN, MAX, GROUP_CONCAT | COUNT, SUM, AVG, MIN, MAX |
+| **String** | UPPER, LOWER, LENGTH, SUBSTR, REPLACE, etc. | UPPER, LOWER, LENGTH, SUBSTRING, CONCAT |
+| **Math** | ABS, ROUND, CEIL, FLOOR, etc. | Basic arithmetic operators |
+| **Date/Time** | date(), time(), datetime(), strftime() | NOW, CURRENT_TIMESTAMP |
+| **Type Conversion** | CAST, typeof() | CAST |
+| **NULL Handling** | COALESCE, NULLIF, IFNULL | COALESCE, NULLIF |
+| **Conditional** | CASE, IIF() | CASE/WHEN, IF expression |
+| **BLOB Operations** | hex(), zeroblob() | HEX(), UNHEX(), LENGTH() |
+
+### Storage Engine
+
+| Feature | SQLite | XxSql |
+|---------|--------|-------|
+| **Index Structure** | B-tree | B+ tree |
+| **Page Size** | Configurable (512-65536) | 4096 bytes (configurable) |
+| **Page Cache** | Built-in pager | LRU buffer pool |
+| **Write-Ahead Log** | Optional WAL mode | Always-on WAL |
+| **Checkpoint** | Automatic/manual | Automatic checkpoints |
+| **Crash Recovery** | Journal/WAL rollback | ARIES-style recovery |
+| **Compression** | Not built-in | Backup compression available |
+
+### Transaction Support
+
+| Feature | SQLite | XxSql |
+|---------|--------|-------|
+| **ACID Compliance** | Yes | Yes |
+| **Transaction Types** | BEGIN, BEGIN IMMEDIATE, BEGIN EXCLUSIVE | Auto-commit per statement |
+| **Isolation Levels** | Serializable (default) | Statement-level |
+| **Savepoints** | Yes | No |
+| **Nested Transactions** | Via savepoints | No |
+| **Two-Phase Commit** | No | No |
+| **Lock Escalation** | Database-level | Row → Page → Table → Global |
+
+### Security Features
+
+| Feature | SQLite | XxSql |
+|---------|--------|-------|
+| **Authentication** | No (file-based) | Yes (username/password) |
+| **Role-Based Access** | No | Yes (Admin, User roles) |
+| **Table Permissions** | No | GRANT/REVOKE at table level |
+| **Row-Level Security** | No | No |
+| **Encryption** | SEE (paid) or SQLCipher | TLS connections (optional) |
+| **Audit Logging** | No | Yes (configurable) |
+| **Rate Limiting** | No | Yes (brute force protection) |
+| **IP Access Control** | No | Yes (whitelist/blacklist) |
+| **Password Policy** | No | Yes (configurable) |
+
+### Administration & Tools
+
+| Feature | SQLite | XxSql |
+|---------|--------|-------|
+| **CLI Tool** | sqlite3 command-line | xxsqlc CLI client |
+| **Web Interface** | Third-party tools | Built-in web UI |
+| **Backup** | .backup command, file copy | BACKUP DATABASE command |
+| **Restore** | File copy | RESTORE DATABASE command |
+| **Monitoring** | PRAGMA commands | REST API, web dashboard |
+| **Log Management** | N/A | Configurable log levels, rotation |
+| **Configuration** | PRAGMA statements | JSON configuration file |
+| **Status/Metrics** | PRAGMA commands | REST API endpoints |
+
+### Development Interfaces
+
+| Interface | SQLite | XxSql |
+|-----------|--------|-------|
+| **Native API** | C API | Go driver (database/sql) |
+| **Language Bindings** | 40+ languages | Any MySQL driver |
+| **Python** | sqlite3 module | mysql-connector, PyMySQL |
+| **Java** | JDBC (SQLite) | JDBC (MySQL driver) |
+| **Node.js** | better-sqlite3, sqlite3 | mysql, mysql2 |
+| **Go** | go-sqlite3 (CGO) | Native driver (pure Go) |
+| **Rust** | rusqlite | mysql crate |
+| **REST API** | N/A | Built-in HTTP API |
+| **ODBC** | SQLite ODBC driver | MySQL ODBC driver |
+
+### Cross-Platform Support
+
+| Platform | SQLite | XxSql |
+|----------|--------|-------|
+| **Linux** | x86, x64, ARM, ARM64 | x64, ARM64 |
+| **macOS** | x64 (Intel), ARM64 (Apple Silicon) | x64 (Intel), ARM64 (Apple Silicon) |
+| **Windows** | x86, x64 | x64 |
+| **FreeBSD** | Yes | Not tested |
+| **Android** | Yes (built-in) | Possible (Go supports it) |
+| **iOS** | Yes (built-in) | Possible (Go supports it) |
+| **WebAssembly** | sql.js | Possible (Go supports WASM) |
+
+### Extensibility
+
+| Feature | SQLite | XxSql |
+|---------|--------|-------|
+| **User-Defined Functions** | C/Rust extensions | SQL-based UDFs |
+| **Custom Aggregates** | C extensions | No |
+| **Virtual Tables** | Yes | No |
+| **Loadable Extensions** | Yes | No |
+| **Full-Text Search** | FTS5 extension | No |
+| **Spatial Index** | R-Tree extension | No |
+| **JSON Support** | JSON1 extension | No |
+
+### Use Cases
+
+| Scenario | SQLite | XxSql |
+|----------|--------|-------|
+| **Embedded Applications** | ✅ Excellent | ❌ Server-based |
+| **Mobile Apps** | ✅ Built-in | ⚠️ Requires server |
+| **Desktop Apps** | ✅ Ideal | ⚠️ Requires server setup |
+| **Web Applications** | ⚠️ Limited concurrency | ✅ Good concurrency |
+| **Microservices** | ⚠️ Single process | ✅ Network accessible |
+| **Development/Testing** | ✅ Zero config | ⚠️ Server setup needed |
+| **Small-Medium Web Services** | ⚠️ Concurrency limits | ✅ Designed for this |
+| **Enterprise Applications** | ❌ Limited scalability | ⚠️ Missing some features |
+| **Real-time Applications** | ❌ Write blocking | ✅ Concurrent writes |
+| **Multi-tenant SaaS** | ❌ File-per-tenant | ⚠️ Possible with schema |
+
+### Summary
+
+**Choose SQLite when:**
+- Building embedded or mobile applications
+- Need zero-configuration database in a single file
+- Application runs in a single process
+- File-based deployment is required
+- Need maximum SQL feature completeness
+- Working with desktop or mobile apps
+
+**Choose XxSql when:**
+- Building web services requiring concurrent access
+- Need MySQL protocol compatibility
+- Multiple clients need simultaneous access
+- Want Go-based implementation without CGO
+- Need built-in authentication and permissions
+- Want built-in REST API and web management
+- Need fine-grained locking for concurrent operations
+
 ## Features
 
 ### Core Features
