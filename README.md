@@ -78,7 +78,7 @@ The following comparison highlights key differences between XxSql and SQLite acr
 | **Primary Access** | C API, language bindings | MySQL protocol (TCP) |
 | **Network Access** | Requires wrapper/extension | Built-in network server |
 | **Protocol Compatibility** | Native SQLite format | MySQL wire protocol compatible |
-| **Client Libraries** | Language-specific drivers | Any MySQL client/driver |
+| **Client Libraries** | Language-specific drivers | Native Go driver + Any MySQL client/driver |
 | **Multiple Clients** | Requires careful coordination | Native multi-client support |
 | **Private Protocol** | N/A | Custom binary protocol (port 9527) |
 
@@ -191,15 +191,17 @@ The following comparison highlights key differences between XxSql and SQLite acr
 
 | Interface | SQLite | XxSql |
 |-----------|--------|-------|
-| **Native API** | C API | Go driver (database/sql) |
-| **Language Bindings** | 40+ languages | Any MySQL driver |
+| **Native API** | C API | Native Go driver (`github.com/topxeq/xxsql/pkg/xxsql`) |
+| **Driver Protocol** | File-based | MySQL wire protocol |
+| **Language Bindings** | 40+ languages | Any MySQL driver (40+ languages) |
 | **Python** | sqlite3 module | mysql-connector, PyMySQL |
 | **Java** | JDBC (SQLite) | JDBC (MySQL driver) |
 | **Node.js** | better-sqlite3, sqlite3 | mysql, mysql2 |
-| **Go** | go-sqlite3 (CGO) | Native driver (pure Go) |
+| **Go** | go-sqlite3 (CGO) | Native driver (pure Go, no CGO) |
 | **Rust** | rusqlite | mysql crate |
 | **REST API** | N/A | Built-in HTTP API |
 | **ODBC** | SQLite ODBC driver | MySQL ODBC driver |
+| **Private Protocol** | N/A | Binary protocol on port 9527 (for internal use) |
 
 ### Cross-Platform Support
 
