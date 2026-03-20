@@ -1072,3 +1072,134 @@ func TestExecutor_ScalarSubquery(t *testing.T) {
 
 	t.Logf("Scalar subquery WHERE result: %v", result2.Rows)
 }
+
+func TestExecutor_SelectListSubquery(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "select_list_subquery_test")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	engine := storage.NewEngine(tmpDir)
+	if err := engine.Open(); err != nil {
+		t.Fatalf("Failed to open engine: %v", err)
+	}
+	defer engine.Close()
+
+	exec := executor.NewExecutor(engine)
+
+	// Create and populate tables
+	exec.Execute("CREATE TABLE users (id INT, name VARCHAR)")
+	exec.Execute("INSERT INTO users (id, name) VALUES (1, 'Alice')")
+	exec.Execute("INSERT INTO users (id, name) VALUES (2, 'Bob')")
+
+	exec.Execute("CREATE TABLE orders (id INT, user_id INT, amount INT)")
+	exec.Execute("INSERT INTO orders (id, user_id, amount) VALUES (1, 1, 100)")
+	exec.Execute("INSERT INTO orders (id, user_id, amount) VALUES (2, 1, 200)")
+	exec.Execute("INSERT INTO orders (id, user_id, amount) VALUES (3, 2, 150)")
+
+	// Test 1: Scalar subquery with aggregate
+	result, err := exec.Execute("SELECT (SELECT COUNT(*) FROM users) AS user_count")
+	if err != nil {
+		t.Fatalf("SELECT list subquery failed: %v", err)
+	}
+	if len(result.Rows) != 1 {
+		t.Errorf("Expected 1 row, got %d", len(result.Rows))
+	}
+	if len(result.Rows) > 0 && len(result.Rows[0]) > 0 {
+		countVal := result.Rows[0][0]
+		// Handle both int and int64
+		var count int64
+		switch v := countVal.(type) {
+		case int:
+			count = int64(v)
+		case int64:
+			count = v
+		}
+		if count != 2 {
+			t.Errorf("Expected user_count = 2, got %v", countVal)
+		}
+	}
+	t.Logf("User count: %v", result.Rows)
+
+	// Test 2: Multiple subqueries in SELECT list
+	result2, err := exec.Execute("SELECT (SELECT MIN(amount) FROM orders) AS min_amt, (SELECT MAX(amount) FROM orders) AS max_amt")
+	if err != nil {
+		t.Fatalf("Multiple SELECT list subqueries failed: %v", err)
+	}
+	if len(result2.Rows) != 1 {
+		t.Errorf("Expected 1 row, got %d", len(result2.Rows))
+	}
+	t.Logf("Min/Max amounts: %v", result2.Rows)
+
+	// Test 3: Subquery with regular column
+	result3, err := exec.Execute("SELECT id, name, (SELECT SUM(amount) FROM orders WHERE user_id = users.id) AS total FROM users")
+	if err != nil {
+		t.Fatalf("Correlated SELECT list subquery failed: %v", err)
+	}
+	if len(result3.Rows) != 2 {
+		t.Errorf("Expected 2 rows, got %d", len(result3.Rows))
+	}
+	t.Logf("Correlated subquery result: %v", result3.Rows)
+}
+
+func TestExecutor_HavingSubquery(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "having_subquery_test")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	engine := storage.NewEngine(tmpDir)
+	if err := engine.Open(); err != nil {
+		t.Fatalf("Failed to open engine: %v", err)
+	}
+	defer engine.Close()
+
+	exec := executor.NewExecutor(engine)
+
+	// Create and populate tables
+	exec.Execute("CREATE TABLE orders (id INT, customer_id INT, amount INT)")
+	exec.Execute("INSERT INTO orders (id, customer_id, amount) VALUES (1, 1, 100)")
+	exec.Execute("INSERT INTO orders (id, customer_id, amount) VALUES (2, 1, 200)")
+	exec.Execute("INSERT INTO orders (id, customer_id, amount) VALUES (3, 2, 150)")
+	exec.Execute("INSERT INTO orders (id, customer_id, amount) VALUES (4, 3, 300)")
+	exec.Execute("INSERT INTO orders (id, customer_id, amount) VALUES (5, 3, 50)")
+
+	// Test 1: HAVING with aggregate comparison
+	result, err := exec.Execute("SELECT customer_id, SUM(amount) AS total FROM orders GROUP BY customer_id HAVING SUM(amount) > 250")
+	if err != nil {
+		t.Fatalf("HAVING query failed: %v", err)
+	}
+	if len(result.Rows) != 2 {
+		t.Errorf("Expected 2 rows (customer 1 and 3), got %d", len(result.Rows))
+	}
+	t.Logf("HAVING aggregate result: %v", result.Rows)
+
+	// Test 2: HAVING with scalar subquery
+	result2, err := exec.Execute("SELECT customer_id, COUNT(*) AS order_count FROM orders GROUP BY customer_id HAVING COUNT(*) > (SELECT COUNT(*) FROM orders WHERE customer_id = 2)")
+	if err != nil {
+		t.Fatalf("HAVING with subquery failed: %v", err)
+	}
+	// Customer 1 has 2 orders, Customer 3 has 2 orders
+	// Customer 2 has 1 order, so subquery returns 1
+	// We expect customers with more than 1 order: customers 1 and 3
+	if len(result2.Rows) != 2 {
+		t.Errorf("Expected 2 rows, got %d", len(result2.Rows))
+	}
+	t.Logf("HAVING subquery result: %v", result2.Rows)
+
+	// Test 3: HAVING with IN subquery
+	result3, err := exec.Execute("SELECT customer_id, SUM(amount) AS total FROM orders GROUP BY customer_id HAVING customer_id IN (SELECT id FROM orders WHERE amount > 200)")
+	if err != nil {
+		t.Fatalf("HAVING with IN subquery failed: %v", err)
+	}
+	t.Logf("HAVING IN subquery result: %v", result3.Rows)
+
+	// Test 4: HAVING with EXISTS - simplified without table aliases
+	result4, err := exec.Execute("SELECT customer_id, SUM(amount) AS total FROM orders GROUP BY customer_id HAVING EXISTS (SELECT 1 FROM orders WHERE orders.customer_id = customer_id AND orders.amount > 150)")
+	if err != nil {
+		t.Fatalf("HAVING with EXISTS failed: %v", err)
+	}
+	t.Logf("HAVING EXISTS result: %v", result4.Rows)
+}

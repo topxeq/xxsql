@@ -87,7 +87,17 @@ type Executor struct {
 	udfManager    *UDFManager
 	outerContext  map[string]interface{} // For correlated subqueries
 	currentTable  string                 // Current table being queried (for outer context)
+	subqueryCache map[string]interface{} // Cache for non-correlated subquery results (optimization)
 }
+
+// Note on Subquery Optimization:
+// The current implementation evaluates correlated subqueries by re-executing the subquery
+// for each row from the outer query. This works correctly but may not be optimal for
+// large datasets. Future optimizations could include:
+// 1. Decorrelation: Transform correlated subqueries into JOINs where possible
+// 2. Result caching: Cache results of non-correlated subqueries
+// 3. Index utilization: Use indexes for faster subquery lookups
+// The subqueryCache field is reserved for implementing result caching in the future.
 
 // AuthManager interface for auth operations.
 type AuthManager interface {
@@ -107,7 +117,8 @@ type AuthManager interface {
 // NewExecutor creates a new executor.
 func NewExecutor(engine *storage.Engine) *Executor {
 	return &Executor{
-		engine: engine,
+		engine:        engine,
+		subqueryCache: make(map[string]interface{}),
 	}
 }
 
@@ -407,6 +418,14 @@ func (e *Executor) executeSelect(stmt *sql.SelectStmt) (*Result, error) {
 				colIndices = append(colIndices, -1)
 				funcExprs = append(funcExprs, expr)
 			}
+		case *sql.SubqueryExpr, *sql.ScalarSubquery:
+			// Subquery in SELECT list - will be evaluated per row for correlated support
+			colIndices = append(colIndices, -1)
+			funcExprs = append(funcExprs, expr)
+			resultCols = append(resultCols, ColumnInfo{
+				Name: "subquery",
+				Type: "VARCHAR",
+			})
 		}
 	}
 
@@ -909,11 +928,445 @@ func (e *Executor) executeGroupBy(stmt *sql.SelectStmt, rows []*row.Row, resultC
 			}
 		}
 
+		// Apply HAVING clause if present
+		if stmt.Having != nil {
+			match, err := e.evaluateHaving(stmt.Having, resultRow, resultCols, aggregateFuncs, groupRows, tblInfo)
+			if err != nil {
+				return nil, fmt.Errorf("HAVING clause error: %w", err)
+			}
+			if !match {
+				continue // Skip this group
+			}
+		}
+
 		result.Rows = append(result.Rows, resultRow)
 	}
 
 	result.RowCount = len(result.Rows)
 	return result, nil
+}
+
+// evaluateHaving evaluates a HAVING clause expression.
+// It handles aggregate functions and subqueries within the HAVING clause.
+func (e *Executor) evaluateHaving(expr sql.Expression, resultRow []interface{}, resultCols []ColumnInfo, aggregateFuncs []struct {
+	name  string
+	arg   string
+	index int
+}, groupRows []*row.Row, tblInfo *table.TableInfo) (bool, error) {
+	switch ex := expr.(type) {
+	case *sql.BinaryExpr:
+		// Special handling for IN operator
+		if ex.Op == sql.OpIn {
+			left, err := e.evaluateHavingExpr(ex.Left, resultRow, resultCols, aggregateFuncs, groupRows, tblInfo)
+			if err != nil {
+				return false, err
+			}
+
+			// Build outer context for correlated subquery
+			outerCtx := make(map[string]interface{})
+			for i, col := range resultCols {
+				colName := strings.ToLower(col.Name)
+				if i < len(resultRow) {
+					outerCtx[colName] = resultRow[i]
+					if col.Alias != "" {
+						outerCtx[strings.ToLower(col.Alias)] = resultRow[i]
+					}
+				}
+			}
+			oldOuterCtx := e.outerContext
+			e.outerContext = outerCtx
+
+			// Handle subquery on the right side
+			var subResult *Result
+			var execErr error
+			if subq, ok := ex.Right.(*sql.SubqueryExpr); ok {
+				subResult, execErr = e.executeStatement(subq.Select)
+			} else if paren, ok := ex.Right.(*sql.ParenExpr); ok {
+				if subq, ok := paren.Expr.(*sql.SubqueryExpr); ok {
+					subResult, execErr = e.executeStatement(subq.Select)
+				}
+			}
+
+			e.outerContext = oldOuterCtx
+
+			if execErr != nil {
+				return false, execErr
+			}
+			if subResult != nil {
+				for _, row := range subResult.Rows {
+					if len(row) > 0 && compareEqual(left, row[0]) {
+						return true, nil
+					}
+				}
+				return false, nil
+			}
+			return false, nil
+		}
+
+		left, err := e.evaluateHavingExpr(ex.Left, resultRow, resultCols, aggregateFuncs, groupRows, tblInfo)
+		if err != nil {
+			return false, err
+		}
+		right, err := e.evaluateHavingExpr(ex.Right, resultRow, resultCols, aggregateFuncs, groupRows, tblInfo)
+		if err != nil {
+			return false, err
+		}
+		if left == nil || right == nil {
+			return false, nil
+		}
+		return e.compareValues(left, ex.Op, right)
+
+	case *sql.UnaryExpr:
+		if ex.Op == sql.OpNot {
+			val, err := e.evaluateHaving(ex.Right, resultRow, resultCols, aggregateFuncs, groupRows, tblInfo)
+			if err != nil {
+				return false, err
+			}
+			return !val, nil
+		}
+
+	case *sql.InExpr:
+		val, err := e.evaluateHavingExpr(ex.Expr, resultRow, resultCols, aggregateFuncs, groupRows, tblInfo)
+		if err != nil {
+			return false, err
+		}
+		// Handle subquery
+		if ex.Select != nil {
+			// Build outer context for correlated subquery
+			outerCtx := make(map[string]interface{})
+			for i, col := range resultCols {
+				colName := strings.ToLower(col.Name)
+				if i < len(resultRow) {
+					outerCtx[colName] = resultRow[i]
+					if col.Alias != "" {
+						outerCtx[strings.ToLower(col.Alias)] = resultRow[i]
+					}
+				}
+			}
+			oldOuterCtx := e.outerContext
+			e.outerContext = outerCtx
+
+			subResult, err := e.executeStatement(ex.Select)
+
+			e.outerContext = oldOuterCtx
+
+			if err != nil {
+				return false, err
+			}
+			for _, row := range subResult.Rows {
+				if len(row) > 0 && compareEqual(val, row[0]) {
+					return !ex.Not, nil
+				}
+			}
+			return ex.Not, nil
+		}
+		// Handle value list
+		for _, listExpr := range ex.List {
+			listVal, err := e.evaluateHavingExpr(listExpr, resultRow, resultCols, aggregateFuncs, groupRows, tblInfo)
+			if err != nil {
+				continue
+			}
+			if compareEqual(val, listVal) {
+				return !ex.Not, nil
+			}
+		}
+		return ex.Not, nil
+
+	case *sql.ExistsExpr:
+		// Build outer context from the current group's result row
+		outerCtx := make(map[string]interface{})
+		for i, col := range resultCols {
+			colName := strings.ToLower(col.Name)
+			if i < len(resultRow) {
+				outerCtx[colName] = resultRow[i]
+				// Also add with alias if present
+				if col.Alias != "" {
+					outerCtx[strings.ToLower(col.Alias)] = resultRow[i]
+				}
+			}
+		}
+
+		// Save and set outer context
+		oldOuterCtx := e.outerContext
+		e.outerContext = outerCtx
+
+		// Execute the subquery
+		result, err := e.executeStatement(ex.Subquery.Select)
+
+		// Restore outer context
+		e.outerContext = oldOuterCtx
+
+		if err != nil {
+			return false, err
+		}
+		return len(result.Rows) > 0, nil
+
+	case *sql.ScalarSubquery:
+		// Build outer context from the current group's result row
+		outerCtx := make(map[string]interface{})
+		for i, col := range resultCols {
+			colName := strings.ToLower(col.Name)
+			if i < len(resultRow) {
+				outerCtx[colName] = resultRow[i]
+				if col.Alias != "" {
+					outerCtx[strings.ToLower(col.Alias)] = resultRow[i]
+				}
+			}
+		}
+
+		// Save and set outer context
+		oldOuterCtx := e.outerContext
+		e.outerContext = outerCtx
+
+		// Execute the subquery
+		result, err := e.executeStatement(ex.Subquery.Select)
+
+		// Restore outer context
+		e.outerContext = oldOuterCtx
+
+		if err != nil {
+			return false, err
+		}
+		if len(result.Rows) == 0 || len(result.Rows[0]) == 0 {
+			return false, nil
+		}
+		if len(result.Rows) > 1 {
+			return false, fmt.Errorf("scalar subquery in HAVING returned more than one row")
+		}
+		val := result.Rows[0][0]
+		if val == nil {
+			return false, nil
+		}
+		switch v := val.(type) {
+		case bool:
+			return v, nil
+		case int, int64, float64:
+			return v != 0, nil
+		}
+		return val != nil, nil
+	}
+
+	return false, nil
+}
+
+// evaluateHavingExpr evaluates an expression within a HAVING clause.
+func (e *Executor) evaluateHavingExpr(expr sql.Expression, resultRow []interface{}, resultCols []ColumnInfo, aggregateFuncs []struct {
+	name  string
+	arg   string
+	index int
+}, groupRows []*row.Row, tblInfo *table.TableInfo) (interface{}, error) {
+	switch ex := expr.(type) {
+	case *sql.Literal:
+		return ex.Value, nil
+
+	case *sql.ColumnRef:
+		// Look for the column in result columns
+		colName := strings.ToLower(ex.Name)
+		for i, col := range resultCols {
+			if strings.ToLower(col.Name) == colName || (col.Alias != "" && strings.ToLower(col.Alias) == colName) {
+				if i < len(resultRow) {
+					return resultRow[i], nil
+				}
+			}
+		}
+		return nil, fmt.Errorf("unknown column in HAVING: %s", ex.Name)
+
+	case *sql.FunctionCall:
+		funcName := strings.ToUpper(ex.Name)
+		// Check if it's an aggregate function that we've already computed
+		for _, agg := range aggregateFuncs {
+			if agg.name == funcName {
+				// Check if the argument matches
+				argMatch := false
+				if len(ex.Args) == 0 && (agg.arg == "" || agg.arg == "*") {
+					argMatch = true
+				} else if len(ex.Args) > 0 {
+					if _, ok := ex.Args[0].(*sql.StarExpr); ok && agg.arg == "*" {
+						argMatch = true
+					} else if colRef, ok := ex.Args[0].(*sql.ColumnRef); ok && strings.ToLower(colRef.Name) == agg.arg {
+						argMatch = true
+					}
+				}
+				if argMatch && agg.index < len(resultRow) {
+					return resultRow[agg.index], nil
+				}
+			}
+		}
+		// If not found in pre-computed aggregates, compute it now
+		return e.computeAggregateForHaving(ex, groupRows, tblInfo)
+
+	case *sql.BinaryExpr:
+		left, err := e.evaluateHavingExpr(ex.Left, resultRow, resultCols, aggregateFuncs, groupRows, tblInfo)
+		if err != nil {
+			return nil, err
+		}
+		right, err := e.evaluateHavingExpr(ex.Right, resultRow, resultCols, aggregateFuncs, groupRows, tblInfo)
+		if err != nil {
+			return nil, err
+		}
+		return e.evaluateBinaryOp(left, ex.Op, right)
+
+	case *sql.ScalarSubquery:
+		// Build outer context for correlated subquery
+		outerCtx := make(map[string]interface{})
+		for i, col := range resultCols {
+			colName := strings.ToLower(col.Name)
+			if i < len(resultRow) {
+				outerCtx[colName] = resultRow[i]
+				if col.Alias != "" {
+					outerCtx[strings.ToLower(col.Alias)] = resultRow[i]
+				}
+			}
+		}
+		oldOuterCtx := e.outerContext
+		e.outerContext = outerCtx
+
+		result, err := e.executeStatement(ex.Subquery.Select)
+
+		e.outerContext = oldOuterCtx
+
+		if err != nil {
+			return nil, err
+		}
+		if len(result.Rows) == 0 || len(result.Rows[0]) == 0 {
+			return nil, nil
+		}
+		if len(result.Rows) > 1 {
+			return nil, fmt.Errorf("scalar subquery returned more than one row")
+		}
+		return result.Rows[0][0], nil
+
+	case *sql.SubqueryExpr:
+		// Build outer context for correlated subquery
+		outerCtx := make(map[string]interface{})
+		for i, col := range resultCols {
+			colName := strings.ToLower(col.Name)
+			if i < len(resultRow) {
+				outerCtx[colName] = resultRow[i]
+				if col.Alias != "" {
+					outerCtx[strings.ToLower(col.Alias)] = resultRow[i]
+				}
+			}
+		}
+		oldOuterCtx := e.outerContext
+		e.outerContext = outerCtx
+
+		result, err := e.executeStatement(ex.Select)
+
+		e.outerContext = oldOuterCtx
+
+		if err != nil {
+			return nil, err
+		}
+		if len(result.Rows) == 0 || len(result.Rows[0]) == 0 {
+			return nil, nil
+		}
+		if len(result.Rows) > 1 {
+			return nil, fmt.Errorf("scalar subquery returned more than one row")
+		}
+		return result.Rows[0][0], nil
+	}
+
+	return nil, nil
+}
+
+// computeAggregateForHaving computes an aggregate function for the HAVING clause.
+func (e *Executor) computeAggregateForHaving(fc *sql.FunctionCall, groupRows []*row.Row, tblInfo *table.TableInfo) (interface{}, error) {
+	funcName := strings.ToUpper(fc.Name)
+	argName := ""
+	if len(fc.Args) > 0 {
+		if colRef, ok := fc.Args[0].(*sql.ColumnRef); ok {
+			argName = strings.ToLower(colRef.Name)
+		}
+	}
+
+	switch funcName {
+	case "COUNT":
+		return len(groupRows), nil
+
+	case "SUM":
+		var sum int64
+		for _, r := range groupRows {
+			if argName != "" {
+				for j, col := range tblInfo.Columns {
+					if strings.ToLower(col.Name) == argName {
+						if j < len(r.Values) && !r.Values[j].Null {
+							sum += r.Values[j].AsInt()
+						}
+					}
+				}
+			}
+		}
+		return sum, nil
+
+	case "AVG":
+		var sum int64
+		count := 0
+		for _, r := range groupRows {
+			if argName != "" {
+				for j, col := range tblInfo.Columns {
+					if strings.ToLower(col.Name) == argName {
+						if j < len(r.Values) && !r.Values[j].Null {
+							sum += r.Values[j].AsInt()
+							count++
+						}
+					}
+				}
+			}
+		}
+		if count > 0 {
+			return float64(sum) / float64(count), nil
+		}
+		return nil, nil
+
+	case "MIN":
+		var minVal int64
+		hasMin := false
+		for _, r := range groupRows {
+			if argName != "" {
+				for j, col := range tblInfo.Columns {
+					if strings.ToLower(col.Name) == argName {
+						if j < len(r.Values) && !r.Values[j].Null {
+							v := r.Values[j].AsInt()
+							if !hasMin || v < minVal {
+								minVal = v
+								hasMin = true
+							}
+						}
+					}
+				}
+			}
+		}
+		if hasMin {
+			return minVal, nil
+		}
+		return nil, nil
+
+	case "MAX":
+		var maxVal int64
+		hasMax := false
+		for _, r := range groupRows {
+			if argName != "" {
+				for j, col := range tblInfo.Columns {
+					if strings.ToLower(col.Name) == argName {
+						if j < len(r.Values) && !r.Values[j].Null {
+							v := r.Values[j].AsInt()
+							if !hasMax || v > maxVal {
+								maxVal = v
+								hasMax = true
+							}
+						}
+					}
+				}
+			}
+		}
+		if hasMax {
+			return maxVal, nil
+		}
+		return nil, nil
+	}
+
+	return nil, fmt.Errorf("unknown aggregate function in HAVING: %s", funcName)
 }
 
 // executeUnion executes a UNION statement.
@@ -1233,6 +1686,42 @@ func (e *Executor) executeSelectWithoutFrom(stmt *sql.SelectStmt) (*Result, erro
 				Type: "INT",
 			})
 			row = append(row, 1)
+		case *sql.SubqueryExpr:
+			// Scalar subquery in SELECT list
+			subResult, err := e.executeStatement(expr.Select)
+			if err != nil {
+				return nil, err
+			}
+			colName := "subquery"
+			result.Columns = append(result.Columns, ColumnInfo{
+				Name: colName,
+				Type: "VARCHAR",
+			})
+			if len(subResult.Rows) == 0 || len(subResult.Rows[0]) == 0 {
+				row = append(row, nil)
+			} else if len(subResult.Rows) > 1 {
+				return nil, fmt.Errorf("scalar subquery returned more than one row")
+			} else {
+				row = append(row, subResult.Rows[0][0])
+			}
+		case *sql.ScalarSubquery:
+			// Scalar subquery in SELECT list
+			subResult, err := e.executeStatement(expr.Subquery.Select)
+			if err != nil {
+				return nil, err
+			}
+			colName := "subquery"
+			result.Columns = append(result.Columns, ColumnInfo{
+				Name: colName,
+				Type: "VARCHAR",
+			})
+			if len(subResult.Rows) == 0 || len(subResult.Rows[0]) == 0 {
+				row = append(row, nil)
+			} else if len(subResult.Rows) > 1 {
+				return nil, fmt.Errorf("scalar subquery returned more than one row")
+			} else {
+				row = append(row, subResult.Rows[0][0])
+			}
 		default:
 			// Try to handle as a general expression
 			result.Columns = append(result.Columns, ColumnInfo{
@@ -3077,8 +3566,35 @@ func (e *Executor) evaluateExpression(expr sql.Expression, r *row.Row, columnMap
 		return e.evaluateFunction(ex, r, columnMap, columnOrder)
 
 	case *sql.ScalarSubquery:
+		// Build outer context for correlated subqueries
+		outerCtx := make(map[string]interface{})
+		tablePrefix := ""
+		if e.currentTable != "" {
+			tablePrefix = e.currentTable + "."
+		}
+		if r != nil && columnOrder != nil {
+			for i, col := range columnOrder {
+				if i < len(r.Values) {
+					val := e.valueToInterface(r.Values[i])
+					colName := strings.ToLower(col.Name)
+					outerCtx[colName] = val
+					if tablePrefix != "" {
+						outerCtx[tablePrefix+colName] = val
+					}
+				}
+			}
+		}
+
+		// Save and set outer context
+		oldOuterCtx := e.outerContext
+		e.outerContext = outerCtx
+
 		// Execute the scalar subquery
 		result, err := e.executeStatement(ex.Subquery.Select)
+
+		// Restore outer context
+		e.outerContext = oldOuterCtx
+
 		if err != nil {
 			return nil, err
 		}
@@ -3095,8 +3611,35 @@ func (e *Executor) evaluateExpression(expr sql.Expression, r *row.Row, columnMap
 		return result.Rows[0][0], nil
 
 	case *sql.SubqueryExpr:
+		// Build outer context for correlated subqueries
+		outerCtx := make(map[string]interface{})
+		tablePrefix := ""
+		if e.currentTable != "" {
+			tablePrefix = e.currentTable + "."
+		}
+		if r != nil && columnOrder != nil {
+			for i, col := range columnOrder {
+				if i < len(r.Values) {
+					val := e.valueToInterface(r.Values[i])
+					colName := strings.ToLower(col.Name)
+					outerCtx[colName] = val
+					if tablePrefix != "" {
+						outerCtx[tablePrefix+colName] = val
+					}
+				}
+			}
+		}
+
+		// Save and set outer context
+		oldOuterCtx := e.outerContext
+		e.outerContext = outerCtx
+
 		// Treat as scalar subquery in expression context
 		result, err := e.executeStatement(ex.Select)
+
+		// Restore outer context
+		e.outerContext = oldOuterCtx
+
 		if err != nil {
 			return nil, err
 		}
