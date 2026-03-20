@@ -2052,3 +2052,159 @@ func TestSQL_SystemFunctions(t *testing.T) {
 	t.Logf("CONNECTION_ID result: %v", result.Rows[0])
 }
 
+// TestSQL_Upsert tests UPSERT (INSERT ... ON CONFLICT)
+func TestSQL_Upsert(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "xxsql-upsert-test-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	engine := storage.NewEngine(tmpDir)
+	if err := engine.Open(); err != nil {
+		t.Fatalf("Failed to open engine: %v", err)
+	}
+	defer engine.Close()
+
+	exec := executor.NewExecutor(engine)
+	exec.SetDatabase("testdb")
+
+	// Create table with UNIQUE constraint
+	result, err := exec.Execute("CREATE TABLE users (id INT PRIMARY KEY, name TEXT, email TEXT UNIQUE)")
+	if err != nil {
+		t.Fatalf("CREATE TABLE failed: %v", err)
+	}
+	t.Logf("CREATE TABLE result: %v", result)
+
+	// Insert initial row
+	result, err = exec.Execute("INSERT INTO users VALUES (1, 'Alice', 'alice@example.com')")
+	if err != nil {
+		t.Fatalf("INSERT failed: %v", err)
+	}
+	t.Logf("INSERT result: %v", result)
+
+	// Test 1: ON CONFLICT DO NOTHING - should not insert duplicate
+	result, err = exec.Execute("INSERT INTO users VALUES (2, 'Bob', 'alice@example.com') ON CONFLICT(email) DO NOTHING")
+	if err != nil {
+		t.Fatalf("UPSERT DO NOTHING failed: %v", err)
+	}
+	// Should have 0 affected rows since it was skipped
+	t.Logf("UPSERT DO NOTHING result: Affected=%d", result.Affected)
+
+	// Verify the row wasn't inserted (should still have 1 row)
+	result, err = exec.Execute("SELECT COUNT(*) FROM users")
+	if err != nil {
+		t.Fatalf("SELECT COUNT failed: %v", err)
+	}
+	count := result.Rows[0][0]
+	t.Logf("Row count: %v", count)
+
+	// Test 2: ON CONFLICT DO UPDATE - should update existing row
+	result, err = exec.Execute("INSERT INTO users VALUES (2, 'Bob', 'alice@example.com') ON CONFLICT(email) DO UPDATE SET name = 'Alice Updated'")
+	if err != nil {
+		t.Fatalf("UPSERT DO UPDATE failed: %v", err)
+	}
+	t.Logf("UPSERT DO UPDATE result: Affected=%d", result.Affected)
+
+	// Verify the name was updated
+	result, err = exec.Execute("SELECT name FROM users WHERE email = 'alice@example.com'")
+	if err != nil {
+		t.Fatalf("SELECT failed: %v", err)
+	}
+	t.Logf("Name after update: %v", result.Rows[0][0])
+
+	// Test 3: Normal insert without conflict
+	result, err = exec.Execute("INSERT INTO users VALUES (3, 'Charlie', 'charlie@example.com') ON CONFLICT(email) DO UPDATE SET name = 'Should not happen'")
+	if err != nil {
+		t.Fatalf("INSERT without conflict failed: %v", err)
+	}
+	t.Logf("INSERT without conflict result: Affected=%d", result.Affected)
+
+	// Verify new row was inserted
+	result, err = exec.Execute("SELECT COUNT(*) FROM users")
+	if err != nil {
+		t.Fatalf("SELECT COUNT failed: %v", err)
+	}
+	t.Logf("Final row count: %v", result.Rows[0][0])
+}
+
+// TestSQL_Returning tests RETURNING clause
+func TestSQL_Returning(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "xxsql-returning-test-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	engine := storage.NewEngine(tmpDir)
+	if err := engine.Open(); err != nil {
+		t.Fatalf("Failed to open engine: %v", err)
+	}
+	defer engine.Close()
+
+	exec := executor.NewExecutor(engine)
+	exec.SetDatabase("testdb")
+
+	// Create table
+	result, err := exec.Execute("CREATE TABLE products (id SEQ, name TEXT, price FLOAT)")
+	if err != nil {
+		t.Fatalf("CREATE TABLE failed: %v", err)
+	}
+
+	// Test 1: INSERT RETURNING *
+	result, err = exec.Execute("INSERT INTO products (name, price) VALUES ('Widget', 9.99) RETURNING *")
+	if err != nil {
+		t.Fatalf("INSERT RETURNING failed: %v", err)
+	}
+	if len(result.Rows) != 1 {
+		t.Fatalf("Expected 1 row in RETURNING, got %d", len(result.Rows))
+	}
+	t.Logf("INSERT RETURNING *: %v", result.Rows[0])
+	// Should have id, name, price
+	if len(result.Columns) != 3 {
+		t.Fatalf("Expected 3 columns, got %d", len(result.Columns))
+	}
+
+	// Test 2: INSERT RETURNING specific columns
+	result, err = exec.Execute("INSERT INTO products (name, price) VALUES ('Gadget', 19.99) RETURNING id, name")
+	if err != nil {
+		t.Fatalf("INSERT RETURNING columns failed: %v", err)
+	}
+	if len(result.Columns) != 2 {
+		t.Fatalf("Expected 2 columns, got %d", len(result.Columns))
+	}
+	t.Logf("INSERT RETURNING id, name: %v", result.Rows[0])
+
+	// Test 3: UPDATE RETURNING
+	result, err = exec.Execute("UPDATE products SET price = 14.99 WHERE name = 'Widget' RETURNING *")
+	if err != nil {
+		t.Fatalf("UPDATE RETURNING failed: %v", err)
+	}
+	if len(result.Rows) != 1 {
+		t.Fatalf("Expected 1 row in RETURNING, got %d", len(result.Rows))
+	}
+	t.Logf("UPDATE RETURNING *: %v", result.Rows[0])
+
+	// Verify the price was updated in the returned row
+	if result.Rows[0][2] != 14.99 {
+		t.Fatalf("Expected price 14.99, got %v", result.Rows[0][2])
+	}
+
+	// Test 4: DELETE RETURNING
+	result, err = exec.Execute("DELETE FROM products WHERE name = 'Gadget' RETURNING id, name")
+	if err != nil {
+		t.Fatalf("DELETE RETURNING failed: %v", err)
+	}
+	if len(result.Rows) != 1 {
+		t.Fatalf("Expected 1 row in RETURNING, got %d", len(result.Rows))
+	}
+	t.Logf("DELETE RETURNING id, name: %v", result.Rows[0])
+
+	// Verify the row was deleted
+	result, err = exec.Execute("SELECT COUNT(*) FROM products")
+	if err != nil {
+		t.Fatalf("SELECT COUNT failed: %v", err)
+	}
+	t.Logf("Row count after delete: %v", result.Rows[0][0])
+}
+

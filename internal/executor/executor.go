@@ -2896,6 +2896,37 @@ func (e *Executor) executeInsert(stmt *sql.InsertStmt) (*Result, error) {
 
 	var totalAffected int
 	var lastInsertID uint64
+	var returningRows [][]interface{}
+	var returningCols []ColumnInfo
+
+	// Setup returning columns if needed
+	if stmt.Returning != nil {
+		if stmt.Returning.All || len(stmt.Returning.Columns) == 0 {
+			// RETURNING *
+			for _, col := range tblInfo.Columns {
+				returningCols = append(returningCols, ColumnInfo{
+					Name: col.Name,
+					Type: col.Type.String(),
+				})
+			}
+		} else {
+			// Specific columns
+			for _, expr := range stmt.Returning.Columns {
+				if colRef, ok := expr.(*sql.ColumnRef); ok {
+					colName := colRef.Name
+					for _, col := range tblInfo.Columns {
+						if strings.EqualFold(col.Name, colName) {
+							returningCols = append(returningCols, ColumnInfo{
+								Name: col.Name,
+								Type: col.Type.String(),
+							})
+							break
+						}
+					}
+				}
+			}
+		}
+	}
 
 	// Insert each row
 	for _, valueRow := range stmt.Values {
@@ -2933,7 +2964,6 @@ func (e *Executor) executeInsert(stmt *sql.InsertStmt) (*Result, error) {
 		for i, col := range tblInfo.Columns {
 			if col.AutoIncr && values[i].Null {
 				// Keep as NULL - table layer will generate the sequence value
-				// Don't set a placeholder value here
 			}
 		}
 
@@ -2944,14 +2974,40 @@ func (e *Executor) executeInsert(stmt *sql.InsertStmt) (*Result, error) {
 			}
 		}
 
-		// Validate UNIQUE constraints (check existing data)
+		// Check for conflict (UNIQUE constraint violation)
+		var conflictIndex int = -1
 		for i, col := range tblInfo.Columns {
 			if col.Unique && !values[i].Null {
-				// Check if value already exists
 				if e.valueExistsInColumn(tbl, i, values[i]) {
-					return nil, fmt.Errorf("duplicate entry '%s' for key '%s'", values[i].String(), col.Name)
+					conflictIndex = i
+					break
 				}
 			}
+		}
+
+		// Handle UPSERT (ON CONFLICT)
+		if conflictIndex >= 0 && stmt.OnConflict != nil {
+			if stmt.OnConflict.DoNothing {
+				// ON CONFLICT DO NOTHING - skip this row
+				continue
+			} else if stmt.OnConflict.DoUpdate {
+				// ON CONFLICT DO UPDATE - perform update instead
+				updatedRow, err := e.performUpsertUpdate(tbl, tblInfo, values, stmt.OnConflict, colIdxMap)
+				if err != nil {
+					return nil, err
+				}
+				totalAffected++
+				if stmt.Returning != nil {
+					returningRows = append(returningRows, updatedRow)
+				}
+				continue
+			}
+		}
+
+		// If conflict but no ON CONFLICT clause, return error
+		if conflictIndex >= 0 {
+			col := tblInfo.Columns[conflictIndex]
+			return nil, fmt.Errorf("duplicate entry '%s' for key '%s'", values[conflictIndex].String(), col.Name)
 		}
 
 		// Validate CHECK constraints
@@ -2982,16 +3038,155 @@ func (e *Executor) executeInsert(stmt *sql.InsertStmt) (*Result, error) {
 
 		totalAffected++
 		lastInsertID = uint64(rowID)
+
+		// Collect returning data
+		if stmt.Returning != nil {
+			row := make([]interface{}, len(returningCols))
+			for i, col := range returningCols {
+				for j, tc := range tblInfo.Columns {
+					if tc.Name == col.Name {
+						row[i] = e.valueToInterface(values[j])
+						break
+					}
+				}
+			}
+			// If auto-increment column, use the generated rowID
+			for _, col := range tblInfo.Columns {
+				if col.AutoIncr {
+					for j, rc := range returningCols {
+						if rc.Name == col.Name {
+							row[j] = int64(rowID)
+							break
+						}
+					}
+				}
+			}
+			returningRows = append(returningRows, row)
+		}
 	}
 
 	e.lastInsertID = int64(lastInsertID)
 	e.lastRowCount = int64(totalAffected)
 
-	return &Result{
+	// Return result with optional RETURNING data
+	result := &Result{
 		Affected:   totalAffected,
 		LastInsert: lastInsertID,
 		Message:    "OK",
-	}, nil
+	}
+	if stmt.Returning != nil && len(returningRows) > 0 {
+		result.Columns = returningCols
+		result.Rows = returningRows
+		result.RowCount = len(returningRows)
+	}
+
+	return result, nil
+}
+
+// performUpsertUpdate performs the DO UPDATE part of an UPSERT
+func (e *Executor) performUpsertUpdate(tbl *table.Table, tblInfo *table.TableInfo, values []types.Value, upsert *sql.UpsertClause, colIdxMap map[string]int) ([]interface{}, error) {
+	// Find the conflicting row (we need to update it)
+	// For simplicity, we'll find the row by the unique value
+	var existingRow []types.Value
+	var found bool
+	var foundRowID int64
+
+	for _, col := range tblInfo.Columns {
+		if col.Unique {
+			// Scan table to find matching row
+			rows, err := tbl.Scan()
+			if err != nil {
+				return nil, err
+			}
+
+			for _, r := range rows {
+				rowVals := r.Values
+				for i, v := range values {
+					if !v.Null && len(rowVals) > i && e.valuesEqual(rowVals[i], v) {
+						existingRow = make([]types.Value, len(rowVals))
+						copy(existingRow, rowVals)
+						foundRowID = int64(r.ID)
+						found = true
+						break
+					}
+				}
+				if found {
+					break
+				}
+			}
+			break
+		}
+	}
+
+	if !found {
+		return nil, fmt.Errorf("conflicting row not found for upsert")
+	}
+
+	// Build update values from DO UPDATE SET assignments
+	updatedValues := make(map[int]types.Value)
+
+	for _, assign := range upsert.Assignments {
+		idx, ok := colIdxMap[strings.ToLower(assign.Column)]
+		if !ok {
+			return nil, fmt.Errorf("unknown column in upsert: %s", assign.Column)
+		}
+
+		// Evaluate the assignment expression
+		// Support excluded.* references for the new values
+		switch expr := assign.Value.(type) {
+		case *sql.ColumnRef:
+			// Support referencing "excluded" table (the new values being inserted)
+			if strings.EqualFold(expr.Name, "excluded") {
+				// This would need excluded.column syntax - for now use the new value
+				updatedValues[idx] = values[idx]
+			} else {
+				// Reference to existing column value (for expressions like counter = counter + 1)
+				// For now, just keep existing value
+				updatedValues[idx] = existingRow[idx]
+			}
+		default:
+			// Evaluate expression using the standard method
+			val, err := e.expressionToValue(assign.Value, tblInfo.Columns[idx])
+			if err != nil {
+				return nil, err
+			}
+			updatedValues[idx] = val
+		}
+	}
+
+	// Build predicate to match the specific row
+	predicate := func(r *row.Row) bool {
+		return int64(r.ID) == foundRowID
+	}
+
+	// Perform the update
+	_, err := tbl.Update(predicate, updatedValues)
+	if err != nil {
+		return nil, err
+	}
+
+	// Build the result row with updated values
+	resultRow := make([]interface{}, len(existingRow))
+	for i, v := range existingRow {
+		if newVal, ok := updatedValues[i]; ok {
+			resultRow[i] = e.valueToInterface(newVal)
+		} else {
+			resultRow[i] = e.valueToInterface(v)
+		}
+	}
+
+	return resultRow, nil
+}
+
+// valuesEqual compares two values for equality
+func (e *Executor) valuesEqual(a, b types.Value) bool {
+	if a.Null != b.Null {
+		return false
+	}
+	if a.Null {
+		return true
+	}
+	return fmt.Sprintf("%v", a.Data) == fmt.Sprintf("%v", b.Data)
 }
 
 // executeUpdate executes an UPDATE statement.
@@ -3062,6 +3257,66 @@ func (e *Executor) executeUpdate(stmt *sql.UpdateStmt) (*Result, error) {
 		}
 	}
 
+	// Collect returning data before update
+	var returningRows [][]interface{}
+	var returningCols []ColumnInfo
+
+	if stmt.Returning != nil {
+		// Setup returning columns
+		if stmt.Returning.All || len(stmt.Returning.Columns) == 0 {
+			for _, col := range tblInfo.Columns {
+				returningCols = append(returningCols, ColumnInfo{
+					Name: col.Name,
+					Type: col.Type.String(),
+				})
+			}
+		} else {
+			for _, expr := range stmt.Returning.Columns {
+				if colRef, ok := expr.(*sql.ColumnRef); ok {
+					colName := colRef.Name
+					for _, col := range tblInfo.Columns {
+						if strings.EqualFold(col.Name, colName) {
+							returningCols = append(returningCols, ColumnInfo{
+								Name: col.Name,
+								Type: col.Type.String(),
+							})
+							break
+						}
+					}
+				}
+			}
+		}
+
+		// Collect rows that will be updated (with new values)
+		rows, err := tbl.Scan()
+		if err == nil {
+			for _, r := range rows {
+				if predicate(r) {
+					oldVals := r.Values
+					newVals := make([]types.Value, len(oldVals))
+					copy(newVals, oldVals)
+
+					// Apply updates
+					for idx, val := range updates {
+						newVals[idx] = val
+					}
+
+					// Build returning row
+					row := make([]interface{}, len(returningCols))
+					for i, col := range returningCols {
+						for j, tc := range tblInfo.Columns {
+							if tc.Name == col.Name {
+								row[i] = e.valueToInterface(newVals[j])
+								break
+							}
+						}
+					}
+					returningRows = append(returningRows, row)
+				}
+			}
+		}
+	}
+
 	// Fire BEFORE UPDATE triggers
 	if err := e.fireTriggers(tableName, 0, 1, nil); err != nil {
 		return nil, err
@@ -3080,10 +3335,18 @@ func (e *Executor) executeUpdate(stmt *sql.UpdateStmt) (*Result, error) {
 
 	e.lastRowCount = int64(affected)
 
-	return &Result{
+	result := &Result{
 		Affected: affected,
 		Message:  fmt.Sprintf("Query OK, %d rows affected", affected),
-	}, nil
+	}
+
+	if stmt.Returning != nil && len(returningRows) > 0 {
+		result.Columns = returningCols
+		result.Rows = returningRows
+		result.RowCount = len(returningRows)
+	}
+
+	return result, nil
 }
 
 // executeDelete executes a DELETE statement.
@@ -3123,6 +3386,55 @@ func (e *Executor) executeDelete(stmt *sql.DeleteStmt) (*Result, error) {
 		// Capture row count BEFORE truncate since Truncate modifies it
 		rowCount := tblInfo.RowCount
 
+		// Collect returning data before truncate
+		var returningRows [][]interface{}
+		var returningCols []ColumnInfo
+
+		if stmt.Returning != nil {
+			// Setup returning columns
+			if stmt.Returning.All || len(stmt.Returning.Columns) == 0 {
+				for _, col := range tblInfo.Columns {
+					returningCols = append(returningCols, ColumnInfo{
+						Name: col.Name,
+						Type: col.Type.String(),
+					})
+				}
+			} else {
+				for _, expr := range stmt.Returning.Columns {
+					if colRef, ok := expr.(*sql.ColumnRef); ok {
+						colName := colRef.Name
+						for _, col := range tblInfo.Columns {
+							if strings.EqualFold(col.Name, colName) {
+								returningCols = append(returningCols, ColumnInfo{
+									Name: col.Name,
+									Type: col.Type.String(),
+								})
+								break
+							}
+						}
+					}
+				}
+			}
+
+			// Collect all rows
+			rows, err := tbl.Scan()
+			if err == nil {
+				for _, r := range rows {
+					rowVals := r.Values
+					row := make([]interface{}, len(returningCols))
+					for i, col := range returningCols {
+						for j, tc := range tblInfo.Columns {
+							if tc.Name == col.Name {
+								row[i] = e.valueToInterface(rowVals[j])
+								break
+							}
+						}
+					}
+					returningRows = append(returningRows, row)
+				}
+			}
+		}
+
 		// Fire BEFORE DELETE triggers
 		if err := e.fireTriggers(tableName, 0, 2, nil); err != nil {
 			return nil, err
@@ -3138,10 +3450,67 @@ func (e *Executor) executeDelete(stmt *sql.DeleteStmt) (*Result, error) {
 		}
 
 		e.lastRowCount = int64(rowCount)
-		return &Result{
+		result := &Result{
 			Affected: int(rowCount),
 			Message:  "Query OK, all rows deleted",
-		}, nil
+		}
+		if stmt.Returning != nil && len(returningRows) > 0 {
+			result.Columns = returningCols
+			result.Rows = returningRows
+			result.RowCount = len(returningRows)
+		}
+		return result, nil
+	}
+
+	// Collect returning data before delete
+	var returningRows [][]interface{}
+	var returningCols []ColumnInfo
+
+	if stmt.Returning != nil {
+		// Setup returning columns
+		if stmt.Returning.All || len(stmt.Returning.Columns) == 0 {
+			for _, col := range tblInfo.Columns {
+				returningCols = append(returningCols, ColumnInfo{
+					Name: col.Name,
+					Type: col.Type.String(),
+				})
+			}
+		} else {
+			for _, expr := range stmt.Returning.Columns {
+				if colRef, ok := expr.(*sql.ColumnRef); ok {
+					colName := colRef.Name
+					for _, col := range tblInfo.Columns {
+						if strings.EqualFold(col.Name, colName) {
+							returningCols = append(returningCols, ColumnInfo{
+								Name: col.Name,
+								Type: col.Type.String(),
+							})
+							break
+						}
+					}
+				}
+			}
+		}
+
+		// Collect rows that will be deleted
+		rows, err := tbl.Scan()
+		if err == nil {
+			for _, r := range rows {
+				if predicate(r) {
+					rowVals := r.Values
+					row := make([]interface{}, len(returningCols))
+					for i, col := range returningCols {
+						for j, tc := range tblInfo.Columns {
+							if tc.Name == col.Name {
+								row[i] = e.valueToInterface(rowVals[j])
+								break
+							}
+						}
+					}
+					returningRows = append(returningRows, row)
+				}
+			}
+		}
 	}
 
 	// Fire BEFORE DELETE triggers
@@ -3162,10 +3531,18 @@ func (e *Executor) executeDelete(stmt *sql.DeleteStmt) (*Result, error) {
 
 	e.lastRowCount = int64(affected)
 
-	return &Result{
+	result := &Result{
 		Affected: affected,
 		Message:  fmt.Sprintf("Query OK, %d rows affected", affected),
-	}, nil
+	}
+
+	if stmt.Returning != nil && len(returningRows) > 0 {
+		result.Columns = returningCols
+		result.Rows = returningRows
+		result.RowCount = len(returningRows)
+	}
+
+	return result, nil
 }
 
 // evaluateWhereForRow evaluates a WHERE expression for a row.

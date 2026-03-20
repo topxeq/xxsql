@@ -148,10 +148,74 @@ func (s *SelectStmt) String() string {
 
 // InsertStmt represents an INSERT statement.
 type InsertStmt struct {
-	Table      string
-	Columns    []string
-	Values     [][]Expression
-	OnDuplicateKeyUpdate []*Assignment // MySQL-style ON DUPLICATE KEY UPDATE
+	Table                string
+	Columns              []string
+	Values               [][]Expression
+	OnDuplicateKeyUpdate []*Assignment    // MySQL-style ON DUPLICATE KEY UPDATE
+	OnConflict           *UpsertClause    // SQLite-style ON CONFLICT
+	Returning            *ReturningClause // RETURNING clause
+}
+
+// UpsertClause represents an ON CONFLICT clause (SQLite-style UPSERT).
+type UpsertClause struct {
+	ConflictColumns []string      // ON CONFLICT(column1, column2)
+	DoNothing       bool          // DO NOTHING
+	DoUpdate        bool          // DO UPDATE
+	Assignments     []*Assignment // SET assignments for DO UPDATE
+	Where           Expression    // Optional WHERE for DO UPDATE
+}
+
+func (u *UpsertClause) String() string {
+	var sb strings.Builder
+	sb.WriteString("ON CONFLICT")
+	if len(u.ConflictColumns) > 0 {
+		sb.WriteString("(")
+		for i, col := range u.ConflictColumns {
+			if i > 0 {
+				sb.WriteString(", ")
+			}
+			sb.WriteString(col)
+		}
+		sb.WriteString(")")
+	}
+	if u.DoNothing {
+		sb.WriteString(" DO NOTHING")
+	} else if u.DoUpdate {
+		sb.WriteString(" DO UPDATE SET ")
+		for i, a := range u.Assignments {
+			if i > 0 {
+				sb.WriteString(", ")
+			}
+			sb.WriteString(a.String())
+		}
+		if u.Where != nil {
+			sb.WriteString(" WHERE ")
+			sb.WriteString(u.Where.String())
+		}
+	}
+	return sb.String()
+}
+
+// ReturningClause represents a RETURNING clause.
+type ReturningClause struct {
+	Columns []Expression // Columns to return, nil or empty means *
+	All     bool         // RETURNING *
+}
+
+func (r *ReturningClause) String() string {
+	var sb strings.Builder
+	sb.WriteString("RETURNING ")
+	if r.All || len(r.Columns) == 0 {
+		sb.WriteString("*")
+	} else {
+		for i, col := range r.Columns {
+			if i > 0 {
+				sb.WriteString(", ")
+			}
+			sb.WriteString(col.String())
+		}
+	}
+	return sb.String()
 }
 
 func (s *InsertStmt) node()      {}
@@ -184,6 +248,14 @@ func (s *InsertStmt) String() string {
 		}
 		sb.WriteString(")")
 	}
+	if s.OnConflict != nil {
+		sb.WriteString(" ")
+		sb.WriteString(s.OnConflict.String())
+	}
+	if s.Returning != nil {
+		sb.WriteString(" ")
+		sb.WriteString(s.Returning.String())
+	}
 	return sb.String()
 }
 
@@ -194,6 +266,7 @@ type UpdateStmt struct {
 	Where       Expression
 	OrderBy     []*OrderByItem
 	Limit       *int
+	Returning   *ReturningClause // RETURNING clause
 }
 
 func (s *UpdateStmt) node()      {}
@@ -213,15 +286,20 @@ func (s *UpdateStmt) String() string {
 		sb.WriteString(" WHERE ")
 		sb.WriteString(s.Where.String())
 	}
+	if s.Returning != nil {
+		sb.WriteString(" ")
+		sb.WriteString(s.Returning.String())
+	}
 	return sb.String()
 }
 
 // DeleteStmt represents a DELETE statement.
 type DeleteStmt struct {
-	Table   string
-	Where   Expression
-	OrderBy []*OrderByItem
-	Limit   *int
+	Table     string
+	Where     Expression
+	OrderBy   []*OrderByItem
+	Limit     *int
+	Returning *ReturningClause // RETURNING clause
 }
 
 func (s *DeleteStmt) node()      {}
@@ -233,6 +311,10 @@ func (s *DeleteStmt) String() string {
 	if s.Where != nil {
 		sb.WriteString(" WHERE ")
 		sb.WriteString(s.Where.String())
+	}
+	if s.Returning != nil {
+		sb.WriteString(" ")
+		sb.WriteString(s.Returning.String())
 	}
 	return sb.String()
 }

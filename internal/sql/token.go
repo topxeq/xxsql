@@ -184,6 +184,12 @@ const (
 	TokRow
 	TokStatement
 
+	// Keywords - UPSERT and RETURNING
+	TokConflict
+	TokDo
+	TokNothing
+	TokReturning
+
 	// Identifiers and literals
 	TokIdent   // identifier
 	TokNumber  // numeric literal
@@ -497,6 +503,14 @@ func (t TokenType) String() string {
 		return "ROW"
 	case TokStatement:
 		return "STATEMENT"
+	case TokConflict:
+		return "CONFLICT"
+	case TokDo:
+		return "DO"
+	case TokNothing:
+		return "NOTHING"
+	case TokReturning:
+		return "RETURNING"
 	case TokDescribe:
 		return "DESCRIBE"
 	case TokBackup:
@@ -658,6 +672,10 @@ var keywords = map[string]TokenType{
 	"EACH":         TokEach,
 	"ROW":          TokRow,
 	"STATEMENT":    TokStatement,
+	"CONFLICT":     TokConflict,
+	"DO":           TokDo,
+	"NOTHING":      TokNothing,
+	"RETURNING":    TokReturning,
 	"TRUE":         TokBoolLit,
 	"FALSE":        TokBoolLit,
 }

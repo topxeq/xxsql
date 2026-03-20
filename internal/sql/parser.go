@@ -3,6 +3,7 @@ package sql
 import (
 	"fmt"
 	"strconv"
+	"strings"
 )
 
 // Parser parses SQL statements.
@@ -702,7 +703,91 @@ func (p *Parser) parseInsert() *InsertStmt {
 		p.nextToken()
 	}
 
+	// ON CONFLICT clause (SQLite-style UPSERT)
+	if p.curTokenIs(TokOn) {
+		p.nextToken()
+		if p.curTokenIs(TokConflict) {
+			stmt.OnConflict = p.parseOnConflict()
+		} else if p.curTokenIs(TokIdent) && strings.ToUpper(p.currTok.Value) == "DUPLICATE" {
+			// MySQL-style ON DUPLICATE KEY UPDATE
+			p.nextToken()
+			if p.expect(TokKey) && p.expect(TokUpdate) {
+				stmt.OnDuplicateKeyUpdate = p.parseAssignments()
+			}
+		}
+	}
+
+	// RETURNING clause
+	if p.curTokenIs(TokReturning) {
+		stmt.Returning = p.parseReturning()
+	}
+
 	return stmt
+}
+
+// parseOnConflict parses an ON CONFLICT clause.
+func (p *Parser) parseOnConflict() *UpsertClause {
+	p.nextToken() // consume CONFLICT
+
+	upsert := &UpsertClause{}
+
+	// Optional conflict columns: ON CONFLICT(column1, column2)
+	if p.curTokenIs(TokLParen) {
+		p.nextToken()
+		upsert.ConflictColumns = p.parseIdentifierList()
+		if !p.expect(TokRParen) {
+			return nil
+		}
+	}
+
+	// DO NOTHING or DO UPDATE
+	if !p.expect(TokDo) {
+		return nil
+	}
+
+	if p.curTokenIs(TokNothing) {
+		upsert.DoNothing = true
+		p.nextToken()
+	} else if p.curTokenIs(TokUpdate) {
+		upsert.DoUpdate = true
+		p.nextToken()
+
+		if !p.expect(TokSet) {
+			return nil
+		}
+
+		upsert.Assignments = p.parseAssignments()
+		if len(upsert.Assignments) == 0 {
+			p.error("expected at least one assignment in DO UPDATE SET")
+			return nil
+		}
+
+		// Optional WHERE clause
+		if p.curTokenIs(TokWhere) {
+			p.nextToken()
+			upsert.Where = p.parseExpression()
+		}
+	}
+
+	return upsert
+}
+
+// parseReturning parses a RETURNING clause.
+func (p *Parser) parseReturning() *ReturningClause {
+	p.nextToken() // consume RETURNING
+
+	ret := &ReturningClause{}
+
+	// Check for RETURNING *
+	if p.curTokenIs(TokStar) {
+		ret.All = true
+		p.nextToken()
+		return ret
+	}
+
+	// Parse column list
+	ret.Columns = p.parseSelectColumns()
+	return ret
 }
 
 // parseUpdate parses an UPDATE statement.
@@ -730,6 +815,11 @@ func (p *Parser) parseUpdate() *UpdateStmt {
 	if p.curTokenIs(TokWhere) {
 		p.nextToken()
 		stmt.Where = p.parseExpression()
+	}
+
+	// RETURNING clause
+	if p.curTokenIs(TokReturning) {
+		stmt.Returning = p.parseReturning()
 	}
 
 	return stmt
@@ -781,6 +871,11 @@ func (p *Parser) parseDelete() *DeleteStmt {
 	if p.curTokenIs(TokWhere) {
 		p.nextToken()
 		stmt.Where = p.parseExpression()
+	}
+
+	// RETURNING clause
+	if p.curTokenIs(TokReturning) {
+		stmt.Returning = p.parseReturning()
 	}
 
 	return stmt
