@@ -1039,6 +1039,144 @@ func TestSQL_StatsFunctions(t *testing.T) {
 	}
 }
 
+func TestSQL_MoreStringFunctions(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "xxsql-str2-test-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	engine := storage.NewEngine(tmpDir)
+	if err := engine.Open(); err != nil {
+		t.Fatalf("Failed to open engine: %v", err)
+	}
+	defer engine.Close()
+
+	exec := executor.NewExecutor(engine)
+	exec.SetDatabase("testdb")
+
+	// Test REPLACE
+	result, err := exec.Execute("SELECT REPLACE('hello world', 'world', 'universe')")
+	if err != nil {
+		t.Fatalf("REPLACE failed: %v", err)
+	}
+	t.Logf("REPLACE result: %v", result.Rows)
+
+	// Test CHAR
+	result, err = exec.Execute("SELECT CHAR(72, 101, 108, 108, 111)")
+	if err != nil {
+		t.Fatalf("CHAR failed: %v", err)
+	}
+	t.Logf("CHAR result: %v", result.Rows)
+
+	// Test UNICODE
+	result, err = exec.Execute("SELECT UNICODE('A')")
+	if err != nil {
+		t.Fatalf("UNICODE failed: %v", err)
+	}
+	t.Logf("UNICODE result: %v", result.Rows)
+
+	// Test ASCII
+	result, err = exec.Execute("SELECT ASCII('ABC')")
+	if err != nil {
+		t.Fatalf("ASCII failed: %v", err)
+	}
+	t.Logf("ASCII result: %v", result.Rows)
+}
+
+func TestSQL_TimestampFunctions(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "xxsql-ts-test-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	engine := storage.NewEngine(tmpDir)
+	if err := engine.Open(); err != nil {
+		t.Fatalf("Failed to open engine: %v", err)
+	}
+	defer engine.Close()
+
+	exec := executor.NewExecutor(engine)
+	exec.SetDatabase("testdb")
+
+	// Test UNIX_TIMESTAMP
+	result, err := exec.Execute("SELECT UNIX_TIMESTAMP('2024-01-01 00:00:00')")
+	if err != nil {
+		t.Fatalf("UNIX_TIMESTAMP failed: %v", err)
+	}
+	t.Logf("UNIX_TIMESTAMP result: %v", result.Rows)
+
+	// Test FROM_UNIXTIME
+	result, err = exec.Execute("SELECT FROM_UNIXTIME(1704067200)")
+	if err != nil {
+		t.Fatalf("FROM_UNIXTIME failed: %v", err)
+	}
+	t.Logf("FROM_UNIXTIME result: %v", result.Rows)
+
+	// Test FROM_UNIXTIME with format
+	result, err = exec.Execute("SELECT FROM_UNIXTIME(1704067200, '%Y-%m-%d')")
+	if err != nil {
+		t.Fatalf("FROM_UNIXTIME with format failed: %v", err)
+	}
+	t.Logf("FROM_UNIXTIME with format result: %v", result.Rows)
+}
+
+func TestSQL_UtilityFunctions3(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "xxsql-util3-test-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	engine := storage.NewEngine(tmpDir)
+	if err := engine.Open(); err != nil {
+		t.Fatalf("Failed to open engine: %v", err)
+	}
+	defer engine.Close()
+
+	exec := executor.NewExecutor(engine)
+	exec.SetDatabase("testdb")
+
+	// Create table with SEQ for auto-increment
+	_, _ = exec.Execute("CREATE TABLE auto_test (id SEQ, name VARCHAR(50))")
+
+	// Test LAST_INSERT_ID
+	result, err := exec.Execute("INSERT INTO auto_test (name) VALUES ('test1')")
+	if err != nil {
+		t.Fatalf("INSERT failed: %v", err)
+	}
+	t.Logf("INSERT result: LastInsert=%d, Affected=%d", result.LastInsert, result.Affected)
+
+	result, err = exec.Execute("SELECT LAST_INSERT_ID()")
+	if err != nil {
+		t.Fatalf("LAST_INSERT_ID failed: %v", err)
+	}
+	t.Logf("LAST_INSERT_ID result: %v", result.Rows)
+
+	// Test ROW_COUNT
+	_, _ = exec.Execute("INSERT INTO auto_test (name) VALUES ('test2')")
+	_, _ = exec.Execute("INSERT INTO auto_test (name) VALUES ('test3')")
+
+	result, err = exec.Execute("UPDATE auto_test SET name = 'updated' WHERE name = 'test1'")
+	if err != nil {
+		t.Fatalf("UPDATE failed: %v", err)
+	}
+
+	result, err = exec.Execute("SELECT ROW_COUNT()")
+	if err != nil {
+		t.Fatalf("ROW_COUNT failed: %v", err)
+	}
+	t.Logf("ROW_COUNT result: %v", result.Rows)
+
+	// Test UUID
+	result, err = exec.Execute("SELECT UUID()")
+	if err != nil {
+		t.Fatalf("UUID failed: %v", err)
+	}
+	t.Logf("UUID result: %v", result.Rows)
+}
+
 func TestSQL_OrderByLimit(t *testing.T) {
 	tmpDir, err := os.MkdirTemp("", "xxsql-order-test-*")
 	if err != nil {

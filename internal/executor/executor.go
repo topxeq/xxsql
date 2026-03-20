@@ -90,6 +90,8 @@ type Executor struct {
 	currentTable  string                 // Current table being queried (for outer context)
 	subqueryCache map[string]interface{} // Cache for non-correlated subquery results (optimization)
 	cteResults    map[string]*Result     // CTE results for WITH clause support
+	lastInsertID  int64                  // Last auto-generated insert ID
+	lastRowCount  int64                  // Number of rows affected by last operation
 }
 
 // Note on Subquery Optimization:
@@ -2774,6 +2776,9 @@ func (e *Executor) executeInsert(stmt *sql.InsertStmt) (*Result, error) {
 		lastInsertID = uint64(rowID)
 	}
 
+	e.lastInsertID = int64(lastInsertID)
+	e.lastRowCount = int64(totalAffected)
+
 	return &Result{
 		Affected:   totalAffected,
 		LastInsert: lastInsertID,
@@ -2854,6 +2859,7 @@ func (e *Executor) executeUpdate(stmt *sql.UpdateStmt) (*Result, error) {
 	if err != nil {
 		return nil, fmt.Errorf("update error: %w", err)
 	}
+	e.lastRowCount = int64(affected)
 
 	return &Result{
 		Affected: affected,
@@ -2900,6 +2906,7 @@ func (e *Executor) executeDelete(stmt *sql.DeleteStmt) (*Result, error) {
 		if err := tbl.Truncate(); err != nil {
 			return nil, fmt.Errorf("delete error: %w", err)
 		}
+		e.lastRowCount = int64(rowCount)
 		return &Result{
 			Affected: int(rowCount),
 			Message:  "Query OK, all rows deleted",
@@ -2911,6 +2918,7 @@ func (e *Executor) executeDelete(stmt *sql.DeleteStmt) (*Result, error) {
 	if err != nil {
 		return nil, fmt.Errorf("delete error: %w", err)
 	}
+	e.lastRowCount = int64(affected)
 
 	return &Result{
 		Affected: affected,
@@ -6063,6 +6071,216 @@ func (e *Executor) evaluateFunction(fc *sql.FunctionCall, r *row.Row, columnMap 
 		return math.Pi, nil
 
 	// ========== More String Functions ==========
+	case "REPLACE":
+		if len(fc.Args) < 3 {
+			return nil, fmt.Errorf("REPLACE requires 3 arguments")
+		}
+		strArg, err := evalExpr(fc.Args[0])
+		if err != nil {
+			return nil, err
+		}
+		fromArg, err := evalExpr(fc.Args[1])
+		if err != nil {
+			return nil, err
+		}
+		toArg, err := evalExpr(fc.Args[2])
+		if err != nil {
+			return nil, err
+		}
+		if strArg == nil {
+			return nil, nil
+		}
+		str, ok := strArg.(string)
+		if !ok {
+			str = fmt.Sprintf("%v", strArg)
+		}
+		from := ""
+		if fromArg != nil {
+			if s, ok := fromArg.(string); ok {
+				from = s
+			} else {
+				from = fmt.Sprintf("%v", fromArg)
+			}
+		}
+		to := ""
+		if toArg != nil {
+			if s, ok := toArg.(string); ok {
+				to = s
+			} else {
+				to = fmt.Sprintf("%v", toArg)
+			}
+		}
+		return strings.ReplaceAll(str, from, to), nil
+
+	case "CHAR":
+		var chars []rune
+		for _, arg := range fc.Args {
+			val, err := evalExpr(arg)
+			if err != nil {
+				return nil, err
+			}
+			if val == nil {
+				continue
+			}
+			var code int
+			switch v := val.(type) {
+			case int:
+				code = v
+			case int64:
+				code = int(v)
+			case float64:
+				code = int(v)
+			}
+			if code >= 0 && code <= 0x10FFFF {
+				chars = append(chars, rune(code))
+			}
+		}
+		return string(chars), nil
+
+	case "UNICODE":
+		if len(fc.Args) == 0 {
+			return nil, fmt.Errorf("UNICODE requires 1 argument")
+		}
+		arg, err := evalExpr(fc.Args[0])
+		if err != nil {
+			return nil, err
+		}
+		if arg == nil {
+			return nil, nil
+		}
+		str, ok := arg.(string)
+		if !ok {
+			str = fmt.Sprintf("%v", arg)
+		}
+		if len(str) == 0 {
+			return nil, nil
+		}
+		return int(rune(str[0])), nil
+
+	case "ASCII":
+		if len(fc.Args) == 0 {
+			return nil, fmt.Errorf("ASCII requires 1 argument")
+		}
+		arg, err := evalExpr(fc.Args[0])
+		if err != nil {
+			return nil, err
+		}
+		if arg == nil {
+			return nil, nil
+		}
+		str, ok := arg.(string)
+		if !ok {
+			str = fmt.Sprintf("%v", arg)
+		}
+		if len(str) == 0 {
+			return nil, nil
+		}
+		return int(str[0]), nil
+
+	// ========== Date/Time Functions ==========
+	case "UNIX_TIMESTAMP":
+		if len(fc.Args) == 0 {
+			return time.Now().Unix(), nil
+		}
+		arg, err := evalExpr(fc.Args[0])
+		if err != nil {
+			return nil, err
+		}
+		if arg == nil {
+			return nil, nil
+		}
+		var t time.Time
+		switch v := arg.(type) {
+		case string:
+			if parsed, err := time.Parse("2006-01-02 15:04:05", v); err == nil {
+				t = parsed
+			} else if parsed, err := time.Parse("2006-01-02", v); err == nil {
+				t = parsed
+			} else {
+				return nil, fmt.Errorf("UNIX_TIMESTAMP: invalid date format")
+			}
+		case time.Time:
+			t = v
+		default:
+			return nil, fmt.Errorf("UNIX_TIMESTAMP requires date argument")
+		}
+		return t.Unix(), nil
+
+	case "FROM_UNIXTIME":
+		if len(fc.Args) == 0 {
+			return nil, fmt.Errorf("FROM_UNIXTIME requires 1 argument")
+		}
+		arg, err := evalExpr(fc.Args[0])
+		if err != nil {
+			return nil, err
+		}
+		if arg == nil {
+			return nil, nil
+		}
+		var ts int64
+		switch v := arg.(type) {
+		case int:
+			ts = int64(v)
+		case int64:
+			ts = v
+		case float64:
+			ts = int64(v)
+		default:
+			return nil, fmt.Errorf("FROM_UNIXTIME requires numeric argument")
+		}
+		t := time.Unix(ts, 0)
+		// Optional format argument
+		if len(fc.Args) >= 2 {
+			formatArg, err := evalExpr(fc.Args[1])
+			if err != nil {
+				return nil, err
+			}
+			if formatArg != nil {
+				if format, ok := formatArg.(string); ok {
+					// Convert SQLite-style format to Go format
+					format = strings.ReplaceAll(format, "%Y", "2006")
+					format = strings.ReplaceAll(format, "%m", "01")
+					format = strings.ReplaceAll(format, "%d", "02")
+					format = strings.ReplaceAll(format, "%H", "15")
+					format = strings.ReplaceAll(format, "%M", "04")
+					format = strings.ReplaceAll(format, "%S", "05")
+					return t.Format(format), nil
+				}
+			}
+		}
+		return t.Format("2006-01-02 15:04:05"), nil
+
+	// ========== Utility Functions ==========
+	case "LAST_INSERT_ID":
+		// Return the last inserted ID from the session
+		if e.lastInsertID > 0 {
+			return e.lastInsertID, nil
+		}
+		return int64(0), nil
+
+	case "ROW_COUNT":
+		// Return the number of affected rows from last operation
+		return e.lastRowCount, nil
+
+	case "UUID":
+		// Generate a random UUID v4
+		uuid := make([]byte, 16)
+		// Use current time for some randomness
+		nano := time.Now().UnixNano()
+		for i := 0; i < 8; i++ {
+			uuid[i] = byte(nano >> (i * 8))
+		}
+		// Add more pseudo-random data
+		nano2 := nano ^ (nano >> 32)
+		for i := 8; i < 16; i++ {
+			uuid[i] = byte(nano2 >> ((i - 8) * 8))
+		}
+		// Set version (4) and variant bits
+		uuid[6] = (uuid[6] & 0x0f) | 0x40
+		uuid[8] = (uuid[8] & 0x3f) | 0x80
+		return fmt.Sprintf("%08x-%04x-%04x-%04x-%012x",
+			uuid[0:4], uuid[4:6], uuid[6:8], uuid[8:10], uuid[10:16]), nil
+
 	case "REPEAT":
 		if len(fc.Args) < 2 {
 			return nil, fmt.Errorf("REPEAT requires 2 arguments")
