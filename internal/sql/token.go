@@ -151,6 +151,7 @@ const (
 	TokGrants
 	TokOption
 	TokWith
+	TokRecursive
 	TokAt
 	TokFor
 
@@ -423,6 +424,8 @@ func (t TokenType) String() string {
 		return "OPTION"
 	case TokWith:
 		return "WITH"
+	case TokRecursive:
+		return "RECURSIVE"
 	case TokAt:
 		return "@"
 	case TokFor:
@@ -575,6 +578,7 @@ var keywords = map[string]TokenType{
 	"GRANTS":       TokGrants,
 	"OPTION":       TokOption,
 	"WITH":         TokWith,
+	"RECURSIVE":    TokRecursive,
 	"FOR":          TokFor,
 	"FUNCTION":     TokFunction,
 	"RETURNS":      TokReturns,

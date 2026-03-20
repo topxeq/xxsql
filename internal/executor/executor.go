@@ -88,6 +88,7 @@ type Executor struct {
 	outerContext  map[string]interface{} // For correlated subqueries
 	currentTable  string                 // Current table being queried (for outer context)
 	subqueryCache map[string]interface{} // Cache for non-correlated subquery results (optimization)
+	cteResults    map[string]*Result     // CTE results for WITH clause support
 }
 
 // Note on Subquery Optimization:
@@ -280,6 +281,11 @@ func (e *Executor) ExecuteWithPerms(sqlStr string, checker PermissionChecker) (*
 		return e.executeCreateFunction(s)
 	case *sql.DropFunctionStmt:
 		return e.executeDropFunction(s)
+	case *sql.WithStmt:
+		if err := checkPerm(PermSelect); err != nil {
+			return nil, err
+		}
+		return e.executeWith(s)
 	default:
 		return nil, fmt.Errorf("unsupported statement type: %T", stmt)
 	}
@@ -306,6 +312,11 @@ func (e *Executor) executeSelect(stmt *sql.SelectStmt) (*Result, error) {
 	tableName := stmt.From.Table.Name
 	if tableName == "" {
 		return nil, fmt.Errorf("table name is required")
+	}
+
+	// Check if this is a CTE reference
+	if cteResult, ok := e.cteResults[strings.ToLower(tableName)]; ok {
+		return e.executeSelectFromCTE(stmt, cteResult)
 	}
 
 	// Set current table for correlated subqueries
@@ -1504,6 +1515,66 @@ func (e *Executor) removeDuplicateRows(rows [][]interface{}) [][]interface{} {
 	return result
 }
 
+// executeWith executes a WITH clause (CTE) statement.
+func (e *Executor) executeWith(stmt *sql.WithStmt) (*Result, error) {
+	// Initialize CTE results map if needed
+	if e.cteResults == nil {
+		e.cteResults = make(map[string]*Result)
+	}
+
+	// Save current CTE results to restore later (for nested CTEs)
+	oldCTEResults := e.cteResults
+	e.cteResults = make(map[string]*Result)
+	for k, v := range oldCTEResults {
+		e.cteResults[k] = v
+	}
+
+	// Execute each CTE and store the results
+	for _, cte := range stmt.CTEs {
+		cteResult, err := e.executeStatementForCTE(cte.Query)
+		if err != nil {
+			return nil, fmt.Errorf("CTE '%s' error: %w", cte.Name, err)
+		}
+
+		// Apply column aliases if specified
+		if len(cte.Columns) > 0 {
+			for i, colName := range cte.Columns {
+				if i < len(cteResult.Columns) {
+					cteResult.Columns[i].Name = colName
+				}
+			}
+		}
+
+		// Store the CTE result
+		e.cteResults[strings.ToLower(cte.Name)] = cteResult
+	}
+
+	// Execute the main query
+	result, err := e.executeStatementForCTE(stmt.MainQuery)
+	if err != nil {
+		return nil, err
+	}
+
+	// Restore original CTE results
+	e.cteResults = oldCTEResults
+
+	return result, nil
+}
+
+// executeStatementForCTE executes a statement within a CTE context.
+func (e *Executor) executeStatementForCTE(stmt sql.Statement) (*Result, error) {
+	switch s := stmt.(type) {
+	case *sql.SelectStmt:
+		return e.executeSelect(s)
+	case *sql.UnionStmt:
+		return e.executeUnion(s)
+	case *sql.WithStmt:
+		return e.executeWith(s)
+	default:
+		return nil, fmt.Errorf("unsupported statement in CTE: %T", stmt)
+	}
+}
+
 // rowKey creates a string key from a row for deduplication.
 // executeSelectFromDerivedTable handles SELECT from a derived table (subquery in FROM clause).
 func (e *Executor) executeSelectFromDerivedTable(stmt *sql.SelectStmt) (*Result, error) {
@@ -1577,6 +1648,145 @@ func (e *Executor) executeSelectFromDerivedTable(stmt *sql.SelectStmt) (*Result,
 
 	// Process each row from the derived table
 	for _, srcRow := range derivedResult.Rows {
+		// Apply WHERE filter if present
+		if stmt.Where != nil {
+			// Build a pseudo row.Row for evaluation
+			pseudoRow := &row.Row{}
+			values := make([]types.Value, len(srcRow))
+			for i, v := range srcRow {
+				switch val := v.(type) {
+				case int:
+					values[i] = types.NewIntValue(int64(val))
+				case int64:
+					values[i] = types.NewIntValue(val)
+				case float64:
+					values[i] = types.NewFloatValue(val)
+				case string:
+					values[i] = types.NewStringValue(val, types.TypeVarchar)
+				case []byte:
+					values[i] = types.NewBlobValue(val)
+				default:
+					values[i] = types.NewStringValue(fmt.Sprintf("%v", val), types.TypeVarchar)
+				}
+			}
+			pseudoRow.Values = values
+
+			match, err := e.evaluateWhereForRow(stmt.Where, pseudoRow, columnOrder, colIdxMap)
+			if err != nil {
+				return nil, err
+			}
+			if !match {
+				continue
+			}
+		}
+
+		// Build result row
+		resultRow := make([]interface{}, len(result.Columns))
+		colIdx := 0
+		for _, colExpr := range stmt.Columns {
+			switch expr := colExpr.(type) {
+			case *sql.StarExpr:
+				for _, srcVal := range srcRow {
+					resultRow[colIdx] = srcVal
+					colIdx++
+				}
+			case *sql.ColumnRef:
+				colName := strings.ToLower(expr.Name)
+				if idx, ok := colIdxMap[colName]; ok && idx < len(srcRow) {
+					resultRow[colIdx] = srcRow[idx]
+				}
+				colIdx++
+			default:
+				// For other expressions, just use nil for now
+				colIdx++
+			}
+		}
+		result.Rows = append(result.Rows, resultRow)
+	}
+
+	// Apply ORDER BY (simplified - just pass through for now)
+	// Apply LIMIT/OFFSET
+	if stmt.Limit != nil {
+		offset := 0
+		if stmt.Offset != nil {
+			offset = int(*stmt.Offset)
+		}
+		limit := int(*stmt.Limit)
+		if offset < len(result.Rows) {
+			end := offset + limit
+			if end > len(result.Rows) {
+				end = len(result.Rows)
+			}
+			result.Rows = result.Rows[offset:end]
+		} else {
+			result.Rows = nil
+		}
+	}
+
+	result.RowCount = len(result.Rows)
+	return result, nil
+}
+
+// executeSelectFromCTE handles SELECT from a CTE (Common Table Expression).
+func (e *Executor) executeSelectFromCTE(stmt *sql.SelectStmt, cteResult *Result) (*Result, error) {
+	// Set current table for correlated subqueries
+	oldTable := e.currentTable
+	tableName := strings.ToLower(stmt.From.Table.Name)
+	e.currentTable = tableName
+	defer func() { e.currentTable = oldTable }()
+
+	// Build column index map for the CTE
+	colIdxMap := make(map[string]int)
+	for i, col := range cteResult.Columns {
+		colIdxMap[strings.ToLower(col.Name)] = i
+	}
+
+	// Build column info for the CTE
+	columnOrder := make([]*types.ColumnInfo, len(cteResult.Columns))
+	for i, col := range cteResult.Columns {
+		columnOrder[i] = &types.ColumnInfo{
+			Name: col.Name,
+			Type: types.TypeVarchar,
+		}
+	}
+
+	result := &Result{
+		Columns: make([]ColumnInfo, 0),
+		Rows:    make([][]interface{}, 0),
+	}
+
+	// Determine result columns
+	for _, colExpr := range stmt.Columns {
+		switch expr := colExpr.(type) {
+		case *sql.StarExpr:
+			for _, col := range cteResult.Columns {
+				result.Columns = append(result.Columns, col)
+			}
+		case *sql.ColumnRef:
+			colName := strings.ToLower(expr.Name)
+			if _, ok := colIdxMap[colName]; !ok {
+				return nil, fmt.Errorf("unknown column: %s", expr.Name)
+			}
+			ci := ColumnInfo{
+				Name: expr.Name,
+				Type: "VARCHAR",
+			}
+			if expr.Alias != "" {
+				ci.Alias = expr.Alias
+			}
+			result.Columns = append(result.Columns, ci)
+		default:
+			// Handle other expressions (literals, functions, etc.)
+			ci := ColumnInfo{
+				Name: fmt.Sprintf("expr_%d", len(result.Columns)+1),
+				Type: "VARCHAR",
+			}
+			result.Columns = append(result.Columns, ci)
+		}
+	}
+
+	// Process each row from the CTE
+	for _, srcRow := range cteResult.Rows {
 		// Apply WHERE filter if present
 		if stmt.Where != nil {
 			// Build a pseudo row.Row for evaluation

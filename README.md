@@ -93,7 +93,7 @@ The following comparison highlights key differences between XxSql and SQLite acr
 | **Subqueries** | Full support (all locations) | SELECT list, WHERE, HAVING, FROM clause |
 | **Correlated Subqueries** | Yes | Yes |
 | **Window Functions** | Yes | No |
-| **CTE (WITH clause)** | Yes (recursive too) | No |
+| **CTE (WITH clause)** | Yes (recursive too) | Yes (non-recursive) |
 | **GROUP BY** | Yes | Yes |
 | **HAVING** | Yes | Yes (with subquery support) |
 | **ORDER BY** | Yes | Yes |
@@ -627,6 +627,104 @@ WHERE o.amount > (
 - Correlated subqueries are executed for each outer row
 - Consider using JOINs for better performance on large datasets
 - Indexes on join columns improve correlated subquery performance
+
+### Common Table Expressions (CTE)
+
+XxSql supports Common Table Expressions (CTEs) using the `WITH` clause. CTEs allow you to define temporary named result sets that can be referenced within a SELECT, INSERT, UPDATE, or DELETE statement.
+
+#### Supported Features
+
+| Feature | Supported | Notes |
+|---------|-----------|-------|
+| **Non-recursive CTEs** | ✅ | Basic WITH clause support |
+| **Multiple CTEs** | ✅ | Define multiple CTEs separated by commas |
+| **Column aliases** | ✅ | `WITH cte(col1, col2) AS (...)` |
+| **CTE with UNION** | ✅ | CTEs can contain UNION queries |
+| **Recursive CTEs** | ❌ | Not supported |
+
+#### Syntax
+
+```sql
+WITH cte_name [(column_names)] AS (
+    subquery
+)
+[, cte_name2 AS (...)]
+SELECT ... FROM cte_name ...;
+```
+
+#### Examples
+
+**1. Simple CTE:**
+```sql
+-- Define a CTE and query from it
+WITH high_salary_employees AS (
+    SELECT id, name, salary
+    FROM employees
+    WHERE salary > 50000
+)
+SELECT * FROM high_salary_employees;
+```
+
+**2. CTE with Column Aliases:**
+```sql
+-- Specify column names for the CTE
+WITH dept_stats(dept_id, emp_count, avg_salary) AS (
+    SELECT dept_id, COUNT(*), AVG(salary)
+    FROM employees
+    GROUP BY dept_id
+)
+SELECT * FROM dept_stats WHERE emp_count > 5;
+```
+
+**3. Multiple CTEs:**
+```sql
+-- Define multiple CTEs
+WITH
+    active_users AS (
+        SELECT id, name FROM users WHERE status = 'active'
+    ),
+    premium_users AS (
+        SELECT id, name FROM users WHERE tier = 'premium'
+    )
+SELECT * FROM active_users
+UNION
+SELECT * FROM premium_users;
+```
+
+**4. CTE with Filtering and Ordering:**
+```sql
+WITH recent_orders AS (
+    SELECT customer_id, order_date, amount
+    FROM orders
+    WHERE order_date > '2024-01-01'
+)
+SELECT * FROM recent_orders
+WHERE amount > 100
+ORDER BY order_date DESC
+LIMIT 10;
+```
+
+**5. CTE with Aggregation:**
+```sql
+WITH monthly_sales AS (
+    SELECT
+        YEAR(order_date) AS year,
+        MONTH(order_date) AS month,
+        SUM(amount) AS total
+    FROM orders
+    GROUP BY YEAR(order_date), MONTH(order_date)
+)
+SELECT * FROM monthly_sales
+WHERE total > 10000
+ORDER BY year, month;
+```
+
+#### Usage Notes
+
+- CTEs are only available within the statement where they are defined
+- CTE names must be unique within a WITH clause
+- A CTE can reference other CTEs defined before it in the same WITH clause
+- Use CTEs to improve query readability and maintainability
 
 ### JOIN Support
 

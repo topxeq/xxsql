@@ -115,6 +115,8 @@ func (p *Parser) error(format string, args ...interface{}) {
 
 func (p *Parser) parseStatement() Statement {
 	switch p.currTok.Type {
+	case TokWith:
+		return p.parseWith()
 	case TokSelect:
 		return p.parseSelect()
 	case TokInsert:
@@ -154,6 +156,88 @@ func (p *Parser) parseStatement() Statement {
 		p.error("unexpected token: %s", p.currTok.Type)
 		return nil
 	}
+}
+
+// parseWith parses a WITH clause (CTE) statement.
+// Syntax: WITH [RECURSIVE] cte_name [(col1, col2, ...)] AS (query) [, ...] main_query
+func (p *Parser) parseWith() Statement {
+	p.nextToken() // consume WITH
+
+	withStmt := &WithStmt{}
+
+	// Check for RECURSIVE keyword (applies to all CTEs in the WITH clause)
+	hasRecursive := false
+	if p.curTokenIs(TokRecursive) {
+		hasRecursive = true
+		p.nextToken()
+	}
+
+	// Parse CTE definitions
+	for {
+		cte := CTEDefinition{Recursive: hasRecursive}
+
+		// Parse CTE name
+		if !p.curTokenIs(TokIdent) {
+			p.error("expected CTE name, got %s", p.currTok.Type)
+			return nil
+		}
+		cte.Name = p.currTok.Value
+		p.nextToken()
+
+		// Parse optional column list: (col1, col2, ...)
+		if p.curTokenIs(TokLParen) {
+			p.nextToken()
+			for {
+				if !p.curTokenIs(TokIdent) {
+					p.error("expected column name, got %s", p.currTok.Type)
+					return nil
+				}
+				cte.Columns = append(cte.Columns, p.currTok.Value)
+				p.nextToken()
+
+				if !p.curTokenIs(TokComma) {
+					break
+				}
+				p.nextToken()
+			}
+			if !p.expect(TokRParen) {
+				return nil
+			}
+		}
+
+		// Parse AS keyword
+		if !p.expect(TokAs) {
+			return nil
+		}
+
+		// Parse the subquery in parentheses
+		if !p.expect(TokLParen) {
+			return nil
+		}
+		cte.Query = p.parseStatement()
+		if cte.Query == nil {
+			return nil
+		}
+		if !p.expect(TokRParen) {
+			return nil
+		}
+
+		withStmt.CTEs = append(withStmt.CTEs, cte)
+
+		// Check for more CTEs
+		if !p.curTokenIs(TokComma) {
+			break
+		}
+		p.nextToken()
+	}
+
+	// Parse the main query
+	withStmt.MainQuery = p.parseStatement()
+	if withStmt.MainQuery == nil {
+		return nil
+	}
+
+	return withStmt
 }
 
 // parseSelect parses a SELECT statement.

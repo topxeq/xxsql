@@ -64,7 +64,7 @@ func TestClientServerIntegration_BasicFlow(t *testing.T) {
 	time.Sleep(500 * time.Millisecond)
 
 	// Connect using the driver
-	dsn := fmt.Sprintf("tcp(127.0.0.1:%d)/testdb", mysqlPort)
+	dsn := fmt.Sprintf("tcp(127.0.0.1:%d)/testdb?protocol=mysql", mysqlPort)
 	t.Logf("Connecting with DSN: %s", dsn)
 
 	db, err := sql.Open("xxsql", dsn)
@@ -162,7 +162,7 @@ func TestClientServerIntegration_CRUD(t *testing.T) {
 
 	time.Sleep(200 * time.Millisecond)
 
-	dsn := fmt.Sprintf("tcp(127.0.0.1:%d)/testdb", mysqlPort)
+	dsn := fmt.Sprintf("tcp(127.0.0.1:%d)/testdb?protocol=mysql", mysqlPort)
 	db, _ := sql.Open("xxsql", dsn)
 	defer db.Close()
 
@@ -251,7 +251,7 @@ func TestClientServerIntegration_Aggregates(t *testing.T) {
 
 	time.Sleep(200 * time.Millisecond)
 
-	dsn := fmt.Sprintf("tcp(127.0.0.1:%d)/testdb", mysqlPort)
+	dsn := fmt.Sprintf("tcp(127.0.0.1:%d)/testdb?protocol=mysql", mysqlPort)
 	db, _ := sql.Open("xxsql", dsn)
 	defer db.Close()
 
@@ -388,7 +388,7 @@ func TestClientServerIntegration_WhereClause(t *testing.T) {
 
 	time.Sleep(200 * time.Millisecond)
 
-	dsn := fmt.Sprintf("tcp(127.0.0.1:%d)/testdb", mysqlPort)
+	dsn := fmt.Sprintf("tcp(127.0.0.1:%d)/testdb?protocol=mysql", mysqlPort)
 	db, _ := sql.Open("xxsql", dsn)
 	defer db.Close()
 
@@ -465,7 +465,7 @@ func TestClientServerIntegration_ShowTables(t *testing.T) {
 
 	time.Sleep(200 * time.Millisecond)
 
-	dsn := fmt.Sprintf("tcp(127.0.0.1:%d)/testdb", mysqlPort)
+	dsn := fmt.Sprintf("tcp(127.0.0.1:%d)/testdb?protocol=mysql", mysqlPort)
 	db, _ := sql.Open("xxsql", dsn)
 	defer db.Close()
 

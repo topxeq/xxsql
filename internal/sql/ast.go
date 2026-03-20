@@ -27,6 +27,59 @@ type Expression interface {
 // Statements
 // ============================================================================
 
+// CTEDefinition represents a single CTE (Common Table Expression) definition.
+type CTEDefinition struct {
+	Name      string      // CTE name
+	Columns   []string    // Optional column names
+	Query     Statement   // The subquery defining the CTE
+	Recursive bool        // Whether this is a recursive CTE
+}
+
+func (c *CTEDefinition) String() string {
+	var sb strings.Builder
+	sb.WriteString(c.Name)
+	if len(c.Columns) > 0 {
+		sb.WriteString("(")
+		for i, col := range c.Columns {
+			if i > 0 {
+				sb.WriteString(", ")
+			}
+			sb.WriteString(col)
+		}
+		sb.WriteString(")")
+	}
+	sb.WriteString(" AS (")
+	sb.WriteString(c.Query.String())
+	sb.WriteString(")")
+	return sb.String()
+}
+
+// WithStmt represents a WITH clause (CTE) statement.
+// WITH cte_name AS (SELECT ...) SELECT * FROM cte_name
+type WithStmt struct {
+	CTEs      []CTEDefinition // List of CTE definitions
+	MainQuery Statement        // The main query that uses the CTEs
+}
+
+func (s *WithStmt) node()      {}
+func (s *WithStmt) statement() {}
+func (s *WithStmt) String() string {
+	var sb strings.Builder
+	sb.WriteString("WITH ")
+	for i, cte := range s.CTEs {
+		if i > 0 {
+			sb.WriteString(", ")
+		}
+		if cte.Recursive {
+			sb.WriteString("RECURSIVE ")
+		}
+		sb.WriteString(cte.String())
+	}
+	sb.WriteString(" ")
+	sb.WriteString(s.MainQuery.String())
+	return sb.String()
+}
+
 // SelectStmt represents a SELECT statement.
 type SelectStmt struct {
 	Distinct   bool

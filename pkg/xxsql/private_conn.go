@@ -49,7 +49,11 @@ func newPrivateConn(cfg *Config) (*privateConn, error) {
 // handshake performs the private protocol handshake and authentication.
 func (c *privateConn) handshake() error {
 	// Send handshake request
-	handshakeReq := make([]byte, 2+2+4+2)
+	clientVer := "1.0"
+	clientInfo := "XxSql Go Driver"
+
+	// Calculate buffer size: 2 (proto version) + 2 (client ver len) + len(clientVer) + 1 (client info len) + len(clientInfo) + 2 (extensions)
+	handshakeReq := make([]byte, 2+2+len(clientVer)+1+len(clientInfo)+2)
 	offset := 0
 
 	// Protocol version (v3)
@@ -57,14 +61,12 @@ func (c *privateConn) handshake() error {
 	offset += 2
 
 	// Client version "1.0"
-	clientVer := "1.0"
 	binary.BigEndian.PutUint16(handshakeReq[offset:], uint16(len(clientVer)))
 	offset += 2
 	copy(handshakeReq[offset:], clientVer)
 	offset += len(clientVer)
 
 	// Client info "XxSql Go Driver"
-	clientInfo := "XxSql Go Driver"
 	handshakeReq[offset] = byte(len(clientInfo))
 	offset += 1
 	copy(handshakeReq[offset:], clientInfo)

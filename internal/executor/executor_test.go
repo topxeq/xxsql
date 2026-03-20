@@ -1291,3 +1291,127 @@ func TestExecutor_SetOperations(t *testing.T) {
 	}
 	t.Logf("EXCEPT reverse result (%d rows): %v", len(result5.Rows), result5.Rows)
 }
+
+func TestExecutorCTE(t *testing.T) {
+	// Create temp directory
+	tmpDir, err := os.MkdirTemp("", "xxsql-executor-test-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	// Create storage engine
+	engine := storage.NewEngine(tmpDir)
+	if err := engine.Open(); err != nil {
+		t.Fatalf("Failed to open engine: %v", err)
+	}
+	defer engine.Close()
+
+	// Create executor
+	exec := executor.NewExecutor(engine)
+
+	// Create a table with test data
+	_, err = exec.Execute("CREATE TABLE employees (id INT, name VARCHAR(50), dept_id INT, salary INT)")
+	if err != nil {
+		t.Fatalf("Failed to create table: %v", err)
+	}
+
+	// Insert test data
+	_, err = exec.Execute("INSERT INTO employees VALUES (1, 'Alice', 1, 50000)")
+	if err != nil {
+		t.Fatalf("Failed to insert: %v", err)
+	}
+	_, err = exec.Execute("INSERT INTO employees VALUES (2, 'Bob', 1, 60000)")
+	if err != nil {
+		t.Fatalf("Failed to insert: %v", err)
+	}
+	_, err = exec.Execute("INSERT INTO employees VALUES (3, 'Charlie', 2, 55000)")
+	if err != nil {
+		t.Fatalf("Failed to insert: %v", err)
+	}
+	_, err = exec.Execute("INSERT INTO employees VALUES (4, 'Diana', 2, 70000)")
+	if err != nil {
+		t.Fatalf("Failed to insert: %v", err)
+	}
+	_, err = exec.Execute("INSERT INTO employees VALUES (5, 'Eve', 3, 45000)")
+	if err != nil {
+		t.Fatalf("Failed to insert: %v", err)
+	}
+
+	// Test 1: Simple CTE
+	t.Run("SimpleCTE", func(t *testing.T) {
+		result, err := exec.Execute("WITH dept_1_employees AS (SELECT id, name, salary FROM employees WHERE dept_id = 1) SELECT * FROM dept_1_employees")
+		if err != nil {
+			t.Fatalf("CTE query failed: %v", err)
+		}
+		// Should have 2 rows (Alice and Bob)
+		if len(result.Rows) != 2 {
+			t.Errorf("Expected 2 rows, got %d", len(result.Rows))
+		}
+		t.Logf("CTE result (%d rows): %v", len(result.Rows), result.Rows)
+	})
+
+	// Test 2: CTE with column aliases
+	t.Run("CTEWithColumnAliases", func(t *testing.T) {
+		result, err := exec.Execute("WITH high_earners(emp_id, emp_name, emp_salary) AS (SELECT id, name, salary FROM employees WHERE salary > 55000) SELECT * FROM high_earners")
+		if err != nil {
+			t.Fatalf("CTE with aliases failed: %v", err)
+		}
+		// Should have 2 rows (Bob with 60000, Diana with 70000)
+		if len(result.Rows) != 2 {
+			t.Errorf("Expected 2 rows, got %d", len(result.Rows))
+		}
+		// Check column names
+		if len(result.Columns) >= 3 {
+			if result.Columns[0].Name != "emp_id" {
+				t.Errorf("Expected column name 'emp_id', got '%s'", result.Columns[0].Name)
+			}
+		}
+		t.Logf("CTE with aliases result (%d rows): %v", len(result.Rows), result.Rows)
+	})
+
+	// Test 3: Multiple CTEs
+	t.Run("MultipleCTEs", func(t *testing.T) {
+		result, err := exec.Execute(`
+			WITH
+				dept_1 AS (SELECT id, name FROM employees WHERE dept_id = 1),
+				dept_2 AS (SELECT id, name FROM employees WHERE dept_id = 2)
+			SELECT * FROM dept_1
+			UNION
+			SELECT * FROM dept_2
+		`)
+		if err != nil {
+			t.Fatalf("Multiple CTEs failed: %v", err)
+		}
+		// Should have 4 rows (Alice, Bob, Charlie, Diana)
+		if len(result.Rows) != 4 {
+			t.Errorf("Expected 4 rows, got %d", len(result.Rows))
+		}
+		t.Logf("Multiple CTEs result (%d rows): %v", len(result.Rows), result.Rows)
+	})
+
+	// Test 4: CTE with WHERE clause in main query
+	t.Run("CTEWithWhereInMainQuery", func(t *testing.T) {
+		result, err := exec.Execute("WITH all_employees AS (SELECT id, name, salary FROM employees) SELECT * FROM all_employees WHERE salary > 50000")
+		if err != nil {
+			t.Fatalf("CTE with WHERE failed: %v", err)
+		}
+		// Should have 3 rows (Bob 60000, Charlie 55000, Diana 70000)
+		if len(result.Rows) != 3 {
+			t.Errorf("Expected 3 rows, got %d", len(result.Rows))
+		}
+		t.Logf("CTE with WHERE result (%d rows): %v", len(result.Rows), result.Rows)
+	})
+
+	// Test 5: CTE with LIMIT
+	t.Run("CTEWithLimit", func(t *testing.T) {
+		result, err := exec.Execute("WITH sorted_employees AS (SELECT id, name, salary FROM employees) SELECT * FROM sorted_employees LIMIT 2")
+		if err != nil {
+			t.Fatalf("CTE with LIMIT failed: %v", err)
+		}
+		if len(result.Rows) != 2 {
+			t.Errorf("Expected 2 rows, got %d", len(result.Rows))
+		}
+		t.Logf("CTE with LIMIT result (%d rows): %v", len(result.Rows), result.Rows)
+	})
+}
