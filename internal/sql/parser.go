@@ -457,17 +457,33 @@ func (p *Parser) parseSelectColumn() Expression {
 	// Check for alias
 	if p.curTokenIs(TokAs) {
 		p.nextToken()
-		if p.curTokenIs(TokIdent) {
+		// Accept identifiers and keywords as alias names
+		if p.curTokenIs(TokIdent) || isKeywordAsIdent(p.currTok.Type) {
 			setAlias(expr, p.currTok.Value)
 			p.nextToken()
 		}
-	} else if p.curTokenIs(TokIdent) {
-		// Implicit alias (without AS)
+	} else if p.curTokenIs(TokIdent) || isKeywordAsIdent(p.currTok.Type) {
+		// Implicit alias (without AS) - accept identifiers and keywords
 		setAlias(expr, p.currTok.Value)
 		p.nextToken()
 	}
 
 	return expr
+}
+
+// isKeywordAsIdent returns true if the token type can be used as an identifier (e.g., for aliases)
+func isKeywordAsIdent(t TokenType) bool {
+	switch t {
+	case TokCumeDist, TokPercentRank, TokNthValue, TokNtile, TokLead, TokLag,
+		TokFirstValue, TokLastValue, TokCount, TokSum,
+		TokAvg, TokMin, TokMax, TokCoalesce, TokNullIf, TokCast, TokCase,
+		TokWhen, TokThen, TokElse, TokEnd, TokIf, TokExists, TokAny,
+		TokOver, TokPartition, TokWindow, TokRows, TokRange, TokPreceding,
+		TokFollowing, TokCurrent, TokIgnore, TokRespect, TokUnbounded:
+		return true
+	default:
+		return false
+	}
 }
 
 // setAlias sets the alias on an expression if supported.
@@ -784,9 +800,8 @@ func (p *Parser) parseSetOperation(left Statement, op SetOperation) *UnionStmt {
 	p.nextToken() // consume UNION/INTERSECT/EXCEPT
 
 	all := false
-	// INTERSECT ALL and EXCEPT ALL are not standard SQL, but some databases support them
-	// We'll support ALL only for UNION as per standard
-	if op == SetUnion && p.curTokenIs(TokAll) {
+	// Support ALL for all set operations (UNION ALL, INTERSECT ALL, EXCEPT ALL)
+	if p.curTokenIs(TokAll) {
 		all = true
 		p.nextToken()
 	}
@@ -2064,8 +2079,8 @@ func (p *Parser) parsePrimaryExpr() Expression {
 	// Handle function keywords (COUNT, SUM, AVG, MIN, MAX, COALESCE, NULLIF)
 	case TokCount, TokSum, TokAvg, TokMin, TokMax, TokCoalesce, TokNullIf:
 		return p.parseFunctionKeyword()
-	// Window function keywords (LEAD, LAG, FIRST_VALUE, LAST_VALUE, NTILE)
-	case TokLead, TokLag, TokNtile, TokFirstValue, TokLastValue:
+	// Window function keywords (LEAD, LAG, FIRST_VALUE, LAST_VALUE, NTILE, NTH_VALUE, PERCENT_RANK, CUME_DIST)
+	case TokLead, TokLag, TokNtile, TokFirstValue, TokLastValue, TokNthValue, TokPercentRank, TokCumeDist:
 		return p.parseFunctionKeyword()
 	// UDF expressions
 	case TokIf:

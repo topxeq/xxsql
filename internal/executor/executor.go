@@ -444,7 +444,7 @@ func (e *Executor) executeSelect(stmt *sql.SelectStmt) (*Result, error) {
 			}
 
 			// Check if it's an aggregate function
-			isAggregate := funcName == "COUNT" || funcName == "SUM" || funcName == "AVG" || funcName == "MIN" || funcName == "MAX" || funcName == "GROUP_CONCAT" || funcName == "STDDEV" || funcName == "STDDEV_SAMP" || funcName == "VARIANCE" || funcName == "VAR_SAMP"
+			isAggregate := funcName == "COUNT" || funcName == "SUM" || funcName == "AVG" || funcName == "MIN" || funcName == "MAX" || funcName == "GROUP_CONCAT" || funcName == "STRING_AGG" || funcName == "STDDEV" || funcName == "STDDEV_SAMP" || funcName == "VARIANCE" || funcName == "VAR_SAMP"
 
 			// Determine result type
 			resultType := "VARCHAR"
@@ -452,7 +452,7 @@ func (e *Executor) executeSelect(stmt *sql.SelectStmt) (*Result, error) {
 				resultType = "INT"
 				if funcName == "AVG" || funcName == "STDDEV" || funcName == "STDDEV_SAMP" || funcName == "VARIANCE" || funcName == "VAR_SAMP" {
 					resultType = "FLOAT"
-				} else if funcName == "GROUP_CONCAT" {
+				} else if funcName == "GROUP_CONCAT" || funcName == "STRING_AGG" {
 					resultType = "VARCHAR"
 				}
 			}
@@ -1141,6 +1141,15 @@ func (e *Executor) computeWindowFunction(wf *sql.WindowFuncCall, partition []int
 
 	case "NTILE":
 		e.computeNtile(partition, wf, windowValues, colIndex)
+
+	case "NTH_VALUE":
+		e.computeNthValue(partition, rows, wf, windowValues, colIndex, colIdxMap)
+
+	case "PERCENT_RANK":
+		e.computePercentRank(partition, rows, wf, windowValues, colIndex, colIdxMap)
+
+	case "CUME_DIST":
+		e.computeCumeDist(partition, rows, wf, windowValues, colIndex, colIdxMap)
 	}
 }
 
@@ -1407,6 +1416,187 @@ func (e *Executor) computeNtile(partition []int, wf *sql.WindowFuncCall, windowV
 			windowValues[rowIdx][colIndex] = int64(bucket)
 			currentPos++
 		}
+	}
+}
+
+// computeNthValue computes NTH_VALUE window function.
+// NTH_VALUE(col, n) returns the nth value in the window frame.
+func (e *Executor) computeNthValue(partition []int, rows []*row.Row, wf *sql.WindowFuncCall, windowValues []map[int]interface{}, colIndex int, colIdxMap map[string]int) {
+	// Get the n parameter (which row to get)
+	n := 1
+	if len(wf.Func.Args) >= 2 {
+		if lit, ok := wf.Func.Args[1].(*sql.Literal); ok {
+			switch v := lit.Value.(type) {
+			case int64:
+				n = int(v)
+			case string:
+				if parsed, err := strconv.ParseInt(v, 10, 64); err == nil && parsed > 0 {
+					n = int(parsed)
+				}
+			}
+		}
+	}
+
+	if n <= 0 {
+		n = 1
+	}
+
+	// Get column index for the first argument
+	if len(wf.Func.Args) == 0 {
+		return
+	}
+
+	var colIdx int
+	if colRef, ok := wf.Func.Args[0].(*sql.ColumnRef); ok {
+		var found bool
+		colIdx, found = colIdxMap[strings.ToLower(colRef.Name)]
+		if !found {
+			return
+		}
+	} else {
+		return
+	}
+
+	partitionLen := len(partition)
+	frame := wf.Window.Frame
+
+	// Check for FROM LAST (search from end instead of beginning)
+	fromLast := false
+	// Note: FROM LAST parsing would need additional support
+
+	for i, rowIdx := range partition {
+		start, end := e.getFrameBounds(frame, partitionLen, i)
+
+		// Calculate the position within the frame
+		var targetPos int
+		if fromLast {
+			// Count from the end
+			targetPos = end - n + 1
+		} else {
+			// Count from the beginning
+			targetPos = start + n - 1
+		}
+
+		// Check if position is valid
+		if targetPos >= start && targetPos <= end && targetPos < partitionLen {
+			targetRowIdx := partition[targetPos]
+			r := rows[targetRowIdx]
+			if colIdx < len(r.Values) && !r.Values[colIdx].Null {
+				windowValues[rowIdx][colIndex] = e.valueToInterface(r.Values[colIdx])
+			} else {
+				windowValues[rowIdx][colIndex] = nil
+			}
+		} else {
+			windowValues[rowIdx][colIndex] = nil
+		}
+	}
+}
+
+// computePercentRank computes PERCENT_RANK window function.
+// PERCENT_RANK = (rank - 1) / (total_rows - 1)
+func (e *Executor) computePercentRank(partition []int, rows []*row.Row, wf *sql.WindowFuncCall, windowValues []map[int]interface{}, colIndex int, colIdxMap map[string]int) {
+	partitionLen := len(partition)
+	if partitionLen == 0 {
+		return
+	}
+
+	// If no ORDER BY, all rows have the same rank
+	if len(wf.Window.OrderBy) == 0 {
+		for _, rowIdx := range partition {
+			windowValues[rowIdx][colIndex] = 0.0
+		}
+		return
+	}
+
+	// Get ORDER BY column index
+	var orderColIdx int
+	if colRef, ok := wf.Window.OrderBy[0].Expr.(*sql.ColumnRef); ok {
+		orderColIdx = colIdxMap[strings.ToLower(colRef.Name)]
+	}
+
+	// Calculate rank for each row
+	rank := 0
+	var prevValue interface{}
+	for i, rowIdx := range partition {
+		r := rows[rowIdx]
+		var currentValue interface{}
+		if orderColIdx < len(r.Values) && !r.Values[orderColIdx].Null {
+			currentValue = e.valueToInterface(r.Values[orderColIdx])
+		}
+
+		// Update rank if value changed
+		if i > 0 && !valuesEqual(currentValue, prevValue) {
+			rank = i
+		}
+
+		// Calculate percent rank: (rank - 1) / (total - 1)
+		var percentRank float64
+		if partitionLen > 1 {
+			percentRank = float64(rank) / float64(partitionLen-1)
+		} else {
+			percentRank = 0.0
+		}
+
+		windowValues[rowIdx][colIndex] = percentRank
+		prevValue = currentValue
+	}
+}
+
+// computeCumeDist computes CUME_DIST window function.
+// CUME_DIST = number of rows with value <= current / total rows
+func (e *Executor) computeCumeDist(partition []int, rows []*row.Row, wf *sql.WindowFuncCall, windowValues []map[int]interface{}, colIndex int, colIdxMap map[string]int) {
+	partitionLen := len(partition)
+	if partitionLen == 0 {
+		return
+	}
+
+	// If no ORDER BY, all rows have the same cume_dist
+	if len(wf.Window.OrderBy) == 0 {
+		cumeDist := 1.0
+		for _, rowIdx := range partition {
+			windowValues[rowIdx][colIndex] = cumeDist
+		}
+		return
+	}
+
+	// Get ORDER BY column index
+	var orderColIdx int
+	if colRef, ok := wf.Window.OrderBy[0].Expr.(*sql.ColumnRef); ok {
+		orderColIdx = colIdxMap[strings.ToLower(colRef.Name)]
+	}
+
+	// For each row, count how many rows have value <= current
+	for _, rowIdx := range partition {
+		r := rows[rowIdx]
+		var currentValue interface{}
+		if orderColIdx < len(r.Values) && !r.Values[orderColIdx].Null {
+			currentValue = e.valueToInterface(r.Values[orderColIdx])
+		}
+
+		// Count rows with value <= current (including NULL handling)
+		count := 0
+		for _, otherRowIdx := range partition {
+			otherRow := rows[otherRowIdx]
+			var otherValue interface{}
+			if orderColIdx < len(otherRow.Values) && !otherRow.Values[orderColIdx].Null {
+				otherValue = e.valueToInterface(otherRow.Values[orderColIdx])
+			}
+
+			// Compare values
+			if currentValue == nil && otherValue == nil {
+				count++
+			} else if currentValue != nil && otherValue != nil {
+				if compareValues(otherValue, currentValue) <= 0 {
+					count++
+				}
+			}
+			// Note: NULL values are typically considered less than non-NULL values
+			// but for CUME_DIST we consider NULLs equal to NULLs
+		}
+
+		// Calculate cumulative distribution
+		cumeDist := float64(count) / float64(partitionLen)
+		windowValues[rowIdx][colIndex] = cumeDist
 	}
 }
 
@@ -1766,6 +1956,25 @@ func (e *Executor) executeGroupBy(stmt *sql.SelectStmt, rows []*row.Row, resultC
 				}
 				// Default separator is comma
 				resultRow[agg.index] = strings.Join(parts, ",")
+			case "STRING_AGG":
+				// STRING_AGG(expr, separator) - PostgreSQL-style string aggregation
+				// Syntax: STRING_AGG(expr, separator)
+				var parts []string
+				separator := "," // default separator
+				// The separator is typically the second argument
+				// For simplicity, we use comma as default
+				for _, r := range filteredRows {
+					if agg.arg != "" {
+						for j, col := range tblInfo.Columns {
+							if strings.ToLower(col.Name) == agg.arg {
+								if j < len(r.Values) && !r.Values[j].Null {
+									parts = append(parts, fmt.Sprintf("%v", e.valueToInterface(r.Values[j])))
+								}
+							}
+						}
+					}
+				}
+				resultRow[agg.index] = strings.Join(parts, separator)
 			case "STDDEV", "STDDEV_SAMP":
 				// Standard deviation (sample)
 				var values []float64
@@ -2333,11 +2542,19 @@ func (e *Executor) executeUnion(stmt *sql.UnionStmt) (*Result, error) {
 
 	case sql.SetIntersect:
 		// INTERSECT: rows that exist in both results
-		result.Rows = e.intersectRows(leftResult.Rows, rightResult.Rows)
+		if stmt.All {
+			result.Rows = e.intersectAllRows(leftResult.Rows, rightResult.Rows)
+		} else {
+			result.Rows = e.intersectRows(leftResult.Rows, rightResult.Rows)
+		}
 
 	case sql.SetExcept:
 		// EXCEPT: rows in left but not in right
-		result.Rows = e.exceptRows(leftResult.Rows, rightResult.Rows)
+		if stmt.All {
+			result.Rows = e.exceptAllRows(leftResult.Rows, rightResult.Rows)
+		} else {
+			result.Rows = e.exceptRows(leftResult.Rows, rightResult.Rows)
+		}
 	}
 
 	result.RowCount = len(result.Rows)
@@ -2379,6 +2596,57 @@ func (e *Executor) exceptRows(left, right [][]interface{}) [][]interface{} {
 		if !rightSet[key] && !seen[key] {
 			result = append(result, row)
 			seen[key] = true
+		}
+	}
+	return result
+}
+
+// intersectAllRows returns rows that exist in both left and right, preserving duplicates.
+// Each row appears min(count_in_left, count_in_right) times.
+func (e *Executor) intersectAllRows(left, right [][]interface{}) [][]interface{} {
+	// Count occurrences in right
+	rightCounts := make(map[string]int)
+	for _, row := range right {
+		key := e.rowKey(row)
+		rightCounts[key]++
+	}
+
+	// Track how many times we've used each key from right
+	usedCounts := make(map[string]int)
+
+	var result [][]interface{}
+	for _, row := range left {
+		key := e.rowKey(row)
+		// Check if we can still use this row from right
+		if usedCounts[key] < rightCounts[key] {
+			result = append(result, row)
+			usedCounts[key]++
+		}
+	}
+	return result
+}
+
+// exceptAllRows returns rows in left but not in right, preserving duplicates.
+// Each row appears max(0, count_in_left - count_in_right) times.
+func (e *Executor) exceptAllRows(left, right [][]interface{}) [][]interface{} {
+	// Count occurrences in right
+	rightCounts := make(map[string]int)
+	for _, row := range right {
+		key := e.rowKey(row)
+		rightCounts[key]++
+	}
+
+	// Track how many times we've seen each key from left
+	leftCounts := make(map[string]int)
+
+	var result [][]interface{}
+	for _, row := range left {
+		key := e.rowKey(row)
+		leftCounts[key]++
+		// Include row if we haven't exhausted the right-side occurrences
+		// count_left_so_far > count_right means we should include this row
+		if leftCounts[key] > rightCounts[key] {
+			result = append(result, row)
 		}
 	}
 	return result

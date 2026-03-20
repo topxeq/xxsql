@@ -176,9 +176,14 @@ const (
 	TokNtile      // NTILE window function
 	TokFirstValue // FIRST_VALUE window function
 	TokLastValue  // LAST_VALUE window function
+	TokNthValue   // NTH_VALUE window function
+	TokPercentRank // PERCENT_RANK window function
+	TokCumeDist   // CUME_DIST window function
 	TokIgnore     // IGNORE NULLS
 	TokRespect    // RESPECT NULLS
 	TokUnbounded  // UNBOUNDED PRECEDING/FOLLOWING
+	TokFromFirst  // FROM FIRST (for NTH_VALUE)
+	TokFromLast   // FROM LAST (for NTH_VALUE)
 
 	// Keywords - LATERAL
 	TokLateral // LATERAL for correlated subqueries
@@ -530,6 +535,16 @@ func (t TokenType) String() string {
 		return "RESPECT"
 	case TokUnbounded:
 		return "UNBOUNDED"
+	case TokNthValue:
+		return "NTH_VALUE"
+	case TokPercentRank:
+		return "PERCENT_RANK"
+	case TokCumeDist:
+		return "CUME_DIST"
+	case TokFromFirst:
+		return "FROM FIRST"
+	case TokFromLast:
+		return "FROM LAST"
 	case TokLateral:
 		return "LATERAL"
 	case TokFunction:
@@ -741,6 +756,9 @@ var keywords = map[string]TokenType{
 	"IGNORE":       TokIgnore,
 	"RESPECT":      TokRespect,
 	"UNBOUNDED":    TokUnbounded,
+	"NTH_VALUE":    TokNthValue,
+	"PERCENT_RANK": TokPercentRank,
+	"CUME_DIST":    TokCumeDist,
 	"LATERAL":      TokLateral,
 	"FUNCTION":     TokFunction,
 	"RETURNS":      TokReturns,
