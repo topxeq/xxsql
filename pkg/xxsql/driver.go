@@ -40,7 +40,7 @@ func (d *xxsqlDriver) Open(dsn string) (driver.Conn, error) {
 		return nil, err
 	}
 
-	return newConn(cfg)
+	return newConnection(cfg)
 }
 
 // OpenConnector returns a connector for the given DSN.
@@ -73,12 +73,27 @@ func (c *connector) Connect(ctx context.Context) (driver.Conn, error) {
 	default:
 	}
 
-	return newConn(c.cfg)
+	return newConnection(c.cfg)
 }
 
 // Driver returns the underlying driver.
 func (c *connector) Driver() driver.Driver {
 	return c.drv
+}
+
+// newConnection creates a new connection based on the protocol in config.
+func newConnection(cfg *Config) (driver.Conn, error) {
+	switch cfg.Protocol {
+	case ProtocolMySQL:
+		// Use MySQL wire protocol
+		return newConn(cfg)
+	case ProtocolPrivate:
+		// Use XxSql private protocol
+		return newPrivateConn(cfg)
+	default:
+		// Default to private protocol
+		return newPrivateConn(cfg)
+	}
 }
 
 // Open is a convenience function that opens a database connection.

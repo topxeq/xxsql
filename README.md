@@ -192,16 +192,16 @@ The following comparison highlights key differences between XxSql and SQLite acr
 | Interface | SQLite | XxSql |
 |-----------|--------|-------|
 | **Native API** | C API | Native Go driver (`github.com/topxeq/xxsql/pkg/xxsql`) |
-| **Driver Protocol** | File-based | MySQL wire protocol |
+| **Driver Protocol** | File-based | Private binary protocol (default) or MySQL wire protocol |
+| **Default Port** | N/A (embedded) | 9527 (private) / 3306 (MySQL) |
 | **Language Bindings** | 40+ languages | Any MySQL driver (40+ languages) |
 | **Python** | sqlite3 module | mysql-connector, PyMySQL |
 | **Java** | JDBC (SQLite) | JDBC (MySQL driver) |
 | **Node.js** | better-sqlite3, sqlite3 | mysql, mysql2 |
-| **Go** | go-sqlite3 (CGO) | Native driver (pure Go, no CGO) |
+| **Go** | go-sqlite3 (CGO) | Native driver (pure Go, no CGO) - uses private protocol |
 | **Rust** | rusqlite | mysql crate |
 | **REST API** | N/A | Built-in HTTP API |
 | **ODBC** | SQLite ODBC driver | MySQL ODBC driver |
-| **Private Protocol** | N/A | Binary protocol on port 9527 (for internal use) |
 
 ### Cross-Platform Support
 
@@ -735,6 +735,12 @@ RESTORE DATABASE FROM '/path/to/backup.xbak';
 
 XxSql provides a native Go driver compatible with the `database/sql` package.
 
+**Key Features:**
+- **Default: Private Protocol** - Uses XxSql's optimized binary protocol (port 9527)
+- **Optional: MySQL Protocol** - Can connect via MySQL wire protocol (port 3306)
+- **Pure Go** - No CGO dependencies
+- **Easy Cross-Compilation** - Works on all Go-supported platforms
+
 ### Installation
 
 ```bash
@@ -755,12 +761,15 @@ import (
 )
 
 func main() {
-    // Open connection
-    db, err := sql.Open("xxsql", "admin:password@tcp(localhost:3306)/testdb")
+    // Open connection using private protocol (default, port 9527)
+    db, err := sql.Open("xxsql", "admin:password@tcp(localhost:9527)/testdb")
     if err != nil {
         log.Fatal(err)
     }
     defer db.Close()
+
+    // Or use MySQL protocol (port 3306) - useful when connecting to MySQL-compatible port
+    // db, err := sql.Open("xxsql", "admin:password@tcp(localhost:3306)/testdb?protocol=mysql")
 
     // Create table
     _, err = db.Exec(`CREATE TABLE IF NOT EXISTS users (
@@ -805,9 +814,10 @@ XxSql driver supports two DSN formats:
 ```
 
 Examples:
-- `admin:password@tcp(localhost:3306)/testdb`
-- `root@tcp(127.0.0.1:3306)/mydb`
-- `/testdb`
+- `admin:password@tcp(localhost:9527)/testdb` - Private protocol (default port)
+- `admin:password@tcp(localhost:3306)/testdb?protocol=mysql` - MySQL protocol
+- `root@tcp(127.0.0.1:9527)/mydb`
+- `/testdb` - Uses default host and private protocol port
 
 **2. URL-style DSN:**
 ```
@@ -815,19 +825,36 @@ xxsql://[username[:password]@]host[:port]/dbname[?options]
 ```
 
 Examples:
-- `xxsql://admin:password@localhost:3306/testdb`
-- `xxsql://root@127.0.0.1:3306/mydb`
-- `xxsql://localhost/testdb`
+- `xxsql://admin:password@localhost:9527/testdb` - Private protocol
+- `xxsql://admin:password@localhost:3306/testdb?protocol=mysql` - MySQL protocol
+- `xxsql://root@127.0.0.1:9527/mydb`
+- `xxsql://localhost/testdb` - Default port is 9527 (private protocol)
 
-**Supported Options:**
+**Protocol Options:**
 
 | Parameter | Description | Default |
 |-----------|-------------|---------|
+| `protocol` | Connection protocol: `private` or `mysql` | `private` |
 | `timeout` | Connection timeout | `10s` |
 | `readTimeout` | Read timeout | `30s` |
 | `writeTimeout` | Write timeout | `30s` |
 | `charset` | Character set | `utf8mb4` |
 | `parseTime` | Parse DATE/DATETIME to time.Time | `false` |
+
+**Port Defaults:**
+- When `protocol=private` (default): Port 9527
+- When `protocol=mysql`: Port 3306
+
+**Why Private Protocol?**
+- Optimized binary protocol for XxSql
+- Lower overhead than MySQL protocol
+- Supports XxSql-specific features
+- Recommended for Go applications connecting to XxSql
+
+**When to Use MySQL Protocol:**
+- Connecting through MySQL-compatible proxies
+- Using existing MySQL tooling
+- When private protocol port is not available
 
 ## CLI Client
 

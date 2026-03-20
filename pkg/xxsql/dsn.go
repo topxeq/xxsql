@@ -21,6 +21,10 @@ const (
 	DefaultCharset      = "utf8mb4"
 	DefaultCollation    = "utf8mb4_general_ci"
 	MaxAllowedPacket    = 4 * 1024 * 1024 // 4MB
+
+	// Protocol types
+	ProtocolMySQL   = "mysql"   // MySQL wire protocol (port 3306)
+	ProtocolPrivate = "private" // XxSql private protocol (port 9527)
 )
 
 // Config represents the configuration for an XxSql connection.
@@ -30,6 +34,7 @@ type Config struct {
 	Net              string        // Network type: "tcp"
 	Addr             string        // Network address: "host:port"
 	DBName           string        // Database name
+	Protocol         string        // Protocol: "mysql" or "private" (default: private)
 	Timeout          time.Duration // Connection timeout
 	ReadTimeout      time.Duration // Read timeout
 	WriteTimeout     time.Duration // Write timeout
@@ -45,6 +50,7 @@ func NewConfig() *Config {
 	return &Config{
 		Net:              DefaultNet,
 		Addr:             DefaultAddr,
+		Protocol:         ProtocolPrivate, // Default to private protocol
 		Timeout:          DefaultTimeout,
 		ReadTimeout:      DefaultReadTimeout,
 		WriteTimeout:     DefaultWriteTimeout,
@@ -100,9 +106,9 @@ func parseURLDSN(dsn string) (*Config, error) {
 	// Parse host:port
 	if u.Host != "" {
 		cfg.Addr = u.Host
-		// Add default port if not specified
+		// Add default port if not specified (will be set after protocol is known)
 		if !strings.Contains(u.Host, ":") {
-			cfg.Addr = u.Host + ":3306"
+			cfg.Addr = u.Host // Port will be added later
 		}
 	}
 
@@ -112,6 +118,15 @@ func parseURLDSN(dsn string) (*Config, error) {
 	// Parse query parameters
 	if err := parseParams(cfg, u.RawQuery); err != nil {
 		return nil, err
+	}
+
+	// Add default port based on protocol
+	if !strings.Contains(cfg.Addr, ":") {
+		if cfg.Protocol == ProtocolMySQL {
+			cfg.Addr = cfg.Addr + ":3306"
+		} else {
+			cfg.Addr = cfg.Addr + ":9527"
+		}
 	}
 
 	return cfg, nil
@@ -179,6 +194,15 @@ func parseMySQLDSN(dsn string) (*Config, error) {
 		cfg.DBName = dbPart
 	}
 
+	// Add default port based on protocol if not specified
+	if !strings.Contains(cfg.Addr, ":") {
+		if cfg.Protocol == ProtocolMySQL {
+			cfg.Addr = cfg.Addr + ":3306"
+		} else {
+			cfg.Addr = cfg.Addr + ":9527"
+		}
+	}
+
 	return cfg, nil
 }
 
@@ -232,6 +256,12 @@ func parseParams(cfg *Config, paramsStr string) error {
 				return fmt.Errorf("invalid maxAllowedPacket value: %w", err)
 			}
 			cfg.MaxAllowedPacket = size
+		case "protocol":
+			if val == ProtocolMySQL || val == ProtocolPrivate {
+				cfg.Protocol = val
+			} else {
+				return fmt.Errorf("invalid protocol value: %s (expected 'mysql' or 'private')", val)
+			}
 		}
 	}
 

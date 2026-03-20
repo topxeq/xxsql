@@ -223,10 +223,11 @@ func TestParseDSN(t *testing.T) {
 			name: "URL format without port",
 			dsn:  "xxsql://root@localhost/testdb",
 			expected: &Config{
-				User:   "root",
-				Net:    "tcp",
-				Addr:   "localhost:3306",
-				DBName: "testdb",
+				User:     "root",
+				Net:      "tcp",
+				Addr:     "localhost:9527", // Default to private protocol port
+				Protocol: ProtocolPrivate,
+				DBName:   "testdb",
 			},
 		},
 		{
