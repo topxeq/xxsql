@@ -2248,11 +2248,115 @@ func (p *Parser) parseWindowFunction(fc *FunctionCall, ignoreNulls, respectNulls
 		wfc.Window.OrderBy = p.parseOrderByItems()
 	}
 
+	// Parse frame clause (ROWS/RANGE BETWEEN ... AND ...)
+	if p.curTokenIs(TokRows) || p.curTokenIs(TokRange) {
+		wfc.Window.Frame = p.parseFrameSpec()
+		if wfc.Window.Frame == nil {
+			return nil
+		}
+	}
+
 	if !p.expect(TokRParen) {
 		return nil
 	}
 
 	return wfc
+}
+
+// parseFrameSpec parses a window frame clause.
+// Syntax: ROWS BETWEEN bound AND bound
+//         RANGE BETWEEN bound AND bound
+func (p *Parser) parseFrameSpec() *FrameSpec {
+	frame := &FrameSpec{}
+
+	// ROWS or RANGE
+	if p.curTokenIs(TokRows) {
+		frame.Mode = "ROWS"
+	} else {
+		frame.Mode = "RANGE"
+	}
+	p.nextToken() // consume ROWS/RANGE
+
+	// Optional BETWEEN keyword (can be omitted for single bound)
+	hasBetween := false
+	if p.curTokenIs(TokBetween) {
+		hasBetween = true
+		p.nextToken() // consume BETWEEN
+	}
+
+	// Parse start bound
+	frame.Start = p.parseFrameBound()
+	if frame.Start.Type == "" {
+		return nil
+	}
+
+	// If BETWEEN was specified, require AND and end bound
+	if hasBetween {
+		if !p.expect(TokAnd) {
+			return nil
+		}
+		frame.End = p.parseFrameBound()
+		if frame.End.Type == "" {
+			return nil
+		}
+	} else {
+		// Single bound form: "ROWS 1 PRECEDING" means "ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING"
+		frame.End = FrameBound{Type: "CURRENT ROW"}
+	}
+
+	return frame
+}
+
+// parseFrameBound parses a single frame bound.
+// Syntax: UNBOUNDED PRECEDING | n PRECEDING | CURRENT ROW | n FOLLOWING | UNBOUNDED FOLLOWING
+func (p *Parser) parseFrameBound() FrameBound {
+	bound := FrameBound{}
+
+	if p.curTokenIs(TokUnbounded) {
+		p.nextToken() // consume UNBOUNDED
+		if p.curTokenIs(TokPreceding) {
+			bound.Type = "UNBOUNDED PRECEDING"
+			p.nextToken()
+		} else if p.curTokenIs(TokFollowing) {
+			bound.Type = "UNBOUNDED FOLLOWING"
+			p.nextToken()
+		} else {
+			p.error("expected PRECEDING or FOLLOWING after UNBOUNDED")
+			return FrameBound{}
+		}
+	} else if p.curTokenIs(TokCurrent) {
+		p.nextToken() // consume CURRENT
+		if !p.expect(TokRow) {
+			return FrameBound{}
+		}
+		bound.Type = "CURRENT ROW"
+	} else if p.curTokenIs(TokNumber) {
+		// Numeric offset
+		offset := p.currTok.Value
+		p.nextToken()
+		offsetInt, err := strconv.Atoi(offset)
+		if err != nil {
+			p.error("invalid frame offset: %s", offset)
+			return FrameBound{}
+		}
+		if p.curTokenIs(TokPreceding) {
+			bound.Type = "PRECEDING"
+			bound.Offset = offsetInt
+			p.nextToken()
+		} else if p.curTokenIs(TokFollowing) {
+			bound.Type = "FOLLOWING"
+			bound.Offset = offsetInt
+			p.nextToken()
+		} else {
+			p.error("expected PRECEDING or FOLLOWING after offset")
+			return FrameBound{}
+		}
+	} else {
+		p.error("expected frame bound (UNBOUNDED, CURRENT, or number)")
+		return FrameBound{}
+	}
+
+	return bound
 }
 
 // parseNumber parses a number literal.

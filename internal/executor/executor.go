@@ -1113,10 +1113,7 @@ func (e *Executor) computeWindowFunction(wf *sql.WindowFuncCall, partition []int
 		e.computeRank(partition, rows, wf, windowValues, colIndex, colIdxMap, true)
 
 	case "COUNT":
-		totalCount := int64(len(partition))
-		for _, rowIdx := range partition {
-			windowValues[rowIdx][colIndex] = totalCount
-		}
+		e.computeCountWindow(partition, rows, wf, windowValues, colIndex, colIdxMap)
 
 	case "SUM":
 		e.computeSumWindow(partition, rows, wf, windowValues, colIndex, colIdxMap)
@@ -1141,6 +1138,9 @@ func (e *Executor) computeWindowFunction(wf *sql.WindowFuncCall, partition []int
 
 	case "LAST_VALUE":
 		e.computeFirstLastValue(partition, rows, wf, windowValues, colIndex, colIdxMap, false)
+
+	case "NTILE":
+		e.computeNtile(partition, wf, windowValues, colIndex)
 	}
 }
 
@@ -1188,85 +1188,225 @@ func (e *Executor) computeRank(partition []int, rows []*row.Row, wf *sql.WindowF
 	}
 }
 
-// computeSumWindow computes SUM window function.
+// computeSumWindow computes SUM window function with frame support.
 func (e *Executor) computeSumWindow(partition []int, rows []*row.Row, wf *sql.WindowFuncCall, windowValues []map[int]interface{}, colIndex int, colIdxMap map[string]int) {
-	var sum float64
-	for _, rowIdx := range partition {
-		val := e.getWindowFuncArgValue(wf, rows[rowIdx], colIdxMap)
-		if val != nil {
-			switch v := val.(type) {
-			case int:
-				sum += float64(v)
-			case int64:
-				sum += float64(v)
-			case float64:
-				sum += v
+	partitionLen := len(partition)
+	frame := wf.Window.Frame
+
+	for i, rowIdx := range partition {
+		start, end := e.getFrameBounds(frame, partitionLen, i)
+		var sum float64
+		for j := start; j <= end && j < partitionLen; j++ {
+			val := e.getWindowFuncArgValue(wf, rows[partition[j]], colIdxMap)
+			if val != nil {
+				switch v := val.(type) {
+				case int:
+					sum += float64(v)
+				case int64:
+					sum += float64(v)
+				case float64:
+					sum += v
+				}
 			}
 		}
-	}
-	for _, rowIdx := range partition {
 		windowValues[rowIdx][colIndex] = sum
 	}
 }
 
-// computeAvgWindow computes AVG window function.
+// computeAvgWindow computes AVG window function with frame support.
 func (e *Executor) computeAvgWindow(partition []int, rows []*row.Row, wf *sql.WindowFuncCall, windowValues []map[int]interface{}, colIndex int, colIdxMap map[string]int) {
-	var sum float64
-	var count int64
-	for _, rowIdx := range partition {
-		val := e.getWindowFuncArgValue(wf, rows[rowIdx], colIdxMap)
-		if val != nil {
-			switch v := val.(type) {
-			case int:
-				sum += float64(v)
-				count++
-			case int64:
-				sum += float64(v)
-				count++
-			case float64:
-				sum += v
-				count++
+	partitionLen := len(partition)
+	frame := wf.Window.Frame
+
+	for i, rowIdx := range partition {
+		start, end := e.getFrameBounds(frame, partitionLen, i)
+		var sum float64
+		var count int64
+		for j := start; j <= end && j < partitionLen; j++ {
+			val := e.getWindowFuncArgValue(wf, rows[partition[j]], colIdxMap)
+			if val != nil {
+				switch v := val.(type) {
+				case int:
+					sum += float64(v)
+					count++
+				case int64:
+					sum += float64(v)
+					count++
+				case float64:
+					sum += v
+					count++
+				}
 			}
 		}
-	}
-	var avg float64
-	if count > 0 {
-		avg = sum / float64(count)
-	}
-	for _, rowIdx := range partition {
+		var avg float64
+		if count > 0 {
+			avg = sum / float64(count)
+		}
 		windowValues[rowIdx][colIndex] = avg
 	}
 }
 
-// computeMinWindow computes MIN window function.
+// getFrameBounds returns the start and end indices within the partition for the given row position.
+// The returned indices are relative to the partition slice.
+func (e *Executor) getFrameBounds(frame *sql.FrameSpec, partitionLen int, rowPos int) (start, end int) {
+	if frame == nil {
+		// No frame specified, default is entire partition for aggregates
+		return 0, partitionLen - 1
+	}
+
+	// Calculate start bound
+	switch frame.Start.Type {
+	case "UNBOUNDED PRECEDING":
+		start = 0
+	case "CURRENT ROW":
+		start = rowPos
+	case "PRECEDING":
+		start = rowPos - frame.Start.Offset
+		if start < 0 {
+			start = 0
+		}
+	case "FOLLOWING":
+		start = rowPos + frame.Start.Offset
+		if start >= partitionLen {
+			start = partitionLen - 1
+		}
+	case "UNBOUNDED FOLLOWING":
+		start = partitionLen - 1
+	default:
+		start = 0
+	}
+
+	// Calculate end bound
+	switch frame.End.Type {
+	case "UNBOUNDED PRECEDING":
+		end = 0
+	case "CURRENT ROW":
+		end = rowPos
+	case "PRECEDING":
+		end = rowPos - frame.End.Offset
+		if end < 0 {
+			end = 0
+		}
+	case "FOLLOWING":
+		end = rowPos + frame.End.Offset
+		if end >= partitionLen {
+			end = partitionLen - 1
+		}
+	case "UNBOUNDED FOLLOWING":
+		end = partitionLen - 1
+	default:
+		end = partitionLen - 1
+	}
+
+	// Ensure start <= end
+	if start > end {
+		start = end
+	}
+
+	return start, end
+}
+
+// computeCountWindow computes COUNT window function with frame support.
+func (e *Executor) computeCountWindow(partition []int, rows []*row.Row, wf *sql.WindowFuncCall, windowValues []map[int]interface{}, colIndex int, colIdxMap map[string]int) {
+	partitionLen := len(partition)
+	frame := wf.Window.Frame
+
+	for i, rowIdx := range partition {
+		start, end := e.getFrameBounds(frame, partitionLen, i)
+		count := int64(end - start + 1)
+		windowValues[rowIdx][colIndex] = count
+	}
+}
+
+// computeMinWindow computes MIN window function with frame support.
 func (e *Executor) computeMinWindow(partition []int, rows []*row.Row, wf *sql.WindowFuncCall, windowValues []map[int]interface{}, colIndex int, colIdxMap map[string]int) {
-	var minVal interface{}
-	for _, rowIdx := range partition {
-		val := e.getWindowFuncArgValue(wf, rows[rowIdx], colIdxMap)
-		if val != nil {
-			if minVal == nil || compareValues(val, minVal) < 0 {
-				minVal = val
+	partitionLen := len(partition)
+	frame := wf.Window.Frame
+
+	for i, rowIdx := range partition {
+		start, end := e.getFrameBounds(frame, partitionLen, i)
+		var minVal interface{}
+		for j := start; j <= end && j < partitionLen; j++ {
+			val := e.getWindowFuncArgValue(wf, rows[partition[j]], colIdxMap)
+			if val != nil {
+				if minVal == nil || compareValues(val, minVal) < 0 {
+					minVal = val
+				}
 			}
 		}
-	}
-	for _, rowIdx := range partition {
 		windowValues[rowIdx][colIndex] = minVal
 	}
 }
 
-// computeMaxWindow computes MAX window function.
+// computeMaxWindow computes MAX window function with frame support.
 func (e *Executor) computeMaxWindow(partition []int, rows []*row.Row, wf *sql.WindowFuncCall, windowValues []map[int]interface{}, colIndex int, colIdxMap map[string]int) {
-	var maxVal interface{}
-	for _, rowIdx := range partition {
-		val := e.getWindowFuncArgValue(wf, rows[rowIdx], colIdxMap)
-		if val != nil {
-			if maxVal == nil || compareValues(val, maxVal) > 0 {
-				maxVal = val
+	partitionLen := len(partition)
+	frame := wf.Window.Frame
+
+	for i, rowIdx := range partition {
+		start, end := e.getFrameBounds(frame, partitionLen, i)
+		var maxVal interface{}
+		for j := start; j <= end && j < partitionLen; j++ {
+			val := e.getWindowFuncArgValue(wf, rows[partition[j]], colIdxMap)
+			if val != nil {
+				if maxVal == nil || compareValues(val, maxVal) > 0 {
+					maxVal = val
+				}
+			}
+		}
+		windowValues[rowIdx][colIndex] = maxVal
+	}
+}
+
+// computeNtile computes NTILE window function.
+// NTILE(n) divides the partition into n roughly equal groups and returns the group number.
+func (e *Executor) computeNtile(partition []int, wf *sql.WindowFuncCall, windowValues []map[int]interface{}, colIndex int) {
+	// Get the number of buckets (n)
+	numBuckets := 1
+	if len(wf.Func.Args) >= 1 {
+		if lit, ok := wf.Func.Args[0].(*sql.Literal); ok {
+			switch v := lit.Value.(type) {
+			case int64:
+				numBuckets = int(v)
+			case string:
+				if n, err := strconv.ParseInt(v, 10, 64); err == nil && n > 0 {
+					numBuckets = int(n)
+				}
 			}
 		}
 	}
-	for _, rowIdx := range partition {
-		windowValues[rowIdx][colIndex] = maxVal
+
+	if numBuckets <= 0 {
+		numBuckets = 1
+	}
+
+	partitionSize := len(partition)
+	if partitionSize == 0 {
+		return
+	}
+
+	// Calculate base bucket size and remainder
+	// Each bucket should have either bucketSize or bucketSize+1 rows
+	bucketSize := partitionSize / numBuckets
+	remainder := partitionSize % numBuckets
+
+	// Distribute rows to buckets
+	// First 'remainder' buckets have bucketSize+1 rows
+	// Remaining buckets have bucketSize rows
+	currentPos := 0
+	for bucket := 1; bucket <= numBuckets && currentPos < partitionSize; bucket++ {
+		// Calculate how many rows in this bucket
+		rowsInBucket := bucketSize
+		if bucket <= remainder {
+			rowsInBucket++
+		}
+
+		// Assign bucket number to each row in this bucket
+		for i := 0; i < rowsInBucket && currentPos < partitionSize; i++ {
+			rowIdx := partition[currentPos]
+			windowValues[rowIdx][colIndex] = int64(bucket)
+			currentPos++
+		}
 	}
 }
 

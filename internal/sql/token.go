@@ -178,6 +178,7 @@ const (
 	TokLastValue  // LAST_VALUE window function
 	TokIgnore     // IGNORE NULLS
 	TokRespect    // RESPECT NULLS
+	TokUnbounded  // UNBOUNDED PRECEDING/FOLLOWING
 
 	// Keywords - LATERAL
 	TokLateral // LATERAL for correlated subqueries
@@ -527,6 +528,8 @@ func (t TokenType) String() string {
 		return "IGNORE"
 	case TokRespect:
 		return "RESPECT"
+	case TokUnbounded:
+		return "UNBOUNDED"
 	case TokLateral:
 		return "LATERAL"
 	case TokFunction:
@@ -737,6 +740,7 @@ var keywords = map[string]TokenType{
 	"LAST_VALUE":   TokLastValue,
 	"IGNORE":       TokIgnore,
 	"RESPECT":      TokRespect,
+	"UNBOUNDED":    TokUnbounded,
 	"LATERAL":      TokLateral,
 	"FUNCTION":     TokFunction,
 	"RETURNS":      TokReturns,

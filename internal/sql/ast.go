@@ -1210,9 +1210,50 @@ func (f *FunctionCall) String() string {
 
 // WindowSpec represents the window specification for window functions.
 type WindowSpec struct {
-	PartitionBy []Expression // PARTITION BY expressions
+	PartitionBy []Expression  // PARTITION BY expressions
 	OrderBy     []*OrderByItem // ORDER BY items
-	Name        string      // Named window reference (optional)
+	Name        string        // Named window reference (optional)
+	Frame       *FrameSpec    // Window frame clause (optional)
+}
+
+// FrameSpec represents a window frame clause (ROWS/RANGE BETWEEN ... AND ...).
+type FrameSpec struct {
+	Mode      string     // "ROWS" or "RANGE"
+	Start     FrameBound // Start bound
+	End       FrameBound // End bound (optional, defaults to CURRENT ROW)
+}
+
+// FrameBound represents one side of a window frame.
+type FrameBound struct {
+	Type      string // "UNBOUNDED PRECEDING", "PRECEDING", "CURRENT ROW", "FOLLOWING", "UNBOUNDED FOLLOWING"
+	Offset    int    // Offset for PRECEDING/FOLLOWING (0 for CURRENT ROW, UNBOUNDED)
+}
+
+func (f *FrameSpec) String() string {
+	var sb strings.Builder
+	sb.WriteString(f.Mode)
+	sb.WriteString(" BETWEEN ")
+	sb.WriteString(f.Start.String())
+	sb.WriteString(" AND ")
+	sb.WriteString(f.End.String())
+	return sb.String()
+}
+
+func (f FrameBound) String() string {
+	switch f.Type {
+	case "UNBOUNDED PRECEDING":
+		return "UNBOUNDED PRECEDING"
+	case "UNBOUNDED FOLLOWING":
+		return "UNBOUNDED FOLLOWING"
+	case "CURRENT ROW":
+		return "CURRENT ROW"
+	case "PRECEDING":
+		return fmt.Sprintf("%d PRECEDING", f.Offset)
+	case "FOLLOWING":
+		return fmt.Sprintf("%d FOLLOWING", f.Offset)
+	default:
+		return f.Type
+	}
 }
 
 func (w *WindowSpec) String() string {
@@ -1238,6 +1279,12 @@ func (w *WindowSpec) String() string {
 			}
 			sb.WriteString(item.String())
 		}
+	}
+	if w.Frame != nil {
+		if len(w.PartitionBy) > 0 || len(w.OrderBy) > 0 {
+			sb.WriteString(" ")
+		}
+		sb.WriteString(w.Frame.String())
 	}
 	sb.WriteString(")")
 	return sb.String()
