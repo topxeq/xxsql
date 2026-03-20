@@ -33,10 +33,49 @@ type NetworkConfig struct {
 	PrivatePort    int    `json:"private_port"`    // Private protocol port (default: 9527)
 	MySQLPort      int    `json:"mysql_port"`      // MySQL compatible port (default: 3306)
 	HTTPPort       int    `json:"http_port"`       // HTTP API port (default: 8080)
-	Bind           string `json:"bind"`            // Bind address (default: "0.0.0.0")
+	Bind           string `json:"bind"`            // Default bind address (default: "0.0.0.0")
+	PrivateBind    string `json:"private_bind"`    // Bind address for private port (overrides Bind)
+	MySQLBind      string `json:"mysql_bind"`      // Bind address for MySQL port (overrides Bind)
+	HTTPBind       string `json:"http_bind"`       // Bind address for HTTP port (overrides Bind)
 	PrivateEnabled *bool  `json:"private_enabled"` // Enable private protocol server (default: true)
 	MySQLEnabled   *bool  `json:"mysql_enabled"`   // Enable MySQL protocol server (default: true)
 	HTTPEnabled    *bool  `json:"http_enabled"`    // Enable HTTP API server (default: true)
+}
+
+// GetPrivateBind returns the bind address for private port.
+// Falls back to Bind if PrivateBind is not set.
+func (n *NetworkConfig) GetPrivateBind() string {
+	if n.PrivateBind != "" {
+		return n.PrivateBind
+	}
+	if n.Bind != "" {
+		return n.Bind
+	}
+	return "0.0.0.0"
+}
+
+// GetMySQLBind returns the bind address for MySQL port.
+// Falls back to Bind if MySQLBind is not set.
+func (n *NetworkConfig) GetMySQLBind() string {
+	if n.MySQLBind != "" {
+		return n.MySQLBind
+	}
+	if n.Bind != "" {
+		return n.Bind
+	}
+	return "0.0.0.0"
+}
+
+// GetHTTPBind returns the bind address for HTTP port.
+// Falls back to Bind if HTTPBind is not set.
+func (n *NetworkConfig) GetHTTPBind() string {
+	if n.HTTPBind != "" {
+		return n.HTTPBind
+	}
+	if n.Bind != "" {
+		return n.Bind
+	}
+	return "0.0.0.0"
 }
 
 // IsPrivateEnabled returns whether private protocol server is enabled.

@@ -179,7 +179,7 @@ func (s *Server) Stop() error {
 // startPrivateServer starts the private protocol server.
 func (s *Server) startPrivateServer() error {
 	cfg := protocol.DefaultServerConfig()
-	cfg.Bind = s.config.Network.Bind
+	cfg.Bind = s.config.Network.GetPrivateBind()
 	cfg.Port = s.config.Network.PrivatePort
 	cfg.MaxConnections = s.config.Connection.MaxConnections
 	cfg.ReadTimeout = time.Duration(s.config.Connection.WaitTimeout) * time.Second
@@ -204,13 +204,13 @@ func (s *Server) startPrivateServer() error {
 
 // startMySQLServer starts the MySQL protocol server.
 func (s *Server) startMySQLServer() error {
-	s.mysql = NewMySQLServer(s, s.config.Network.Bind, s.config.Network.MySQLPort)
+	s.mysql = NewMySQLServer(s, s.config.Network.GetMySQLBind(), s.config.Network.MySQLPort)
 	return s.mysql.Start()
 }
 
 // startHTTPServer starts the HTTP API server.
 func (s *Server) startHTTPServer() error {
-	s.http = NewHTTPServer(s, s.config.Network.Bind, s.config.Network.HTTPPort)
+	s.http = NewHTTPServer(s, s.config.Network.GetHTTPBind(), s.config.Network.HTTPPort)
 	return s.http.Start()
 }
 

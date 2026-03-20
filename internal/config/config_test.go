@@ -590,3 +590,76 @@ func TestValidateWithDisabledServices(t *testing.T) {
 		t.Errorf("Validation should pass with disabled services: %v", err)
 	}
 }
+
+// TestNetworkBindAddresses tests per-port bind address configuration
+func TestNetworkBindAddresses(t *testing.T) {
+	t.Run("default bind", func(t *testing.T) {
+		cfg := DefaultConfig()
+		if cfg.Network.GetPrivateBind() != "0.0.0.0" {
+			t.Errorf("GetPrivateBind() = %s, want 0.0.0.0", cfg.Network.GetPrivateBind())
+		}
+		if cfg.Network.GetMySQLBind() != "0.0.0.0" {
+			t.Errorf("GetMySQLBind() = %s, want 0.0.0.0", cfg.Network.GetMySQLBind())
+		}
+		if cfg.Network.GetHTTPBind() != "0.0.0.0" {
+			t.Errorf("GetHTTPBind() = %s, want 0.0.0.0", cfg.Network.GetHTTPBind())
+		}
+	})
+
+	t.Run("custom global bind", func(t *testing.T) {
+		cfg := DefaultConfig()
+		cfg.Network.Bind = "192.168.1.100"
+
+		if cfg.Network.GetPrivateBind() != "192.168.1.100" {
+			t.Errorf("GetPrivateBind() = %s, want 192.168.1.100", cfg.Network.GetPrivateBind())
+		}
+		if cfg.Network.GetMySQLBind() != "192.168.1.100" {
+			t.Errorf("GetMySQLBind() = %s, want 192.168.1.100", cfg.Network.GetMySQLBind())
+		}
+		if cfg.Network.GetHTTPBind() != "192.168.1.100" {
+			t.Errorf("GetHTTPBind() = %s, want 192.168.1.100", cfg.Network.GetHTTPBind())
+		}
+	})
+
+	t.Run("per-port override", func(t *testing.T) {
+		cfg := DefaultConfig()
+		cfg.Network.Bind = "0.0.0.0"
+		cfg.Network.PrivateBind = "0.0.0.0"     // public
+		cfg.Network.MySQLBind = "0.0.0.0"       // public
+		cfg.Network.HTTPBind = "127.0.0.1"      // internal only
+
+		if cfg.Network.GetPrivateBind() != "0.0.0.0" {
+			t.Errorf("GetPrivateBind() = %s, want 0.0.0.0", cfg.Network.GetPrivateBind())
+		}
+		if cfg.Network.GetMySQLBind() != "0.0.0.0" {
+			t.Errorf("GetMySQLBind() = %s, want 0.0.0.0", cfg.Network.GetMySQLBind())
+		}
+		if cfg.Network.GetHTTPBind() != "127.0.0.1" {
+			t.Errorf("GetHTTPBind() = %s, want 127.0.0.1", cfg.Network.GetHTTPBind())
+		}
+	})
+
+	t.Run("empty global with per-port override", func(t *testing.T) {
+		cfg := &Config{
+			Network: NetworkConfig{
+				PrivatePort: 9527,
+				MySQLPort:   3306,
+				HTTPPort:    8080,
+				// Bind is empty
+				PrivateBind: "10.0.0.1",
+				MySQLBind:   "10.0.0.2",
+				HTTPBind:    "127.0.0.1",
+			},
+		}
+
+		if cfg.Network.GetPrivateBind() != "10.0.0.1" {
+			t.Errorf("GetPrivateBind() = %s, want 10.0.0.1", cfg.Network.GetPrivateBind())
+		}
+		if cfg.Network.GetMySQLBind() != "10.0.0.2" {
+			t.Errorf("GetMySQLBind() = %s, want 10.0.0.2", cfg.Network.GetMySQLBind())
+		}
+		if cfg.Network.GetHTTPBind() != "127.0.0.1" {
+			t.Errorf("GetHTTPBind() = %s, want 127.0.0.1", cfg.Network.GetHTTPBind())
+		}
+	})
+}
