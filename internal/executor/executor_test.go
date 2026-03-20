@@ -1203,3 +1203,91 @@ func TestExecutor_HavingSubquery(t *testing.T) {
 	}
 	t.Logf("HAVING EXISTS result: %v", result4.Rows)
 }
+
+func TestExecutor_SetOperations(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "setops_test")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	engine := storage.NewEngine(tmpDir)
+	if err := engine.Open(); err != nil {
+		t.Fatalf("Failed to open engine: %v", err)
+	}
+	defer engine.Close()
+
+	exec := executor.NewExecutor(engine)
+
+	// Create and populate tables
+	exec.Execute("CREATE TABLE table_a (id INT, name VARCHAR)")
+	exec.Execute("INSERT INTO table_a (id, name) VALUES (1, 'Alice')")
+	exec.Execute("INSERT INTO table_a (id, name) VALUES (2, 'Bob')")
+	exec.Execute("INSERT INTO table_a (id, name) VALUES (3, 'Charlie')")
+
+	exec.Execute("CREATE TABLE table_b (id INT, name VARCHAR)")
+	exec.Execute("INSERT INTO table_b (id, name) VALUES (2, 'Bob')")
+	exec.Execute("INSERT INTO table_b (id, name) VALUES (3, 'Charlie')")
+	exec.Execute("INSERT INTO table_b (id, name) VALUES (4, 'Diana')")
+
+	// Test 1: UNION (removes duplicates)
+	result, err := exec.Execute("SELECT id, name FROM table_a UNION SELECT id, name FROM table_b")
+	if err != nil {
+		t.Fatalf("UNION failed: %v", err)
+	}
+	// Should have 4 unique rows: Alice, Bob, Charlie, Diana
+	if len(result.Rows) != 4 {
+		t.Errorf("UNION: Expected 4 rows, got %d", len(result.Rows))
+	}
+	t.Logf("UNION result (%d rows): %v", len(result.Rows), result.Rows)
+
+	// Test 2: UNION ALL (keeps duplicates)
+	result2, err := exec.Execute("SELECT id, name FROM table_a UNION ALL SELECT id, name FROM table_b")
+	if err != nil {
+		t.Fatalf("UNION ALL failed: %v", err)
+	}
+	// Should have 6 rows total (3 + 3)
+	if len(result2.Rows) != 6 {
+		t.Errorf("UNION ALL: Expected 6 rows, got %d", len(result2.Rows))
+	}
+	t.Logf("UNION ALL result (%d rows): %v", len(result2.Rows), result2.Rows)
+
+	// Test 3: INTERSECT (rows in both)
+	result3, err := exec.Execute("SELECT id, name FROM table_a INTERSECT SELECT id, name FROM table_b")
+	if err != nil {
+		t.Fatalf("INTERSECT failed: %v", err)
+	}
+	// Should have 2 rows: Bob, Charlie
+	if len(result3.Rows) != 2 {
+		t.Errorf("INTERSECT: Expected 2 rows, got %d", len(result3.Rows))
+	}
+	t.Logf("INTERSECT result (%d rows): %v", len(result3.Rows), result3.Rows)
+
+	// Test 4: EXCEPT (rows in left but not in right)
+	result4, err := exec.Execute("SELECT id, name FROM table_a EXCEPT SELECT id, name FROM table_b")
+	if err != nil {
+		t.Fatalf("EXCEPT failed: %v", err)
+	}
+	// Should have 1 row: Alice
+	if len(result4.Rows) != 1 {
+		t.Errorf("EXCEPT: Expected 1 row, got %d", len(result4.Rows))
+	}
+	if len(result4.Rows) > 0 {
+		// Should be Alice (id=1)
+		if result4.Rows[0][0] != int64(1) {
+			t.Errorf("EXCEPT: Expected id=1, got %v", result4.Rows[0][0])
+		}
+	}
+	t.Logf("EXCEPT result (%d rows): %v", len(result4.Rows), result4.Rows)
+
+	// Test 5: EXCEPT reverse
+	result5, err := exec.Execute("SELECT id, name FROM table_b EXCEPT SELECT id, name FROM table_a")
+	if err != nil {
+		t.Fatalf("EXCEPT reverse failed: %v", err)
+	}
+	// Should have 1 row: Diana
+	if len(result5.Rows) != 1 {
+		t.Errorf("EXCEPT reverse: Expected 1 row, got %d", len(result5.Rows))
+	}
+	t.Logf("EXCEPT reverse result (%d rows): %v", len(result5.Rows), result5.Rows)
+}

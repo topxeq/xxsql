@@ -462,6 +462,28 @@ type UnionStmt struct {
 	Left     Statement
 	Right    Statement
 	All      bool
+	Op       SetOperation // UNION, INTERSECT, or EXCEPT
+}
+
+// SetOperation represents a set operation type.
+type SetOperation int
+
+const (
+	SetUnion SetOperation = iota
+	SetIntersect
+	SetExcept
+)
+
+func (s *SetOperation) String() string {
+	switch *s {
+	case SetUnion:
+		return "UNION"
+	case SetIntersect:
+		return "INTERSECT"
+	case SetExcept:
+		return "EXCEPT"
+	}
+	return "UNKNOWN"
 }
 
 func (s *UnionStmt) node()      {}
@@ -469,7 +491,9 @@ func (s *UnionStmt) statement() {}
 func (s *UnionStmt) String() string {
 	var sb strings.Builder
 	sb.WriteString(s.Left.String())
-	sb.WriteString(" UNION ")
+	sb.WriteString(" ")
+	sb.WriteString(s.Op.String())
+	sb.WriteString(" ")
 	if s.All {
 		sb.WriteString("ALL ")
 	}

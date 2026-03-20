@@ -89,7 +89,7 @@ The following comparison highlights key differences between XxSql and SQLite acr
 | **DDL** | Full CREATE/ALTER/DROP | CREATE/ALTER/DROP TABLE, INDEX |
 | **DML** | Full INSERT/UPDATE/DELETE/SELECT | INSERT/UPDATE/DELETE/SELECT/TRUNCATE |
 | **JOIN Types** | All standard types | INNER, LEFT, RIGHT, CROSS, FULL OUTER |
-| **UNION** | UNION/UNION ALL/INTERSECT/EXCEPT | UNION/UNION ALL |
+| **UNION** | UNION/UNION ALL/INTERSECT/EXCEPT | UNION/UNION ALL/INTERSECT/EXCEPT |
 | **Subqueries** | Full support (all locations) | SELECT list, WHERE, HAVING, FROM clause |
 | **Correlated Subqueries** | Yes | Yes |
 | **Window Functions** | Yes | No |
@@ -689,17 +689,50 @@ LEFT JOIN orders o ON u.id = o.user_id
 WHERE o.order_id IS NOT NULL;
 ```
 
-### UNION Support
+### Set Operations (UNION, INTERSECT, EXCEPT)
+
+XxSql supports all standard SQL set operations:
+
+| Operation | Description |
+|-----------|-------------|
+| `UNION` | Combines results from two queries, removes duplicates |
+| `UNION ALL` | Combines results from two queries, keeps duplicates |
+| `INTERSECT` | Returns rows that exist in both queries |
+| `EXCEPT` | Returns rows from first query that don't exist in second |
 
 ```sql
+-- UNION: Combine results, remove duplicates
 SELECT name FROM users
 UNION
 SELECT name FROM customers;
 
+-- UNION ALL: Combine results, keep duplicates
 SELECT name FROM users
 UNION ALL
 SELECT name FROM customers;
+
+-- INTERSECT: Rows in both tables
+SELECT id, name FROM table_a
+INTERSECT
+SELECT id, name FROM table_b;
+
+-- EXCEPT: Rows in first table but not in second
+SELECT id, name FROM table_a
+EXCEPT
+SELECT id, name FROM table_b;
+
+-- Chained set operations
+SELECT id FROM users
+UNION
+SELECT user_id FROM orders
+EXCEPT
+SELECT user_id FROM cancelled_orders;
 ```
+
+**Notes:**
+- All queries in a set operation must have the same number of columns
+- Column names are taken from the first query
+- `UNION ALL` is more efficient than `UNION` when duplicates are acceptable
 
 ### User Management
 

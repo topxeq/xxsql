@@ -1374,40 +1374,105 @@ func (e *Executor) executeUnion(stmt *sql.UnionStmt) (*Result, error) {
 	// Execute left side
 	leftResult, err := e.executeStatement(stmt.Left)
 	if err != nil {
-		return nil, fmt.Errorf("left side of UNION error: %w", err)
+		opName := stmt.Op.String()
+		return nil, fmt.Errorf("left side of %s error: %w", opName, err)
 	}
 
 	// Execute right side
 	rightResult, err := e.executeStatement(stmt.Right)
 	if err != nil {
-		return nil, fmt.Errorf("right side of UNION error: %w", err)
+		opName := stmt.Op.String()
+		return nil, fmt.Errorf("right side of %s error: %w", opName, err)
 	}
 
 	// Validate column count match
+	opName := stmt.Op.String()
 	if len(leftResult.Columns) != len(rightResult.Columns) {
-		return nil, fmt.Errorf("UNION: column count mismatch (%d vs %d)",
-			len(leftResult.Columns), len(rightResult.Columns))
+		return nil, fmt.Errorf("%s: column count mismatch (%d vs %d)",
+			opName, len(leftResult.Columns), len(rightResult.Columns))
 	}
 
 	// Build combined result
 	result := &Result{
 		Columns: leftResult.Columns,
-		Rows:    make([][]interface{}, 0, len(leftResult.Rows)+len(rightResult.Rows)),
+		Rows:    make([][]interface{}, 0),
 	}
 
-	// Add left rows
-	result.Rows = append(result.Rows, leftResult.Rows...)
+	switch stmt.Op {
+	case sql.SetUnion:
+		// Add left rows
+		result.Rows = append(result.Rows, leftResult.Rows...)
+		// Add right rows
+		result.Rows = append(result.Rows, rightResult.Rows...)
+		// For UNION (not UNION ALL), remove duplicates
+		if !stmt.All {
+			result.Rows = e.removeDuplicateRows(result.Rows)
+		}
 
-	// Add right rows
-	result.Rows = append(result.Rows, rightResult.Rows...)
+	case sql.SetIntersect:
+		// INTERSECT: rows that exist in both results
+		result.Rows = e.intersectRows(leftResult.Rows, rightResult.Rows)
 
-	// For UNION (not UNION ALL), remove duplicates
-	if !stmt.All {
-		result.Rows = e.removeDuplicateRows(result.Rows)
+	case sql.SetExcept:
+		// EXCEPT: rows in left but not in right
+		result.Rows = e.exceptRows(leftResult.Rows, rightResult.Rows)
 	}
 
 	result.RowCount = len(result.Rows)
 	return result, nil
+}
+
+// intersectRows returns rows that exist in both left and right.
+func (e *Executor) intersectRows(left, right [][]interface{}) [][]interface{} {
+	rightSet := make(map[string]bool)
+	for _, row := range right {
+		key := e.rowKey(row)
+		rightSet[key] = true
+	}
+
+	var result [][]interface{}
+	seen := make(map[string]bool)
+	for _, row := range left {
+		key := e.rowKey(row)
+		if rightSet[key] && !seen[key] {
+			result = append(result, row)
+			seen[key] = true
+		}
+	}
+	return result
+}
+
+// exceptRows returns rows in left but not in right.
+func (e *Executor) exceptRows(left, right [][]interface{}) [][]interface{} {
+	rightSet := make(map[string]bool)
+	for _, row := range right {
+		key := e.rowKey(row)
+		rightSet[key] = true
+	}
+
+	var result [][]interface{}
+	seen := make(map[string]bool)
+	for _, row := range left {
+		key := e.rowKey(row)
+		if !rightSet[key] && !seen[key] {
+			result = append(result, row)
+			seen[key] = true
+		}
+	}
+	return result
+}
+
+// rowKey creates a string key for a row for comparison.
+func (e *Executor) rowKey(row []interface{}) string {
+	var parts []string
+	for _, val := range row {
+		if val == nil {
+			parts = append(parts, "NULL")
+		} else {
+			parts = append(parts, fmt.Sprintf("%v", val))
+		}
+	}
+	return strings.Join(parts, "|")
 }
 
 // executeStatement executes a statement and returns a result.
@@ -1440,18 +1505,6 @@ func (e *Executor) removeDuplicateRows(rows [][]interface{}) [][]interface{} {
 }
 
 // rowKey creates a string key from a row for deduplication.
-func (e *Executor) rowKey(row []interface{}) string {
-	parts := make([]string, len(row))
-	for i, v := range row {
-		if v == nil {
-			parts[i] = "NULL"
-		} else {
-			parts[i] = fmt.Sprintf("%v", v)
-		}
-	}
-	return strings.Join(parts, "\x00")
-}
-
 // executeSelectFromDerivedTable handles SELECT from a derived table (subquery in FROM clause).
 func (e *Executor) executeSelectFromDerivedTable(stmt *sql.SelectStmt) (*Result, error) {
 	// Execute the subquery first

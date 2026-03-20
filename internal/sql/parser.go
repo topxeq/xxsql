@@ -235,7 +235,17 @@ func (p *Parser) parseSelect() Statement {
 
 	// UNION
 	if p.curTokenIs(TokUnion) {
-		return p.parseUnion(stmt)
+		return p.parseSetOperation(stmt, SetUnion)
+	}
+
+	// INTERSECT
+	if p.curTokenIs(TokIntersect) {
+		return p.parseSetOperation(stmt, SetIntersect)
+	}
+
+	// EXCEPT
+	if p.curTokenIs(TokExcept) {
+		return p.parseSetOperation(stmt, SetExcept)
 	}
 
 	return stmt
@@ -484,11 +494,13 @@ func (p *Parser) parseLimit() *int {
 }
 
 // parseUnion parses a UNION statement.
-func (p *Parser) parseUnion(left Statement) *UnionStmt {
-	p.nextToken() // consume UNION
+func (p *Parser) parseSetOperation(left Statement, op SetOperation) *UnionStmt {
+	p.nextToken() // consume UNION/INTERSECT/EXCEPT
 
 	all := false
-	if p.curTokenIs(TokAll) {
+	// INTERSECT ALL and EXCEPT ALL are not standard SQL, but some databases support them
+	// We'll support ALL only for UNION as per standard
+	if op == SetUnion && p.curTokenIs(TokAll) {
 		all = true
 		p.nextToken()
 	}
@@ -502,7 +514,13 @@ func (p *Parser) parseUnion(left Statement) *UnionStmt {
 		Left:  left,
 		Right: right,
 		All:   all,
+		Op:    op,
 	}
+}
+
+// parseUnion parses a UNION statement (deprecated, use parseSetOperation)
+func (p *Parser) parseUnion(left Statement) *UnionStmt {
+	return p.parseSetOperation(left, SetUnion)
 }
 
 // parseInsert parses an INSERT statement.
