@@ -46,6 +46,7 @@ const (
 	TokNot
 	TokIn
 	TokLike
+	TokGlob
 	TokBetween
 	TokIs
 	TokNull
@@ -189,6 +190,17 @@ const (
 	TokDo
 	TokNothing
 	TokReturning
+
+	// Keywords - EXPLAIN
+	TokExplain
+	TokQuery
+	TokPlan
+
+	// Keywords - Generated Columns
+	TokGenerated
+	TokAlways
+	TokVirtual
+	TokStored
 
 	// Identifiers and literals
 	TokIdent   // identifier
@@ -393,6 +405,8 @@ func (t TokenType) String() string {
 		return "IN"
 	case TokLike:
 		return "LIKE"
+	case TokGlob:
+		return "GLOB"
 	case TokBetween:
 		return "BETWEEN"
 	case TokIs:
@@ -511,6 +525,20 @@ func (t TokenType) String() string {
 		return "NOTHING"
 	case TokReturning:
 		return "RETURNING"
+	case TokExplain:
+		return "EXPLAIN"
+	case TokQuery:
+		return "QUERY"
+	case TokPlan:
+		return "PLAN"
+	case TokGenerated:
+		return "GENERATED"
+	case TokAlways:
+		return "ALWAYS"
+	case TokVirtual:
+		return "VIRTUAL"
+	case TokStored:
+		return "STORED"
 	case TokDescribe:
 		return "DESCRIBE"
 	case TokBackup:
@@ -556,6 +584,7 @@ var keywords = map[string]TokenType{
 	"NOT":          TokNot,
 	"IN":           TokIn,
 	"LIKE":         TokLike,
+	"GLOB":         TokGlob,
 	"BETWEEN":      TokBetween,
 	"IS":           TokIs,
 	"NULL":         TokNull,
@@ -676,6 +705,13 @@ var keywords = map[string]TokenType{
 	"DO":           TokDo,
 	"NOTHING":      TokNothing,
 	"RETURNING":    TokReturning,
+	"EXPLAIN":      TokExplain,
+	"QUERY":        TokQuery,
+	"PLAN":         TokPlan,
+	"GENERATED":    TokGenerated,
+	"ALWAYS":       TokAlways,
+	"VIRTUAL":      TokVirtual,
+	"STORED":       TokStored,
 	"TRUE":         TokBoolLit,
 	"FALSE":        TokBoolLit,
 }

@@ -107,6 +107,9 @@ The following comparison highlights key differences between XxSql and SQLite acr
 | **Views** | Yes | Yes |
 | **UPSERT** | ON CONFLICT | ON CONFLICT DO NOTHING/UPDATE |
 | **RETURNING** | Yes | Yes (INSERT/UPDATE/DELETE) |
+| **Generated Columns** | Yes | Yes (VIRTUAL/STORED) |
+| **EXPLAIN** | Yes | Yes (query plan) |
+| **GLOB** | Yes | Yes (Unix-style pattern matching) |
 | **Stored Procedures** | No | No |
 | **User-Defined Functions** | C/Rust/Python extensions | SQL-based UDFs |
 
@@ -133,7 +136,7 @@ The following comparison highlights key differences between XxSql and SQLite acr
 | **String** | UPPER, LOWER, LENGTH, SUBSTR, REPLACE, etc. | UPPER, LOWER, LENGTH, SUBSTRING, CONCAT, TRIM, LTRIM, RTRIM, INSTR, LPAD, RPAD, REVERSE, LEFT, RIGHT, REPEAT, SPACE, CONCAT_WS, REPLACE, CHAR, UNICODE, ASCII, SOUNDEX, FORMAT |
 | **Math** | ABS, ROUND, CEIL, FLOOR, etc. | ABS, ROUND, CEIL, FLOOR, MOD, POWER, SQRT, SIGN, LOG, LOG10, EXP, PI, RANDOM, TRUNCATE, COS, SIN, TAN, ACOS, ASIN, ATAN, ATAN2, COT, DEGREES, RADIANS, RAND |
 | **Date/Time** | date(), time(), datetime(), strftime() | DATE, TIME, DATETIME, YEAR, MONTH, DAY, HOUR, MINUTE, SECOND, WEEKDAY, QUARTER, LAST_DAY, DATE_ADD, DATE_SUB, DATEDIFF, STRFTIME, UNIX_TIMESTAMP, FROM_UNIXTIME, NOW, CURRENT_TIMESTAMP, TIMESTAMPDIFF, MAKEDATE, MAKETIME, SEC_TO_TIME, TIME_TO_SEC |
-| **JSON** | json_extract(), json_array(), etc. | JSON_EXTRACT, JSON_ARRAY, JSON_OBJECT, JSON_TYPE, JSON_UNQUOTE, JSON_VALID, JSON_KEYS, JSON_LENGTH |
+| **JSON** | json_extract(), json_array(), etc. | JSON_EXTRACT, JSON_ARRAY, JSON_OBJECT, JSON_TYPE, JSON_UNQUOTE, JSON_VALID, JSON_KEYS, JSON_LENGTH, JSON_SET, JSON_REPLACE, JSON_REMOVE, JSON_MERGE_PATCH |
 | **Type Conversion** | CAST, typeof() | CAST, TYPEOF |
 | **NULL Handling** | COALESCE, NULLIF, IFNULL | COALESCE, NULLIF, IFNULL |
 | **Conditional** | CASE, IIF() | CASE/WHEN, IF, IIF |

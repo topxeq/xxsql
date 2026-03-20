@@ -98,17 +98,19 @@ func ParseTypeID(name string) TypeID {
 
 // ColumnInfo represents column metadata.
 type ColumnInfo struct {
-	Name       string
-	Type       TypeID
-	Size       int    // For CHAR/VARCHAR
-	Precision  int    // For DECIMAL (not implemented yet)
-	Scale      int    // For DECIMAL (not implemented yet)
-	Nullable   bool
-	Default    Value
-	PrimaryKey bool
-	AutoIncr   bool
-	Unique     bool
-	Comment    string
+	Name            string
+	Type            TypeID
+	Size            int    // For CHAR/VARCHAR
+	Precision       int    // For DECIMAL (not implemented yet)
+	Scale           int    // For DECIMAL (not implemented yet)
+	Nullable        bool
+	Default         Value
+	PrimaryKey      bool
+	AutoIncr        bool
+	Unique          bool
+	Comment         string
+	GeneratedExpr   string `json:"generatedExpr,omitempty"`   // GENERATED ALWAYS AS expression
+	GeneratedStored bool   `json:"generatedStored,omitempty"` // true if STORED, false if VIRTUAL
 }
 
 // CheckConstraintInfo represents a CHECK constraint.

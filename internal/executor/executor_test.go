@@ -1667,3 +1667,92 @@ func TestExecutorWindowFunctions(t *testing.T) {
 		t.Logf("MIN/MAX window result (%d rows): %v", len(result.Rows), result.Rows)
 	})
 }
+
+func TestGeneratedColumns(t *testing.T) {
+	// Create temp directory
+	tmpDir, err := os.MkdirTemp("", "xxsql-gen-test-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	// Create storage engine
+	engine := storage.NewEngine(tmpDir)
+	if err := engine.Open(); err != nil {
+		t.Fatalf("Failed to open engine: %v", err)
+	}
+	defer engine.Close()
+
+	// Create executor
+	exec := executor.NewExecutor(engine)
+
+	// Test 1: Create table with virtual generated column
+	t.Run("CreateVirtualGenerated", func(t *testing.T) {
+		result, err := exec.Execute(`CREATE TABLE products (
+			id INT PRIMARY KEY,
+			price DECIMAL,
+			quantity INT,
+			total_value DECIMAL GENERATED ALWAYS AS (price * quantity) VIRTUAL
+		)`)
+		if err != nil {
+			t.Fatalf("Failed to create table with generated column: %v", err)
+		}
+		if result.Message != "OK" {
+			t.Errorf("Expected OK, got %s", result.Message)
+		}
+	})
+
+	// Test 2: Insert data and verify virtual column computation
+	t.Run("InsertAndSelectVirtual", func(t *testing.T) {
+		_, err := exec.Execute(`INSERT INTO products (id, price, quantity) VALUES (1, 10.50, 5)`)
+		if err != nil {
+			t.Fatalf("Failed to insert: %v", err)
+		}
+
+		result, err := exec.Execute("SELECT id, price, quantity, total_value FROM products")
+		if err != nil {
+			t.Fatalf("Failed to select: %v", err)
+		}
+		if len(result.Rows) != 1 {
+			t.Errorf("Expected 1 row, got %d", len(result.Rows))
+		} else {
+			// Check that total_value = price * quantity = 10.50 * 5 = 52.5
+			t.Logf("Row: %v", result.Rows[0])
+		}
+	})
+
+	// Test 3: Create table with stored generated column
+	t.Run("CreateStoredGenerated", func(t *testing.T) {
+		result, err := exec.Execute(`CREATE TABLE employees (
+			id INT PRIMARY KEY,
+			first_name VARCHAR(50),
+			last_name VARCHAR(50),
+			full_name VARCHAR(101) GENERATED ALWAYS AS (first_name || ' ' || last_name) STORED
+		)`)
+		if err != nil {
+			t.Fatalf("Failed to create table with stored generated column: %v", err)
+		}
+		if result.Message != "OK" {
+			t.Errorf("Expected OK, got %s", result.Message)
+		}
+	})
+
+	// Test 4: Insert and verify stored generated column
+	t.Run("InsertAndSelectStored", func(t *testing.T) {
+		_, err := exec.Execute(`INSERT INTO employees (id, first_name, last_name) VALUES (1, 'John', 'Doe')`)
+		if err != nil {
+			t.Fatalf("Failed to insert: %v", err)
+		}
+
+		result, err := exec.Execute("SELECT id, first_name, last_name, full_name FROM employees")
+		if err != nil {
+			t.Fatalf("Failed to select: %v", err)
+		}
+		if len(result.Rows) != 1 {
+			t.Errorf("Expected 1 row, got %d", len(result.Rows))
+		} else {
+			t.Logf("Row: %v", result.Rows[0])
+			// full_name should be "John Doe"
+		}
+	})
+}

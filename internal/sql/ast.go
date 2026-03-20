@@ -466,6 +466,21 @@ func (s *DropViewStmt) String() string {
 	return fmt.Sprintf("DROP VIEW %s", s.ViewName)
 }
 
+// ExplainStmt represents an EXPLAIN statement.
+type ExplainStmt struct {
+	Statement Statement // The statement to explain
+	QueryPlan bool      // EXPLAIN QUERY PLAN
+}
+
+func (s *ExplainStmt) node()      {}
+func (s *ExplainStmt) statement() {}
+func (s *ExplainStmt) String() string {
+	if s.QueryPlan {
+		return fmt.Sprintf("EXPLAIN QUERY PLAN %s", s.Statement.String())
+	}
+	return fmt.Sprintf("EXPLAIN %s", s.Statement.String())
+}
+
 // AlterTableStmt represents an ALTER TABLE statement.
 type AlterTableStmt struct {
 	TableName string
@@ -790,14 +805,16 @@ func (a *Assignment) String() string {
 
 // ColumnDef represents a column definition.
 type ColumnDef struct {
-	Name       string
-	Type       *DataType
-	Nullable   bool  // true if NULL allowed (default true)
-	Default    Expression
-	AutoIncr   bool
-	PrimaryKey bool
-	Unique     bool
-	Comment    string
+	Name            string
+	Type            *DataType
+	Nullable        bool  // true if NULL allowed (default true)
+	Default         Expression
+	AutoIncr        bool
+	PrimaryKey      bool
+	Unique          bool
+	Comment         string
+	GeneratedExpr   Expression // GENERATED ALWAYS AS expression
+	GeneratedStored bool       // true if STORED, false if VIRTUAL
 }
 
 func (c *ColumnDef) node() {}
@@ -812,6 +829,16 @@ func (c *ColumnDef) String() string {
 	if c.Default != nil {
 		sb.WriteString(" DEFAULT ")
 		sb.WriteString(c.Default.String())
+	}
+	if c.GeneratedExpr != nil {
+		sb.WriteString(" GENERATED ALWAYS AS (")
+		sb.WriteString(c.GeneratedExpr.String())
+		sb.WriteString(")")
+		if c.GeneratedStored {
+			sb.WriteString(" STORED")
+		} else {
+			sb.WriteString(" VIRTUAL")
+		}
 	}
 	if c.AutoIncr {
 		sb.WriteString(" AUTO_INCREMENT")
@@ -1025,6 +1052,8 @@ const (
 	OpOr
 	OpLike
 	OpNotLike
+	OpGlob
+	OpNotGlob
 	OpIn
 	OpNotIn
 	OpConcat

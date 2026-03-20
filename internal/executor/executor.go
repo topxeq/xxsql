@@ -225,6 +225,8 @@ func (e *Executor) ExecuteWithPerms(sqlStr string, checker PermissionChecker) (*
 			return nil, err
 		}
 		return e.executeDropView(s)
+	case *sql.ExplainStmt:
+		return e.executeExplain(s)
 	case *sql.AlterTableStmt:
 		if err := checkPerm(PermCreateTable); err != nil {
 			return nil, err
@@ -519,6 +521,11 @@ func (e *Executor) executeSelect(stmt *sql.SelectStmt) (*Result, error) {
 	}
 
 	for _, r := range rows {
+		// Evaluate virtual generated columns first
+		if err := e.evaluateGeneratedColumns(r, columnOrder); err != nil {
+			return nil, err
+		}
+
 		if stmt.Where != nil {
 			// Evaluate WHERE clause
 			match, err := e.evaluateWhere(stmt.Where, r, columnMap, columnOrder)
@@ -737,6 +744,11 @@ func (e *Executor) evaluateBinaryOp(left interface{}, op sql.BinaryOp, right int
 		if leftOk && rightOk && rightFloat != 0 {
 			return float64(int(leftFloat) % int(rightFloat)), nil
 		}
+	case sql.OpConcat:
+		// String concatenation
+		leftStr := fmt.Sprintf("%v", left)
+		rightStr := fmt.Sprintf("%v", right)
+		return leftStr + rightStr, nil
 	// Comparison operators
 	case sql.OpLt:
 		if leftOk && rightOk {
@@ -2960,6 +2972,33 @@ func (e *Executor) executeInsert(stmt *sql.InsertStmt) (*Result, error) {
 			}
 		}
 
+		// Compute STORED generated columns
+		for i, col := range tblInfo.Columns {
+			if col.GeneratedExpr != "" && col.GeneratedStored {
+				// Parse and evaluate the expression
+				p := sql.NewParser(col.GeneratedExpr)
+				expr := p.ParseExpression()
+				if p.Error() != nil {
+					return nil, fmt.Errorf("invalid generated column expression: %w", p.Error())
+				}
+
+				// Build a temporary row for evaluation
+				tempRow := &row.Row{Values: values}
+				columnMap := make(map[string]*types.ColumnInfo)
+				for j, c := range tblInfo.Columns {
+					columnMap[strings.ToLower(c.Name)] = tblInfo.Columns[j]
+				}
+
+				// Evaluate the expression
+				val, err := e.evaluateExpression(expr, tempRow, columnMap, tblInfo.Columns)
+				if err != nil {
+					return nil, fmt.Errorf("error evaluating generated column %s: %w", col.Name, err)
+				}
+
+				values[i] = e.interfaceToValue(val, col)
+			}
+		}
+
 		// Handle auto-increment columns - mark as NULL so table layer can generate value
 		for i, col := range tblInfo.Columns {
 			if col.AutoIncr && values[i].Null {
@@ -3933,15 +3972,21 @@ func (e *Executor) executeCreateTable(stmt *sql.CreateTableStmt) (*Result, error
 		}
 
 		col := &types.ColumnInfo{
-			Name:       colDef.Name,
-			Type:       colType,
-			Size:       colDef.Type.Size,
-			Precision:  colDef.Type.Precision,
-			Scale:      colDef.Type.Scale,
-			Nullable:   colDef.Nullable,
-			PrimaryKey: colDef.PrimaryKey,
-			AutoIncr:   colDef.AutoIncr || colType == types.TypeSeq, // SEQ type is auto-increment
-			Unique:     colDef.Unique,
+			Name:            colDef.Name,
+			Type:            colType,
+			Size:            colDef.Type.Size,
+			Precision:       colDef.Type.Precision,
+			Scale:           colDef.Type.Scale,
+			Nullable:        colDef.Nullable,
+			PrimaryKey:      colDef.PrimaryKey,
+			AutoIncr:        colDef.AutoIncr || colType == types.TypeSeq, // SEQ type is auto-increment
+			Unique:          colDef.Unique,
+			GeneratedStored: colDef.GeneratedStored,
+		}
+
+		// Store generated column expression as string
+		if colDef.GeneratedExpr != nil {
+			col.GeneratedExpr = colDef.GeneratedExpr.String()
 		}
 
 		// Process DEFAULT value
@@ -4153,6 +4198,137 @@ func (e *Executor) executeDropView(stmt *sql.DropViewStmt) (*Result, error) {
 	}
 
 	return &Result{Message: "OK"}, nil
+}
+
+// executeExplain executes an EXPLAIN statement.
+func (e *Executor) executeExplain(stmt *sql.ExplainStmt) (*Result, error) {
+	// Generate query plan
+	plan := e.generateQueryPlan(stmt.Statement)
+
+	result := &Result{
+		Columns: []ColumnInfo{
+			{Name: "id", Type: "INT"},
+			{Name: "parent", Type: "INT"},
+			{Name: "notused", Type: "INT"},
+			{Name: "detail", Type: "TEXT"},
+		},
+		Rows:    plan,
+		Message: "OK",
+	}
+
+	return result, nil
+}
+
+// generateQueryPlan generates a query plan for a statement
+func (e *Executor) generateQueryPlan(s sql.Statement) [][]interface{} {
+	var rows [][]interface{}
+	var id int
+
+	switch stmt := s.(type) {
+	case *sql.SelectStmt:
+		id++
+		rows = append(rows, []interface{}{id, 0, 0, "SCAN TABLE " + getTableNameFromSelect(stmt)})
+
+		// Check for WHERE clause
+		if stmt.Where != nil {
+			id++
+			rows = append(rows, []interface{}{id, 1, 0, "FILTER"})
+		}
+
+		// Check for JOIN
+		if stmt.From != nil && len(stmt.From.Joins) > 0 {
+			for _, join := range stmt.From.Joins {
+				id++
+				joinType := "INNER JOIN"
+				if join.Type == sql.JoinLeft {
+					joinType = "LEFT JOIN"
+				} else if join.Type == sql.JoinRight {
+					joinType = "RIGHT JOIN"
+				} else if join.Type == sql.JoinCross {
+					joinType = "CROSS JOIN"
+				}
+				rows = append(rows, []interface{}{id, 0, 0, joinType + " TABLE " + join.Table.Name})
+			}
+		}
+
+		// Check for GROUP BY
+		if len(stmt.GroupBy) > 0 {
+			id++
+			rows = append(rows, []interface{}{id, 0, 0, "GROUP BY"})
+		}
+
+		// Check for ORDER BY
+		if len(stmt.OrderBy) > 0 {
+			id++
+			rows = append(rows, []interface{}{id, 0, 0, "ORDER BY"})
+		}
+
+		// Check for LIMIT
+		if stmt.Limit != nil {
+			id++
+			rows = append(rows, []interface{}{id, 0, 0, "LIMIT"})
+		}
+
+	case *sql.InsertStmt:
+		id++
+		rows = append(rows, []interface{}{id, 0, 0, "INSERT INTO " + stmt.Table})
+
+		// Check for UPSERT
+		if stmt.OnConflict != nil {
+			id++
+			if stmt.OnConflict.DoNothing {
+				rows = append(rows, []interface{}{id, 1, 0, "ON CONFLICT DO NOTHING"})
+			} else {
+				rows = append(rows, []interface{}{id, 1, 0, "ON CONFLICT DO UPDATE"})
+			}
+		}
+
+	case *sql.UpdateStmt:
+		id++
+		rows = append(rows, []interface{}{id, 0, 0, "UPDATE TABLE " + stmt.Table})
+		if stmt.Where != nil {
+			id++
+			rows = append(rows, []interface{}{id, 1, 0, "FILTER"})
+		}
+
+	case *sql.DeleteStmt:
+		id++
+		rows = append(rows, []interface{}{id, 0, 0, "DELETE FROM " + stmt.Table})
+		if stmt.Where != nil {
+			id++
+			rows = append(rows, []interface{}{id, 1, 0, "FILTER"})
+		}
+
+	case *sql.CreateTableStmt:
+		id++
+		rows = append(rows, []interface{}{id, 0, 0, "CREATE TABLE " + stmt.TableName})
+
+	case *sql.DropTableStmt:
+		id++
+		rows = append(rows, []interface{}{id, 0, 0, "DROP TABLE " + stmt.TableName})
+
+	case *sql.DropViewStmt:
+		id++
+		rows = append(rows, []interface{}{id, 0, 0, "DROP VIEW " + stmt.ViewName})
+
+	case *sql.DropIndexStmt:
+		id++
+		rows = append(rows, []interface{}{id, 0, 0, "DROP INDEX " + stmt.IndexName})
+
+	default:
+		id++
+		rows = append(rows, []interface{}{id, 0, 0, "EXECUTE " + s.String()})
+	}
+
+	return rows
+}
+
+// getTableNameFromSelect extracts the main table name from a SELECT statement
+func getTableNameFromSelect(stmt *sql.SelectStmt) string {
+	if stmt.From != nil && stmt.From.Table != nil {
+		return stmt.From.Table.Name
+	}
+	return "unknown"
 }
 
 // executeAlterTable executes an ALTER TABLE statement.
@@ -5349,6 +5525,10 @@ func (e *Executor) evaluateExpression(expr sql.Expression, r *row.Row, columnMap
 			}
 			return true, nil
 		}
+
+	case *sql.ParenExpr:
+		// Evaluate the inner expression
+		return e.evaluateExpression(ex.Expr, r, columnMap, columnOrder)
 	}
 	return nil, nil
 }
@@ -7470,6 +7650,140 @@ func (e *Executor) evaluateFunction(fc *sql.FunctionCall, r *row.Row, columnMap 
 			return int64(1), nil
 		}
 
+	case "JSON_SET":
+		if len(fc.Args) < 3 {
+			return nil, fmt.Errorf("JSON_SET requires at least 3 arguments")
+		}
+		jsonArg, err := evalExpr(fc.Args[0])
+		if err != nil {
+			return nil, err
+		}
+		if jsonArg == nil {
+			return nil, nil
+		}
+		jsonStr, ok := jsonArg.(string)
+		if !ok {
+			jsonStr = fmt.Sprintf("%v", jsonArg)
+		}
+		var jsonVal interface{}
+		if err := json.Unmarshal([]byte(jsonStr), &jsonVal); err != nil {
+			return nil, fmt.Errorf("JSON_SET: invalid JSON: %v", err)
+		}
+		// Process path-value pairs
+		for i := 1; i < len(fc.Args); i += 2 {
+			if i+1 >= len(fc.Args) {
+				break
+			}
+			pathArg, _ := evalExpr(fc.Args[i])
+			valArg, _ := evalExpr(fc.Args[i+1])
+			path, _ := pathArg.(string)
+			jsonVal = jsonSetPath(jsonVal, path, valArg)
+		}
+		bytes, err := json.Marshal(jsonVal)
+		if err != nil {
+			return nil, err
+		}
+		return string(bytes), nil
+
+	case "JSON_REPLACE":
+		if len(fc.Args) < 3 {
+			return nil, fmt.Errorf("JSON_REPLACE requires at least 3 arguments")
+		}
+		jsonArg, err := evalExpr(fc.Args[0])
+		if err != nil {
+			return nil, err
+		}
+		if jsonArg == nil {
+			return nil, nil
+		}
+		jsonStr, ok := jsonArg.(string)
+		if !ok {
+			jsonStr = fmt.Sprintf("%v", jsonArg)
+		}
+		var jsonVal interface{}
+		if err := json.Unmarshal([]byte(jsonStr), &jsonVal); err != nil {
+			return nil, fmt.Errorf("JSON_REPLACE: invalid JSON: %v", err)
+		}
+		// Process path-value pairs (only replace existing paths)
+		for i := 1; i < len(fc.Args); i += 2 {
+			if i+1 >= len(fc.Args) {
+				break
+			}
+			pathArg, _ := evalExpr(fc.Args[i])
+			valArg, _ := evalExpr(fc.Args[i+1])
+			path, _ := pathArg.(string)
+			jsonVal = jsonReplacePath(jsonVal, path, valArg)
+		}
+		bytes, err := json.Marshal(jsonVal)
+		if err != nil {
+			return nil, err
+		}
+		return string(bytes), nil
+
+	case "JSON_REMOVE":
+		if len(fc.Args) < 2 {
+			return nil, fmt.Errorf("JSON_REMOVE requires at least 2 arguments")
+		}
+		jsonArg, err := evalExpr(fc.Args[0])
+		if err != nil {
+			return nil, err
+		}
+		if jsonArg == nil {
+			return nil, nil
+		}
+		jsonStr, ok := jsonArg.(string)
+		if !ok {
+			jsonStr = fmt.Sprintf("%v", jsonArg)
+		}
+		var jsonVal interface{}
+		if err := json.Unmarshal([]byte(jsonStr), &jsonVal); err != nil {
+			return nil, fmt.Errorf("JSON_REMOVE: invalid JSON: %v", err)
+		}
+		// Remove each specified path
+		for i := 1; i < len(fc.Args); i++ {
+			pathArg, _ := evalExpr(fc.Args[i])
+			path, _ := pathArg.(string)
+			jsonVal = jsonRemovePath(jsonVal, path)
+		}
+		bytes, err := json.Marshal(jsonVal)
+		if err != nil {
+			return nil, err
+		}
+		return string(bytes), nil
+
+	case "JSON_MERGE_PATCH":
+		if len(fc.Args) < 2 {
+			return nil, fmt.Errorf("JSON_MERGE_PATCH requires at least 2 arguments")
+		}
+		var result map[string]interface{}
+		for _, arg := range fc.Args {
+			val, err := evalExpr(arg)
+			if err != nil {
+				return nil, err
+			}
+			if val == nil {
+				continue
+			}
+			jsonStr, ok := val.(string)
+			if !ok {
+				jsonStr = fmt.Sprintf("%v", val)
+			}
+			var jsonObj map[string]interface{}
+			if err := json.Unmarshal([]byte(jsonStr), &jsonObj); err != nil {
+				return nil, fmt.Errorf("JSON_MERGE_PATCH: invalid JSON: %v", err)
+			}
+			if result == nil {
+				result = jsonObj
+			} else {
+				result = jsonMergePatch(result, jsonObj)
+			}
+		}
+		bytes, err := json.Marshal(result)
+		if err != nil {
+			return nil, err
+		}
+		return string(bytes), nil
+
 	// ========== Additional Math Functions ==========
 	case "TRUNCATE":
 		if len(fc.Args) < 2 {
@@ -8376,6 +8690,12 @@ func (e *Executor) compareValues(left interface{}, op sql.BinaryOp, right interf
 		pattern := strings.ReplaceAll(rightStr, "%", ".*")
 		pattern = strings.ReplaceAll(pattern, "_", ".")
 		pattern = "^" + pattern + "$"
+		matched, _ := regexp.MatchString(pattern, leftStr)
+		return matched, nil
+	case sql.OpGlob:
+		// GLOB uses Unix-style wildcards: * and ?
+		// Convert GLOB pattern to regex
+		pattern := globToRegex(rightStr)
 		matched, _ := regexp.MatchString(pattern, leftStr)
 		return matched, nil
 	default:
@@ -9400,5 +9720,309 @@ func timestampDiff(unit string, t1, t2 time.Time) int64 {
 		return int64(t2.Year() - t1.Year())
 	default:
 		return int64(d / time.Second)
+	}
+}
+
+// globToRegex converts a GLOB pattern to a regex pattern.
+// GLOB uses: * (any sequence), ? (any single char), [abc] (character set)
+func globToRegex(pattern string) string {
+	var result strings.Builder
+	result.WriteString("^")
+
+	i := 0
+	for i < len(pattern) {
+		c := pattern[i]
+		switch c {
+		case '*':
+			result.WriteString(".*")
+		case '?':
+			result.WriteString(".")
+		case '[', ']', '(', ')', '{', '}', '.', '+', '^', '$', '|', '\\':
+			// Escape regex special characters (except * and ? which we handle)
+			result.WriteByte('\\')
+			result.WriteByte(c)
+		default:
+			result.WriteByte(c)
+		}
+		i++
+	}
+	result.WriteString("$")
+	return result.String()
+}
+
+// ========== JSON Helper Functions for Set/Replace/Remove ==========
+
+// jsonSetPath sets a value at a path, creating intermediate objects/arrays as needed
+func jsonSetPath(jsonVal interface{}, path string, value interface{}) interface{} {
+	if path == "" || path == "$" {
+		return value
+	}
+
+	// Parse path
+	path = strings.TrimPrefix(path, "$")
+	parts := parseJSONPathParts(path)
+
+	if len(parts) == 0 {
+		return value
+	}
+
+	// Navigate and set
+	return jsonSetPathRecursive(jsonVal, parts, value)
+}
+
+func jsonSetPathRecursive(current interface{}, parts []jsonPathPart, value interface{}) interface{} {
+	if len(parts) == 0 {
+		return value
+	}
+
+	part := parts[0]
+	remaining := parts[1:]
+
+	switch part.typ {
+	case pathTypeKey:
+		obj, ok := current.(map[string]interface{})
+		if !ok {
+			obj = make(map[string]interface{})
+		}
+		obj[part.key] = jsonSetPathRecursive(obj[part.key], remaining, value)
+		return obj
+	case pathTypeIndex:
+		arr, ok := current.([]interface{})
+		if !ok {
+			arr = make([]interface{}, part.index+1)
+		}
+		// Extend array if needed
+		for len(arr) <= part.index {
+			arr = append(arr, nil)
+		}
+		arr[part.index] = jsonSetPathRecursive(arr[part.index], remaining, value)
+		return arr
+	}
+	return current
+}
+
+// jsonReplacePath replaces a value at a path only if it exists
+func jsonReplacePath(jsonVal interface{}, path string, value interface{}) interface{} {
+	if path == "" || path == "$" {
+		return value
+	}
+
+	path = strings.TrimPrefix(path, "$")
+	parts := parseJSONPathParts(path)
+
+	if len(parts) == 0 {
+		return value
+	}
+
+	return jsonReplacePathRecursive(jsonVal, parts, value)
+}
+
+func jsonReplacePathRecursive(current interface{}, parts []jsonPathPart, value interface{}) interface{} {
+	if len(parts) == 0 {
+		return value
+	}
+
+	part := parts[0]
+	remaining := parts[1:]
+
+	switch part.typ {
+	case pathTypeKey:
+		obj, ok := current.(map[string]interface{})
+		if !ok {
+			return current
+		}
+		if _, exists := obj[part.key]; exists {
+			obj[part.key] = jsonReplacePathRecursive(obj[part.key], remaining, value)
+		}
+		return obj
+	case pathTypeIndex:
+		arr, ok := current.([]interface{})
+		if !ok || part.index >= len(arr) {
+			return current
+		}
+		arr[part.index] = jsonReplacePathRecursive(arr[part.index], remaining, value)
+		return arr
+	}
+	return current
+}
+
+// jsonRemovePath removes a value at a path
+func jsonRemovePath(jsonVal interface{}, path string) interface{} {
+	if path == "" || path == "$" {
+		return nil
+	}
+
+	path = strings.TrimPrefix(path, "$")
+	parts := parseJSONPathParts(path)
+
+	if len(parts) == 0 {
+		return jsonVal
+	}
+
+	return jsonRemovePathRecursive(jsonVal, parts)
+}
+
+func jsonRemovePathRecursive(current interface{}, parts []jsonPathPart) interface{} {
+	if len(parts) == 0 {
+		return nil
+	}
+
+	part := parts[0]
+	remaining := parts[1:]
+
+	switch part.typ {
+	case pathTypeKey:
+		obj, ok := current.(map[string]interface{})
+		if !ok {
+			return current
+		}
+		if len(remaining) == 0 {
+			delete(obj, part.key)
+		} else {
+			obj[part.key] = jsonRemovePathRecursive(obj[part.key], remaining)
+		}
+		return obj
+	case pathTypeIndex:
+		arr, ok := current.([]interface{})
+		if !ok || part.index >= len(arr) {
+			return current
+		}
+		if len(remaining) == 0 {
+			// Remove element at index
+			arr = append(arr[:part.index], arr[part.index+1:]...)
+		} else {
+			arr[part.index] = jsonRemovePathRecursive(arr[part.index], remaining)
+		}
+		return arr
+	}
+	return current
+}
+
+// jsonMergePatch merges two JSON objects per RFC 7396
+func jsonMergePatch(target, patch map[string]interface{}) map[string]interface{} {
+	result := make(map[string]interface{})
+	for k, v := range target {
+		result[k] = v
+	}
+
+	for key, value := range patch {
+		if value == nil {
+			delete(result, key)
+		} else if patchObj, ok := value.(map[string]interface{}); ok {
+			if targetObj, ok := result[key].(map[string]interface{}); ok {
+				result[key] = jsonMergePatch(targetObj, patchObj)
+			} else {
+				result[key] = patchObj
+			}
+		} else {
+			result[key] = value
+		}
+	}
+
+	return result
+}
+
+type jsonPathPart struct {
+	typ   pathPartType
+	key   string
+	index int
+}
+
+type pathPartType int
+
+const (
+	pathTypeKey   pathPartType = iota
+	pathTypeIndex pathPartType = iota
+)
+
+func parseJSONPathParts(path string) []jsonPathPart {
+	var parts []jsonPathPart
+	i := 0
+	for i < len(path) {
+		if path[i] == '.' {
+			i++
+			start := i
+			for i < len(path) && path[i] != '.' && path[i] != '[' {
+				i++
+			}
+			if i > start {
+				parts = append(parts, jsonPathPart{typ: pathTypeKey, key: path[start:i]})
+			}
+		} else if path[i] == '[' {
+			i++
+			start := i
+			for i < len(path) && path[i] != ']' {
+				i++
+			}
+			var idx int
+			fmt.Sscanf(path[start:i], "%d", &idx)
+			parts = append(parts, jsonPathPart{typ: pathTypeIndex, index: idx})
+			i++ // skip ]
+		} else {
+			i++
+		}
+	}
+	return parts
+}
+
+// evaluateGeneratedColumns evaluates virtual generated columns for a row
+func (e *Executor) evaluateGeneratedColumns(r *row.Row, columns []*types.ColumnInfo) error {
+	for i, col := range columns {
+		// Skip stored generated columns (already computed)
+		if col.GeneratedExpr != "" && !col.GeneratedStored {
+			// Virtual generated column - compute value
+			// Parse the expression
+			p := sql.NewParser(col.GeneratedExpr)
+			expr := p.ParseExpression()
+			if p.Error() != nil {
+				return fmt.Errorf("invalid generated column expression: %w", p.Error())
+			}
+
+			// Build column map for evaluation
+			columnMap := make(map[string]*types.ColumnInfo)
+			for j, c := range columns {
+				columnMap[strings.ToLower(c.Name)] = columns[j]
+			}
+
+			// Evaluate the expression
+			val, err := e.evaluateExpression(expr, r, columnMap, columns)
+			if err != nil {
+				return fmt.Errorf("error evaluating generated column %s: %w", col.Name, err)
+			}
+
+			// Store the computed value in the row
+			if i < len(r.Values) {
+				r.Values[i] = e.interfaceToValue(val, col)
+			}
+		}
+	}
+	return nil
+}
+
+// interfaceToValue converts an interface{} to a types.Value
+func (e *Executor) interfaceToValue(val interface{}, col *types.ColumnInfo) types.Value {
+	if val == nil {
+		return types.Value{Null: true}
+	}
+
+	switch v := val.(type) {
+	case int:
+		return types.NewIntValue(int64(v))
+	case int64:
+		return types.NewIntValue(v)
+	case float64:
+		return types.NewFloatValue(v)
+	case string:
+		return types.NewStringValue(v, col.Type)
+	case bool:
+		if v {
+			return types.NewIntValue(1)
+		}
+		return types.NewIntValue(0)
+	case []byte:
+		return types.Value{Type: types.TypeBlob, Data: v, Null: false}
+	default:
+		// Try to convert to string
+		return types.NewStringValue(fmt.Sprintf("%v", val), col.Type)
 	}
 }

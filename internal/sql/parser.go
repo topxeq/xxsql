@@ -37,6 +37,17 @@ func (p *Parser) Parse() (Statement, error) {
 	return stmt, nil
 }
 
+// ParseExpression parses a single expression and returns it.
+// This is useful for parsing generated column expressions.
+func (p *Parser) ParseExpression() Expression {
+	return p.parseExpression()
+}
+
+// Error returns any parse error that occurred.
+func (p *Parser) Error() error {
+	return p.err
+}
+
 // ParseAll parses all statements in the input.
 func ParseAll(input string) ([]Statement, error) {
 	p := NewParser(input)
@@ -118,7 +129,7 @@ func (p *Parser) isKeywordAsIdent() bool {
 		TokModify, TokDatabase, TokSchema, TokUse, TokShow,
 		TokGrant, TokRevoke, TokPrivileges, TokTo,
 		TokTruncate, TokOn, TokAs, TokAnd, TokOr, TokNot,
-		TokIn, TokLike, TokBetween, TokIs,
+		TokIn, TokLike, TokGlob, TokBetween, TokIs,
 		TokJoin, TokInner, TokLeft, TokRight, TokCross, TokOuter,
 		TokFull, TokNatural, TokUnion, TokIntersect, TokExcept,
 		TokOver, TokPartition, TokWindow, TokRows, TokRange,
@@ -186,6 +197,8 @@ func (p *Parser) parseStatement() Statement {
 		return p.parseBackup()
 	case TokRestore:
 		return p.parseRestore()
+	case TokExplain:
+		return p.parseExplain()
 	case TokLParen:
 		// Could be a parenthesized SELECT
 		return p.parseSelect()
@@ -1089,6 +1102,29 @@ func (p *Parser) parseColumnDef() *ColumnDef {
 				cd.Comment = p.currTok.Value
 				p.nextToken()
 			}
+		case TokGenerated:
+			p.nextToken()
+			if !p.expect(TokAlways) {
+				return nil
+			}
+			if !p.expect(TokAs) {
+				return nil
+			}
+			if !p.expect(TokLParen) {
+				return nil
+			}
+			cd.GeneratedExpr = p.parseExpression()
+			if !p.expect(TokRParen) {
+				return nil
+			}
+			// Check for STORED or VIRTUAL
+			if p.curTokenIs(TokStored) {
+				cd.GeneratedStored = true
+				p.nextToken()
+			} else if p.curTokenIs(TokVirtual) {
+				cd.GeneratedStored = false
+				p.nextToken()
+			}
 		default:
 			return cd
 		}
@@ -1504,6 +1540,31 @@ func (p *Parser) parseDescribe() Statement {
 	return &DescribeStmt{TableName: tableName}
 }
 
+// parseExplain parses an EXPLAIN statement.
+func (p *Parser) parseExplain() Statement {
+	p.nextToken() // consume EXPLAIN
+
+	stmt := &ExplainStmt{}
+
+	// Check for QUERY PLAN
+	if p.curTokenIs(TokQuery) {
+		p.nextToken()
+		if p.curTokenIs(TokPlan) {
+			p.nextToken()
+			stmt.QueryPlan = true
+		}
+	}
+
+	// Parse the statement to explain
+	innerStmt := p.parseStatement()
+	if innerStmt == nil {
+		return nil
+	}
+	stmt.Statement = innerStmt
+
+	return stmt
+}
+
 // parseAlter parses an ALTER statement.
 func (p *Parser) parseAlter() Statement {
 	p.nextToken() // consume ALTER
@@ -1812,7 +1873,7 @@ func (p *Parser) isBinaryOpToken() bool {
 	switch p.currTok.Type {
 	case TokEq, TokNe, TokLt, TokLe, TokGt, TokGe,
 		TokPlus, TokMinus, TokStar, TokSlash, TokPercent,
-		TokAnd, TokOr, TokLike, TokConcat, TokIn, TokBetween, TokIs:
+		TokAnd, TokOr, TokLike, TokGlob, TokConcat, TokIn, TokBetween, TokIs:
 		return true
 	default:
 		return false
@@ -2241,6 +2302,8 @@ func (p *Parser) getBinaryOp() BinaryOp {
 		return OpOr
 	case TokLike:
 		return OpLike
+	case TokGlob:
+		return OpGlob
 	case TokConcat:
 		return OpConcat
 	case TokIn:
@@ -2262,7 +2325,7 @@ func getPrecedence(op BinaryOp) int {
 		return 1
 	case OpAnd:
 		return 2
-	case OpEq, OpNe, OpLt, OpLe, OpGt, OpGe, OpLike, OpIn:
+	case OpEq, OpNe, OpLt, OpLe, OpGt, OpGe, OpLike, OpGlob, OpIn:
 		return 3
 	case OpAdd, OpSub, OpConcat:
 		return 4
