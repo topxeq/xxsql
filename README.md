@@ -64,7 +64,7 @@ Then XxSql might be the right choice.
 - **JOINs** - INNER, LEFT, RIGHT, CROSS, FULL OUTER JOIN with multiple table support
 - **UNION** - UNION and UNION ALL with duplicate elimination
 - **Aggregates** - COUNT, SUM, AVG, MIN, MAX
-- **Subqueries** - WHERE clause subqueries
+- **Subqueries** - Comprehensive subquery support (see details below)
 - **Constraints** - PRIMARY KEY, UNIQUE, NOT NULL, DEFAULT, CHECK
 
 ### Security
@@ -247,6 +247,161 @@ DELETE FROM users WHERE id = 1;
 -- Truncate
 TRUNCATE TABLE users;
 ```
+
+### Subquery Support
+
+XxSql provides comprehensive subquery support across various SQL contexts:
+
+#### Supported Subquery Types
+
+| Subquery Type | Description | Example |
+|---------------|-------------|---------|
+| **Scalar Subquery** | Returns a single value | `SELECT (SELECT MAX(x) FROM t)` |
+| **IN Subquery** | Checks membership in subquery results | `WHERE id IN (SELECT ...)` |
+| **NOT IN Subquery** | Checks non-membership | `WHERE id NOT IN (SELECT ...)` |
+| **EXISTS Subquery** | Checks if subquery returns rows | `WHERE EXISTS (SELECT ...)` |
+| **NOT EXISTS Subquery** | Checks if subquery returns no rows | `WHERE NOT EXISTS (SELECT ...)` |
+| **ANY Subquery** | Comparison with any subquery result | `WHERE x > ANY (SELECT ...)` |
+| **ALL Subquery** | Comparison with all subquery results | `WHERE x > ALL (SELECT ...)` |
+| **Derived Table** | Subquery in FROM clause | `FROM (SELECT ...) AS alias` |
+
+#### Subquery Locations
+
+| Location | Supported | Notes |
+|----------|-----------|-------|
+| **SELECT list** | ✅ | Scalar subqueries with alias support |
+| **WHERE clause** | ✅ | All subquery types supported |
+| **HAVING clause** | ✅ | With aggregate and subquery comparisons |
+| **FROM clause** | ✅ | Derived tables with required alias |
+
+#### Examples
+
+**1. Scalar Subquery in SELECT List:**
+```sql
+-- Simple scalar subquery
+SELECT (SELECT MAX(amount) FROM orders) AS max_amount;
+
+-- Multiple scalar subqueries
+SELECT
+    (SELECT MIN(price) FROM products) AS min_price,
+    (SELECT MAX(price) FROM products) AS max_price;
+
+-- Correlated scalar subquery
+SELECT
+    id,
+    name,
+    (SELECT SUM(amount) FROM orders WHERE user_id = users.id) AS total
+FROM users;
+```
+
+**2. IN / NOT IN Subqueries:**
+```sql
+-- Find users who have placed orders
+SELECT * FROM users
+WHERE id IN (SELECT DISTINCT user_id FROM orders);
+
+-- Find users who haven't placed orders
+SELECT * FROM users
+WHERE id NOT IN (SELECT user_id FROM orders);
+```
+
+**3. EXISTS / NOT EXISTS Subqueries:**
+```sql
+-- Users with orders over 100
+SELECT * FROM users u
+WHERE EXISTS (
+    SELECT 1 FROM orders o
+    WHERE o.user_id = u.id AND o.amount > 100
+);
+
+-- Products never ordered
+SELECT * FROM products p
+WHERE NOT EXISTS (
+    SELECT 1 FROM order_items oi
+    WHERE oi.product_id = p.id
+);
+```
+
+**4. ANY / ALL Subqueries:**
+```sql
+-- Products priced higher than any product in category 1
+SELECT * FROM products
+WHERE price > ANY (
+    SELECT price FROM products WHERE category_id = 1
+);
+
+-- Products priced higher than all products in category 1
+SELECT * FROM products
+WHERE price > ALL (
+    SELECT price FROM products WHERE category_id = 1
+);
+```
+
+**5. Derived Tables (Subquery in FROM):**
+```sql
+-- Derived table with filtering
+SELECT * FROM (
+    SELECT user_id, SUM(amount) AS total
+    FROM orders
+    GROUP BY user_id
+) AS user_totals
+WHERE total > 1000;
+```
+
+**6. HAVING Clause with Subqueries:**
+```sql
+-- Groups with count above average
+SELECT customer_id, COUNT(*) AS order_count
+FROM orders
+GROUP BY customer_id
+HAVING COUNT(*) > (
+    SELECT AVG(cnt) FROM (
+        SELECT COUNT(*) AS cnt
+        FROM orders
+        GROUP BY customer_id
+    ) AS counts
+);
+
+-- Groups where total exceeds threshold
+SELECT customer_id, SUM(amount) AS total
+FROM orders
+GROUP BY customer_id
+HAVING SUM(amount) > 500;
+
+-- HAVING with EXISTS
+SELECT customer_id, SUM(amount) AS total
+FROM orders
+GROUP BY customer_id
+HAVING EXISTS (
+    SELECT 1 FROM orders
+    WHERE orders.customer_id = customer_id
+    AND amount > 200
+);
+```
+
+#### Correlated Subqueries
+
+Correlated subqueries reference columns from the outer query and are evaluated for each row:
+
+```sql
+-- Find users with above-average order amounts for their city
+SELECT u.name, u.city, o.amount
+FROM users u
+JOIN orders o ON u.id = o.user_id
+WHERE o.amount > (
+    SELECT AVG(o2.amount)
+    FROM users u2
+    JOIN orders o2 ON u2.id = o2.user_id
+    WHERE u2.city = u.city
+);
+```
+
+#### Performance Notes
+
+- Non-correlated subqueries are executed once
+- Correlated subqueries are executed for each outer row
+- Consider using JOINs for better performance on large datasets
+- Indexes on join columns improve correlated subquery performance
 
 ### JOIN Support
 
@@ -1162,6 +1317,15 @@ See [docs/TESTING.md](docs/TESTING.md) for testing guidelines.
   - Proper `AND` / `OR` operator handling in WHERE clauses
   - SEQ type now automatically enables auto-increment
 
+- **Comprehensive Subquery Support**:
+  - Scalar subqueries in SELECT list (e.g., `SELECT (SELECT MAX(x) FROM t)`)
+  - IN / NOT IN subqueries in WHERE clause
+  - EXISTS / NOT EXISTS subqueries
+  - ANY / ALL comparison subqueries
+  - Derived tables (subqueries in FROM clause)
+  - Subqueries in HAVING clause
+  - Full correlated subquery support
+
 - **Multi-platform Builds**:
   - Linux (amd64, arm64)
   - macOS (amd64 Intel, arm64 Apple Silicon)
@@ -1215,7 +1379,7 @@ SELECT CAST('123' AS INT), CAST(0xdeadbeef AS BLOB);
 - [ ] Connection pooling improvements
 - [ ] More SQL functions
 - [ ] Performance benchmarks
-- [ ] Subquery optimization
+- [ ] Subquery optimization (decorrelation, result caching)
 - [ ] Transaction isolation levels
 
 ## Contributing
