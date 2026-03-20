@@ -8890,6 +8890,53 @@ func (e *Executor) evaluateFunction(fc *sql.FunctionCall, r *row.Row, columnMap 
 		bytes, _ := json.Marshal(jsonVal)
 		return string(bytes), nil
 
+	case "JSON_QUOTE":
+		if len(fc.Args) == 0 {
+			return nil, fmt.Errorf("JSON_QUOTE requires 1 argument")
+		}
+		arg, err := evalExpr(fc.Args[0])
+		if err != nil {
+			return nil, err
+		}
+		data, err := json.Marshal(arg)
+		if err != nil {
+			return nil, err
+		}
+		return string(data), nil
+
+	case "JSON_CONTAINS":
+		if len(fc.Args) < 2 {
+			return nil, fmt.Errorf("JSON_CONTAINS requires at least 2 arguments")
+		}
+		targetArg, err := evalExpr(fc.Args[0])
+		if err != nil {
+			return nil, err
+		}
+		candidateArg, err := evalExpr(fc.Args[1])
+		if err != nil {
+			return nil, err
+		}
+		if targetArg == nil || candidateArg == nil {
+			return nil, nil
+		}
+		targetStr, _ := targetArg.(string)
+		candidateStr, _ := candidateArg.(string)
+		if targetStr == "" {
+			targetStr = fmt.Sprintf("%v", targetArg)
+		}
+		if candidateStr == "" {
+			candidateStr = fmt.Sprintf("%v", candidateArg)
+		}
+		// Parse both JSON values
+		var target, candidate interface{}
+		if err := json.Unmarshal([]byte(targetStr), &target); err != nil {
+			return false, nil
+		}
+		if err := json.Unmarshal([]byte(candidateStr), &candidate); err != nil {
+			return false, nil
+		}
+		return jsonContainsValue(target, candidate), nil
+
 	case "JSON_VALID":
 		if len(fc.Args) == 0 {
 			return nil, fmt.Errorf("JSON_VALID requires 1 argument")
@@ -11922,5 +11969,199 @@ func (e *Executor) executeStatementForExport(stmt sql.Statement) (*Result, error
 		return e.executeUnion(s)
 	default:
 		return nil, fmt.Errorf("unsupported statement for export: %T", stmt)
+	}
+}
+
+// ========== JSON Helper Functions ==========
+
+// jsonExtract extracts a value from JSON at the given path
+func jsonExtract(jsonStr, path string) (interface{}, error) {
+	var data interface{}
+	if err := json.Unmarshal([]byte(jsonStr), &data); err != nil {
+		return nil, fmt.Errorf("invalid JSON: %v", err)
+	}
+
+	// Parse path: $.field or $[0] or $.field[0].subfield
+	path = strings.TrimSpace(path)
+	if path == "" || path == "$" {
+		return data, nil
+	}
+
+	if !strings.HasPrefix(path, "$") {
+		return nil, fmt.Errorf("JSON path must start with $")
+	}
+	path = path[1:] // Remove leading $
+
+	return jsonExtractPath(data, path)
+}
+
+// jsonExtractPath navigates JSON data using a path
+func jsonExtractPath(data interface{}, path string) (interface{}, error) {
+	if path == "" {
+		return data, nil
+	}
+
+	// Check for array index [n]
+	if strings.HasPrefix(path, "[") {
+		end := strings.Index(path, "]")
+		if end == -1 {
+			return nil, fmt.Errorf("invalid path: missing ]")
+		}
+		indexStr := path[1:end]
+		index, err := strconv.Atoi(indexStr)
+		if err != nil {
+			return nil, fmt.Errorf("invalid array index: %s", indexStr)
+		}
+		arr, ok := data.([]interface{})
+		if !ok {
+			return nil, nil
+		}
+		if index < 0 || index >= len(arr) {
+			return nil, nil
+		}
+		return jsonExtractPath(arr[index], path[end+1:])
+	}
+
+	// Check for object field .field
+	if strings.HasPrefix(path, ".") {
+		// Find the field name
+		rest := path[1:]
+		i := 0
+		for i < len(rest) && rest[i] != '.' && rest[i] != '[' {
+			i++
+		}
+		fieldName := rest[:i]
+		obj, ok := data.(map[string]interface{})
+		if !ok {
+			return nil, nil
+		}
+		val, exists := obj[fieldName]
+		if !exists {
+			return nil, nil
+		}
+		return jsonExtractPath(val, rest[i:])
+	}
+
+	return nil, fmt.Errorf("invalid path syntax: %s", path)
+}
+
+// jsonType returns the JSON type of a value
+func jsonType(jsonStr string) string {
+	var data interface{}
+	if err := json.Unmarshal([]byte(jsonStr), &data); err != nil {
+		return "INVALID"
+	}
+
+	switch data.(type) {
+	case nil:
+		return "NULL"
+	case bool:
+		return "BOOLEAN"
+	case float64:
+		return "INTEGER"
+		// Note: JSON numbers are always float64 in Go, but we check if it's an integer
+		if f, ok := data.(float64); ok && f == float64(int64(f)) {
+			return "INTEGER"
+		}
+		return "DOUBLE"
+	case string:
+		return "STRING"
+	case []interface{}:
+		return "ARRAY"
+	case map[string]interface{}:
+		return "OBJECT"
+	default:
+		return "UNKNOWN"
+	}
+}
+
+// jsonContains checks if target JSON contains candidate JSON
+func jsonContains(targetStr, candidateStr string) bool {
+	var target, candidate interface{}
+	if err := json.Unmarshal([]byte(targetStr), &target); err != nil {
+		return false
+	}
+	if err := json.Unmarshal([]byte(candidateStr), &candidate); err != nil {
+		return false
+	}
+	return jsonContainsValue(target, candidate)
+}
+
+// jsonContainsValue recursively checks if target contains candidate
+func jsonContainsValue(target, candidate interface{}) bool {
+	// Direct equality
+	if jsonEqual(target, candidate) {
+		return true
+	}
+
+	// If target is an array, check each element
+	if arr, ok := target.([]interface{}); ok {
+		for _, elem := range arr {
+			if jsonContainsValue(elem, candidate) {
+				return true
+			}
+		}
+	}
+
+	// If target is an object and candidate is an object,
+	// check if target has all of candidate's keys with matching values
+	if obj, ok := target.(map[string]interface{}); ok {
+		if cObj, ok := candidate.(map[string]interface{}); ok {
+			for key, cVal := range cObj {
+				tVal, exists := obj[key]
+				if !exists || !jsonContainsValue(tVal, cVal) {
+					return false
+				}
+			}
+			return true
+		}
+	}
+
+	return false
+}
+
+// jsonEqual checks if two JSON values are equal
+func jsonEqual(a, b interface{}) bool {
+	aJSON, _ := json.Marshal(a)
+	bJSON, _ := json.Marshal(b)
+	return string(aJSON) == string(bJSON)
+}
+
+// jsonKeys returns the keys of a JSON object
+func jsonKeys(jsonStr string) ([]string, error) {
+	var data interface{}
+	if err := json.Unmarshal([]byte(jsonStr), &data); err != nil {
+		return nil, fmt.Errorf("invalid JSON: %v", err)
+	}
+
+	obj, ok := data.(map[string]interface{})
+	if !ok {
+		return nil, nil
+	}
+
+	keys := make([]string, 0, len(obj))
+	for k := range obj {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	return keys, nil
+}
+
+// jsonLength returns the length of a JSON array or object
+func jsonLength(jsonStr string) int64 {
+	var data interface{}
+	if err := json.Unmarshal([]byte(jsonStr), &data); err != nil {
+		return 0
+	}
+
+	switch v := data.(type) {
+	case []interface{}:
+		return int64(len(v))
+	case map[string]interface{}:
+		return int64(len(v))
+	case string:
+		return int64(len(v))
+	default:
+		return 1
 	}
 }

@@ -2532,6 +2532,9 @@ func (p *Parser) parsePrimaryExpr() Expression {
 	// Window function keywords (LEAD, LAG, FIRST_VALUE, LAST_VALUE, NTILE, NTH_VALUE, PERCENT_RANK, CUME_DIST)
 	case TokLead, TokLag, TokNtile, TokFirstValue, TokLastValue, TokNthValue, TokPercentRank, TokCumeDist:
 		return p.parseFunctionKeyword()
+	// JSON function keywords
+	case TokJsonExtract, TokJsonArray, TokJsonObject, TokJsonType, TokJsonValid, TokJsonQuote, TokJsonUnquote, TokJsonContains, TokJsonKeys, TokJsonLength:
+		return p.parseFunctionKeyword()
 	// UDF expressions
 	case TokIf:
 		return p.parseIfExpr()

@@ -136,6 +136,18 @@ const (
 	TokElse
 	TokEnd
 
+	// Keywords - JSON Functions
+	TokJsonExtract
+	TokJsonArray
+	TokJsonObject
+	TokJsonType
+	TokJsonValid
+	TokJsonQuote
+	TokJsonUnquote
+	TokJsonContains
+	TokJsonKeys
+	TokJsonLength
+
 	// Keywords - Other
 	TokIf
 	TokExists
@@ -501,6 +513,26 @@ func (t TokenType) String() string {
 		return "ELSE"
 	case TokEnd:
 		return "END"
+	case TokJsonExtract:
+		return "JSON_EXTRACT"
+	case TokJsonArray:
+		return "JSON_ARRAY"
+	case TokJsonObject:
+		return "JSON_OBJECT"
+	case TokJsonType:
+		return "JSON_TYPE"
+	case TokJsonValid:
+		return "JSON_VALID"
+	case TokJsonQuote:
+		return "JSON_QUOTE"
+	case TokJsonUnquote:
+		return "JSON_UNQUOTE"
+	case TokJsonContains:
+		return "JSON_CONTAINS"
+	case TokJsonKeys:
+		return "JSON_KEYS"
+	case TokJsonLength:
+		return "JSON_LENGTH"
 	case TokCast:
 		return "CAST"
 	case TokCoalesce:
@@ -769,6 +801,16 @@ var keywords = map[string]TokenType{
 	"THEN":         TokThen,
 	"ELSE":         TokElse,
 	"END":          TokEnd,
+	"JSON_EXTRACT":  TokJsonExtract,
+	"JSON_ARRAY":    TokJsonArray,
+	"JSON_OBJECT":   TokJsonObject,
+	"JSON_TYPE":     TokJsonType,
+	"JSON_VALID":    TokJsonValid,
+	"JSON_QUOTE":    TokJsonQuote,
+	"JSON_UNQUOTE":  TokJsonUnquote,
+	"JSON_CONTAINS": TokJsonContains,
+	"JSON_KEYS":     TokJsonKeys,
+	"JSON_LENGTH":   TokJsonLength,
 	"IF":           TokIf,
 	"EXISTS":       TokExists,
 	"ANY":          TokAny,
