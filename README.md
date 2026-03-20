@@ -104,7 +104,7 @@ The following comparison highlights key differences between XxSql and SQLite acr
 | **CHECK Constraints** | Yes | Yes |
 | **Foreign Keys** | Yes (optional enable) | Yes |
 | **Triggers** | Yes | No |
-| **Views** | Yes | No |
+| **Views** | Yes | Yes |
 | **Stored Procedures** | No | No |
 | **User-Defined Functions** | C/Rust/Python extensions | SQL-based UDFs |
 

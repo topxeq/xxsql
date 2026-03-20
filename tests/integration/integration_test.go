@@ -1177,6 +1177,96 @@ func TestSQL_UtilityFunctions3(t *testing.T) {
 	t.Logf("UUID result: %v", result.Rows)
 }
 
+func TestSQL_Views(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "xxsql-view-test-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	engine := storage.NewEngine(tmpDir)
+	if err := engine.Open(); err != nil {
+		t.Fatalf("Failed to open engine: %v", err)
+	}
+	defer engine.Close()
+
+	exec := executor.NewExecutor(engine)
+	exec.SetDatabase("testdb")
+
+	// Create table and insert data
+	_, err = exec.Execute("CREATE TABLE users (id INT, name VARCHAR(50), status VARCHAR(20))")
+	if err != nil {
+		t.Fatalf("Failed to create table: %v", err)
+	}
+	exec.Execute("INSERT INTO users VALUES (1, 'Alice', 'active')")
+	exec.Execute("INSERT INTO users VALUES (2, 'Bob', 'active')")
+	exec.Execute("INSERT INTO users VALUES (3, 'Charlie', 'inactive')")
+
+	// Create view
+	result, err := exec.Execute("CREATE VIEW active_users AS SELECT id, name FROM users WHERE status = 'active'")
+	if err != nil {
+		t.Fatalf("Failed to create view: %v", err)
+	}
+	t.Logf("CREATE VIEW result: %v", result)
+
+	// Select from view
+	result, err = exec.Execute("SELECT * FROM active_users")
+	if err != nil {
+		t.Fatalf("Failed to select from view: %v", err)
+	}
+	t.Logf("SELECT from view: %d rows", result.RowCount)
+	for i, row := range result.Rows {
+		t.Logf("  Row %d: %v", i, row)
+	}
+	if result.RowCount != 2 {
+		t.Errorf("Expected 2 rows from view, got %d", result.RowCount)
+	}
+
+	// Select with filter from view
+	result, err = exec.Execute("SELECT name FROM active_users WHERE id = 1")
+	if err != nil {
+		t.Fatalf("Failed to select from view with filter: %v", err)
+	}
+	t.Logf("SELECT from view with filter: %v", result.Rows)
+
+	// Drop view
+	result, err = exec.Execute("DROP VIEW active_users")
+	if err != nil {
+		t.Fatalf("Failed to drop view: %v", err)
+	}
+	t.Logf("DROP VIEW result: %v", result)
+
+	// Verify view is dropped
+	_, err = exec.Execute("SELECT * FROM active_users")
+	if err == nil {
+		t.Error("Expected error when selecting from dropped view")
+	}
+	t.Logf("Expected error after drop: %v", err)
+
+	// Test CREATE OR REPLACE VIEW
+	_, err = exec.Execute("CREATE VIEW user_view AS SELECT id, name FROM users")
+	if err != nil {
+		t.Fatalf("Failed to create view: %v", err)
+	}
+
+	result, err = exec.Execute("CREATE OR REPLACE VIEW user_view AS SELECT id, name, status FROM users")
+	if err != nil {
+		t.Fatalf("Failed to replace view: %v", err)
+	}
+
+	result, err = exec.Execute("SELECT * FROM user_view")
+	if err != nil {
+		t.Fatalf("Failed to select from replaced view: %v", err)
+	}
+	t.Logf("Replaced view has %d columns", len(result.Columns))
+	if len(result.Columns) != 3 {
+		t.Errorf("Expected 3 columns from replaced view, got %d", len(result.Columns))
+	}
+
+	// Clean up
+	exec.Execute("DROP VIEW user_view")
+}
+
 func TestSQL_OrderByLimit(t *testing.T) {
 	tmpDir, err := os.MkdirTemp("", "xxsql-order-test-*")
 	if err != nil {

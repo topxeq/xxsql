@@ -212,6 +212,16 @@ func (e *Executor) ExecuteWithPerms(sqlStr string, checker PermissionChecker) (*
 			return nil, err
 		}
 		return e.executeDropIndex(s)
+	case *sql.CreateViewStmt:
+		if err := checkPerm(PermCreateTable); err != nil {
+			return nil, err
+		}
+		return e.executeCreateView(s)
+	case *sql.DropViewStmt:
+		if err := checkPerm(PermDropTable); err != nil {
+			return nil, err
+		}
+		return e.executeDropView(s)
 	case *sql.AlterTableStmt:
 		if err := checkPerm(PermCreateTable); err != nil {
 			return nil, err
@@ -320,6 +330,11 @@ func (e *Executor) executeSelect(stmt *sql.SelectStmt) (*Result, error) {
 	// Check if this is a CTE reference
 	if cteResult, ok := e.cteResults[strings.ToLower(tableName)]; ok {
 		return e.executeSelectFromCTE(stmt, cteResult)
+	}
+
+	// Check if this is a view reference
+	if e.engine.ViewExists(tableName) {
+		return e.executeSelectFromView(stmt, tableName)
 	}
 
 	// Set current table for correlated subqueries
@@ -2469,6 +2484,176 @@ func (e *Executor) executeSelectFromCTE(stmt *sql.SelectStmt, cteResult *Result)
 	return result, nil
 }
 
+// executeSelectFromView handles SELECT from a view.
+func (e *Executor) executeSelectFromView(stmt *sql.SelectStmt, viewName string) (*Result, error) {
+	// Get the view definition
+	viewInfo, err := e.engine.GetView(viewName)
+	if err != nil {
+		return nil, fmt.Errorf("view %s does not exist", viewName)
+	}
+
+	// Debug: log the view query
+	// fmt.Printf("DEBUG: View query: %s\n", viewInfo.Query)
+
+	// Parse and execute the view's query
+	parser := sql.NewParser(viewInfo.Query)
+	viewStmt, err := parser.Parse()
+	if err != nil {
+		return nil, fmt.Errorf("view query parse error: %w", err)
+	}
+
+	viewSelect, ok := viewStmt.(*sql.SelectStmt)
+	if !ok {
+		return nil, fmt.Errorf("view query is not a SELECT statement")
+	}
+
+	// Execute the view's query
+	viewResult, err := e.executeSelect(viewSelect)
+	if err != nil {
+		return nil, err
+	}
+
+	// Debug: log the view result
+	// fmt.Printf("DEBUG: View result: %d rows, %d columns\n", len(viewResult.Rows), len(viewResult.Columns))
+
+	// Now apply the outer SELECT's filters/columns to the view result
+	// Build column index map for the view result
+	colIdxMap := make(map[string]int)
+	for i, col := range viewResult.Columns {
+		colIdxMap[strings.ToLower(col.Name)] = i
+	}
+
+	// Build column info for the view
+	columnOrder := make([]*types.ColumnInfo, len(viewResult.Columns))
+	columnMap := make(map[string]*types.ColumnInfo)
+	for i, col := range viewResult.Columns {
+		columnOrder[i] = &types.ColumnInfo{
+			Name: col.Name,
+			Type: types.TypeVarchar,
+		}
+		columnMap[strings.ToLower(col.Name)] = columnOrder[i]
+	}
+
+	result := &Result{
+		Columns: make([]ColumnInfo, 0),
+		Rows:    make([][]interface{}, 0),
+	}
+
+	// Convert view result rows to Row format for processing
+	rows := make([]*row.Row, len(viewResult.Rows))
+	for i, r := range viewResult.Rows {
+		values := make([]types.Value, len(r))
+		for j, v := range r {
+			if v == nil {
+				values[j] = types.NewNullValue()
+			} else {
+				switch val := v.(type) {
+				case int:
+					values[j] = types.NewIntValue(int64(val))
+				case int64:
+					values[j] = types.NewIntValue(val)
+				case float64:
+					values[j] = types.NewFloatValue(val)
+				case string:
+					values[j] = types.NewStringValue(val, types.TypeVarchar)
+				case bool:
+					if val {
+						values[j] = types.NewIntValue(1)
+					} else {
+						values[j] = types.NewIntValue(0)
+					}
+				default:
+					values[j] = types.NewStringValue(fmt.Sprintf("%v", val), types.TypeVarchar)
+				}
+			}
+		}
+		rows[i] = &row.Row{Values: values}
+	}
+
+	// Process SELECT columns
+	resultCols := make([]ColumnInfo, 0)
+	colIndices := make([]int, 0)
+	var funcExprs []sql.Expression
+
+	for _, colExpr := range stmt.Columns {
+		switch expr := colExpr.(type) {
+		case *sql.StarExpr:
+			// Add all view columns
+			for i, col := range viewResult.Columns {
+				resultCols = append(resultCols, col)
+				colIndices = append(colIndices, i)
+				funcExprs = append(funcExprs, nil)
+			}
+		case *sql.ColumnRef:
+			colName := expr.Name
+			if expr.Alias != "" {
+				resultCols = append(resultCols, ColumnInfo{Name: expr.Alias, Type: "VARCHAR"})
+			} else {
+				resultCols = append(resultCols, ColumnInfo{Name: colName, Type: "VARCHAR"})
+			}
+			idx := colIdxMap[strings.ToLower(colName)]
+			colIndices = append(colIndices, idx)
+			funcExprs = append(funcExprs, nil)
+		case *sql.FunctionCall:
+			colName := expr.Name
+			resultCols = append(resultCols, ColumnInfo{Name: colName + "()", Type: "VARCHAR"})
+			colIndices = append(colIndices, -1)
+			funcExprs = append(funcExprs, expr)
+		default:
+			resultCols = append(resultCols, ColumnInfo{Name: "expr", Type: "VARCHAR"})
+			colIndices = append(colIndices, -1)
+			funcExprs = append(funcExprs, expr)
+		}
+	}
+
+	result.Columns = resultCols
+
+	// Filter and project rows
+	for _, r := range rows {
+		// Apply WHERE filter
+		if stmt.Where != nil {
+			match, err := e.evaluateWhere(stmt.Where, r, columnMap, columnOrder)
+			if err != nil {
+				return nil, err
+			}
+			if !match {
+				continue
+			}
+		}
+
+		// Build result row
+		resultRow := make([]interface{}, len(colIndices))
+		for i, idx := range colIndices {
+			if idx >= 0 && idx < len(r.Values) {
+				resultRow[i] = e.valueToInterface(r.Values[idx])
+			} else if funcExprs[i] != nil {
+				val, err := e.evaluateExpression(funcExprs[i], r, columnMap, columnOrder)
+				if err != nil {
+					return nil, err
+				}
+				resultRow[i] = val
+			}
+		}
+		result.Rows = append(result.Rows, resultRow)
+	}
+
+	// Apply ORDER BY
+	if len(stmt.OrderBy) > 0 {
+		result.Rows = e.sortRows(stmt.OrderBy, result.Columns, result.Rows)
+	}
+
+	// Apply LIMIT
+	if stmt.Limit != nil {
+		limit := *stmt.Limit
+		if limit < len(result.Rows) {
+			result.Rows = result.Rows[:limit]
+		}
+	}
+
+	result.RowCount = len(result.Rows)
+	return result, nil
+}
+
 // executeSelectWithoutFrom handles SELECT without FROM (e.g., SELECT 1, SELECT NOW()).
 func (e *Executor) executeSelectWithoutFrom(stmt *sql.SelectStmt) (*Result, error) {
 	result := &Result{
@@ -3490,6 +3675,52 @@ func (e *Executor) executeDropIndex(stmt *sql.DropIndexStmt) (*Result, error) {
 	return &Result{Message: "OK"}, nil
 }
 
+// executeCreateView executes a CREATE VIEW statement.
+func (e *Executor) executeCreateView(stmt *sql.CreateViewStmt) (*Result, error) {
+	// Check if table or view already exists
+	if e.engine.TableExists(stmt.ViewName) {
+		return nil, fmt.Errorf("table '%s' already exists", stmt.ViewName)
+	}
+	if e.engine.ViewExists(stmt.ViewName) {
+		if stmt.OrReplace {
+			// Drop existing view first
+			if err := e.engine.DropView(stmt.ViewName); err != nil {
+				return nil, fmt.Errorf("drop existing view error: %w", err)
+			}
+		} else {
+			return nil, fmt.Errorf("view '%s' already exists", stmt.ViewName)
+		}
+	}
+
+	// Get the query string from the SELECT statement
+	query := stmt.SelectStmt.String()
+
+	// Create the view
+	if err := e.engine.CreateView(stmt.ViewName, query, stmt.Columns); err != nil {
+		return nil, fmt.Errorf("create view error: %w", err)
+	}
+
+	return &Result{Message: "OK"}, nil
+}
+
+// executeDropView executes a DROP VIEW statement.
+func (e *Executor) executeDropView(stmt *sql.DropViewStmt) (*Result, error) {
+	// Check if view exists
+	if !e.engine.ViewExists(stmt.ViewName) {
+		if stmt.IfExists {
+			return &Result{Message: "OK"}, nil
+		}
+		return nil, fmt.Errorf("view '%s' does not exist", stmt.ViewName)
+	}
+
+	// Drop the view
+	if err := e.engine.DropView(stmt.ViewName); err != nil {
+		return nil, fmt.Errorf("drop view error: %w", err)
+	}
+
+	return &Result{Message: "OK"}, nil
+}
+
 // executeAlterTable executes an ALTER TABLE statement.
 func (e *Executor) executeAlterTable(stmt *sql.AlterTableStmt) (*Result, error) {
 	// Check if table exists
@@ -4340,6 +4571,10 @@ func (e *Executor) evaluateWhere(expr sql.Expression, r *row.Row, columnMap map[
 				return b, nil
 			}
 		}
+
+	case *sql.ParenExpr:
+		// Evaluate the inner expression
+		return e.evaluateWhere(ex.Expr, r, columnMap, columnOrder)
 	}
 
 	return false, nil

@@ -772,75 +772,81 @@ func (p *Parser) parseCreate() Statement {
 		return nil
 	case TokUser:
 		return p.parseCreateUser()
+	case TokView:
+		return p.parseCreateView(false)
 	case TokOr:
-		// CREATE OR REPLACE FUNCTION
+		// CREATE OR REPLACE FUNCTION or VIEW
 		p.nextToken()
 		if !p.expect(TokReplace) {
 			return nil
 		}
-		if !p.expect(TokFunction) {
-			return nil
-		}
-		// FUNCTION already consumed, parse rest
-		stmt := &CreateFunctionStmt{
-			Name:    p.currTok.Value,
-			Replace: true,
-		}
-		p.nextToken() // consume function name
-
-		// Parse parameters and rest
-		if !p.expect(TokLParen) {
-			return nil
-		}
-
-		for !p.curTokenIs(TokRParen) && p.err == nil {
-			param := &FunctionParameter{
-				Name: p.currTok.Value,
-			}
+		if p.curTokenIs(TokFunction) {
 			p.nextToken()
+			// FUNCTION already consumed, parse rest
+			stmt := &CreateFunctionStmt{
+				Name:    p.currTok.Value,
+				Replace: true,
+			}
+			p.nextToken() // consume function name
 
-			param.Type = p.parseDataType()
-			if param.Type == nil {
-				p.error("expected data type for parameter %s", param.Name)
+			// Parse parameters and rest
+			if !p.expect(TokLParen) {
 				return nil
 			}
 
-			stmt.Parameters = append(stmt.Parameters, param)
-
-			if p.curTokenIs(TokComma) {
+			for !p.curTokenIs(TokRParen) && p.err == nil {
+				param := &FunctionParameter{
+					Name: p.currTok.Value,
+				}
 				p.nextToken()
+
+				param.Type = p.parseDataType()
+				if param.Type == nil {
+					p.error("expected data type for parameter %s", param.Name)
+					return nil
+				}
+
+				stmt.Parameters = append(stmt.Parameters, param)
+
+				if p.curTokenIs(TokComma) {
+					p.nextToken()
+				}
 			}
-		}
 
-		if !p.expect(TokRParen) {
-			return nil
-		}
+			if !p.expect(TokRParen) {
+				return nil
+			}
 
-		if !p.expect(TokReturns) {
-			return nil
-		}
+			if !p.expect(TokReturns) {
+				return nil
+			}
 
-		stmt.ReturnType = p.parseDataType()
-		if stmt.ReturnType == nil {
-			p.error("expected return type")
-			return nil
-		}
+			stmt.ReturnType = p.parseDataType()
+			if stmt.ReturnType == nil {
+				p.error("expected return type")
+				return nil
+			}
 
-		if !p.expect(TokReturn) {
-			return nil
-		}
+			if !p.expect(TokReturn) {
+				return nil
+			}
 
-		stmt.Body = p.parseExpression()
-		if stmt.Body == nil {
-			p.error("expected function body expression")
-			return nil
-		}
+			stmt.Body = p.parseExpression()
+			if stmt.Body == nil {
+				p.error("expected function body expression")
+				return nil
+			}
 
-		return stmt
+			return stmt
+		} else if p.curTokenIs(TokView) {
+			return p.parseCreateView(true)
+		}
+		p.error("expected FUNCTION or VIEW after CREATE OR REPLACE")
+		return nil
 	case TokFunction:
 		return p.parseCreateFunction()
 	default:
-		p.error("expected TABLE, INDEX, USER or FUNCTION after CREATE")
+		p.error("expected TABLE, INDEX, VIEW, USER or FUNCTION after CREATE")
 		return nil
 	}
 }
@@ -1169,6 +1175,47 @@ func (p *Parser) parseCreateIndex() *CreateIndexStmt {
 	return stmt
 }
 
+// parseCreateView parses a CREATE VIEW or CREATE OR REPLACE VIEW statement.
+func (p *Parser) parseCreateView(orReplace bool) *CreateViewStmt {
+	p.nextToken() // consume VIEW
+
+	stmt := &CreateViewStmt{
+		OrReplace: orReplace,
+	}
+
+	// View name
+	stmt.ViewName = p.currTok.Value
+	p.nextToken()
+
+	// Optional column list
+	if p.curTokenIs(TokLParen) {
+		p.nextToken()
+		for !p.curTokenIs(TokRParen) && p.err == nil {
+			stmt.Columns = append(stmt.Columns, p.currTok.Value)
+			p.nextToken()
+			if p.curTokenIs(TokComma) {
+				p.nextToken()
+			}
+		}
+		if !p.expect(TokRParen) {
+			return nil
+		}
+	}
+
+	// AS keyword
+	if !p.expect(TokAs) {
+		return nil
+	}
+
+	// Parse the SELECT statement
+	stmt.SelectStmt = p.parseSelect()
+	if stmt.SelectStmt == nil {
+		return nil
+	}
+
+	return stmt
+}
+
 // parseDrop parses a DROP statement.
 func (p *Parser) parseDrop() Statement {
 	p.nextToken() // consume DROP
@@ -1178,12 +1225,14 @@ func (p *Parser) parseDrop() Statement {
 		return p.parseDropTable()
 	case TokIndex:
 		return p.parseDropIndex()
+	case TokView:
+		return p.parseDropView()
 	case TokUser:
 		return p.parseDropUser()
 	case TokFunction:
 		return p.parseDropFunction()
 	default:
-		p.error("expected TABLE, INDEX, USER or FUNCTION after DROP")
+		p.error("expected TABLE, INDEX, VIEW, USER or FUNCTION after DROP")
 		return nil
 	}
 }
@@ -1230,6 +1279,28 @@ func (p *Parser) parseDropIndex() *DropIndexStmt {
 		stmt.TableName = p.currTok.Value
 		p.nextToken()
 	}
+
+	return stmt
+}
+
+// parseDropView parses a DROP VIEW statement.
+func (p *Parser) parseDropView() *DropViewStmt {
+	p.nextToken() // consume VIEW
+
+	stmt := &DropViewStmt{}
+
+	// IF EXISTS
+	if p.curTokenIs(TokIf) {
+		p.nextToken()
+		if !p.expect(TokExists) {
+			return nil
+		}
+		stmt.IfExists = true
+	}
+
+	// View name
+	stmt.ViewName = p.currTok.Value
+	p.nextToken()
 
 	return stmt
 }

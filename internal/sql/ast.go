@@ -336,6 +336,54 @@ func (s *DropIndexStmt) String() string {
 	return fmt.Sprintf("DROP INDEX %s ON %s", s.IndexName, s.TableName)
 }
 
+// CreateViewStmt represents a CREATE VIEW statement.
+type CreateViewStmt struct {
+	ViewName   string
+	Columns    []string // Optional column names
+	SelectStmt Statement
+	OrReplace  bool
+}
+
+func (s *CreateViewStmt) node()      {}
+func (s *CreateViewStmt) statement() {}
+func (s *CreateViewStmt) String() string {
+	var sb strings.Builder
+	if s.OrReplace {
+		sb.WriteString("CREATE OR REPLACE VIEW ")
+	} else {
+		sb.WriteString("CREATE VIEW ")
+	}
+	sb.WriteString(s.ViewName)
+	if len(s.Columns) > 0 {
+		sb.WriteString(" (")
+		for i, col := range s.Columns {
+			if i > 0 {
+				sb.WriteString(", ")
+			}
+			sb.WriteString(col)
+		}
+		sb.WriteString(")")
+	}
+	sb.WriteString(" AS ")
+	sb.WriteString(s.SelectStmt.String())
+	return sb.String()
+}
+
+// DropViewStmt represents a DROP VIEW statement.
+type DropViewStmt struct {
+	ViewName string
+	IfExists bool
+}
+
+func (s *DropViewStmt) node()      {}
+func (s *DropViewStmt) statement() {}
+func (s *DropViewStmt) String() string {
+	if s.IfExists {
+		return fmt.Sprintf("DROP VIEW IF EXISTS %s", s.ViewName)
+	}
+	return fmt.Sprintf("DROP VIEW %s", s.ViewName)
+}
+
 // AlterTableStmt represents an ALTER TABLE statement.
 type AlterTableStmt struct {
 	TableName string

@@ -21,7 +21,15 @@ const (
 type Catalog struct {
 	dataDir string
 	tables  map[string]*table.Table
+	views   map[string]*ViewInfo
 	mu      sync.RWMutex
+}
+
+// ViewInfo stores view definition.
+type ViewInfo struct {
+	Name       string
+	Query      string // The SQL query string
+	Columns    []string
 }
 
 // NewCatalog creates a new catalog.
@@ -29,6 +37,7 @@ func NewCatalog(dataDir string) *Catalog {
 	return &Catalog{
 		dataDir: dataDir,
 		tables:  make(map[string]*table.Table),
+		views:   make(map[string]*ViewInfo),
 	}
 }
 
@@ -67,6 +76,11 @@ func (c *Catalog) Open() error {
 			continue
 		}
 		c.tables[name] = t
+	}
+
+	// Load views
+	if err := c.loadViews(); err != nil {
+		return err
 	}
 
 	return nil
@@ -228,4 +242,110 @@ func (c *Catalog) RenameTable(oldName, newName string) error {
 	c.tables[newName] = t
 
 	return c.save()
+}
+
+// CreateView creates a new view.
+func (c *Catalog) CreateView(name string, query string, columns []string) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	if _, exists := c.tables[name]; exists {
+		return fmt.Errorf("table already exists: %s", name)
+	}
+
+	if _, exists := c.views[name]; exists {
+		return fmt.Errorf("view already exists: %s", name)
+	}
+
+	c.views[name] = &ViewInfo{
+		Name:    name,
+		Query:   query,
+		Columns: columns,
+	}
+	return c.saveViews()
+}
+
+// DropView drops a view.
+func (c *Catalog) DropView(name string) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	if _, exists := c.views[name]; !exists {
+		return fmt.Errorf("view not found: %s", name)
+	}
+
+	delete(c.views, name)
+	return c.saveViews()
+}
+
+// GetView returns a view by name.
+func (c *Catalog) GetView(name string) (*ViewInfo, error) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+
+	v, exists := c.views[name]
+	if !exists {
+		return nil, fmt.Errorf("view not found: %s", name)
+	}
+
+	return v, nil
+}
+
+// ViewExists checks if a view exists.
+func (c *Catalog) ViewExists(name string) bool {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+
+	_, exists := c.views[name]
+	return exists
+}
+
+// ListViews returns all view names.
+func (c *Catalog) ListViews() []string {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+
+	names := make([]string, 0, len(c.views))
+	for name := range c.views {
+		names = append(names, name)
+	}
+	return names
+}
+
+// saveViews saves views to disk.
+func (c *Catalog) saveViews() error {
+	viewInfos := make([]*ViewInfo, 0, len(c.views))
+	for _, v := range c.views {
+		viewInfos = append(viewInfos, v)
+	}
+
+	data, err := json.MarshalIndent(viewInfos, "", "  ")
+	if err != nil {
+		return err
+	}
+
+	viewsPath := filepath.Join(c.dataDir, "views.json")
+	return os.WriteFile(viewsPath, data, 0644)
+}
+
+// loadViews loads views from disk.
+func (c *Catalog) loadViews() error {
+	viewsPath := filepath.Join(c.dataDir, "views.json")
+	data, err := os.ReadFile(viewsPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return err
+	}
+
+	var viewInfos []*ViewInfo
+	if err := json.Unmarshal(data, &viewInfos); err != nil {
+		return err
+	}
+
+	for _, v := range viewInfos {
+		c.views[v.Name] = v
+	}
+	return nil
 }

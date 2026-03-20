@@ -12,6 +12,7 @@ const (
 	// Keywords - DDL
 	TokCreate
 	TokTable
+	TokView
 	TokDrop
 	TokIndex
 	TokPrimary
@@ -232,6 +233,8 @@ func (t TokenType) String() string {
 		return "CREATE"
 	case TokTable:
 		return "TABLE"
+	case TokView:
+		return "VIEW"
 	case TokDrop:
 		return "DROP"
 	case TokIndex:
@@ -492,6 +495,7 @@ var keywords = map[string]TokenType{
 	"DELETE":       TokDelete,
 	"CREATE":       TokCreate,
 	"TABLE":        TokTable,
+	"VIEW":         TokView,
 	"DROP":         TokDrop,
 	"INDEX":        TokIndex,
 	"PRIMARY":      TokPrimary,

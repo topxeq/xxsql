@@ -131,6 +131,37 @@ func (e *Engine) GetCatalog() *catalog.Catalog {
 	return e.catalog
 }
 
+// ViewExists checks if a view exists.
+func (e *Engine) ViewExists(name string) bool {
+	return e.catalog.ViewExists(name)
+}
+
+// CreateView creates a new view.
+func (e *Engine) CreateView(name, query string, columns []string) error {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+
+	return e.catalog.CreateView(name, query, columns)
+}
+
+// GetView returns a view by name.
+func (e *Engine) GetView(name string) (*catalog.ViewInfo, error) {
+	return e.catalog.GetView(name)
+}
+
+// DropView drops a view.
+func (e *Engine) DropView(name string) error {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+
+	return e.catalog.DropView(name)
+}
+
+// ListViews returns all view names.
+func (e *Engine) ListViews() []string {
+	return e.catalog.ListViews()
+}
+
 // GetDataDir returns the data directory path.
 func (e *Engine) GetDataDir() string {
 	return e.dataDir
