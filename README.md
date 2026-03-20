@@ -105,6 +105,8 @@ The following comparison highlights key differences between XxSql and SQLite acr
 | **Foreign Keys** | Yes (optional enable) | Yes |
 | **Triggers** | Yes | Yes |
 | **Views** | Yes | Yes |
+| **UPSERT** | ON CONFLICT | ON CONFLICT DO NOTHING/UPDATE |
+| **RETURNING** | Yes | Yes (INSERT/UPDATE/DELETE) |
 | **Stored Procedures** | No | No |
 | **User-Defined Functions** | C/Rust/Python extensions | SQL-based UDFs |
 
@@ -121,20 +123,21 @@ The following comparison highlights key differences between XxSql and SQLite acr
 | **Binary** | BLOB | BLOB |
 | **Boolean** | INTEGER (0/1) | BOOL, BOOLEAN |
 | **Date/Time** | TEXT/REAL/INTEGER | DATE, TIME, DATETIME, TIMESTAMP |
-| **Array/JSON** | JSON1 extension | Not supported |
+| **JSON** | JSON1 extension | JSON_EXTRACT, JSON_ARRAY, JSON_OBJECT, etc. |
 
 ### Built-in Functions
 
 | Function Category | SQLite | XxSql |
 |-------------------|--------|-------|
 | **Aggregate** | COUNT, SUM, AVG, MIN, MAX, GROUP_CONCAT | COUNT, SUM, AVG, MIN, MAX, GROUP_CONCAT, STDDEV, VARIANCE |
-| **String** | UPPER, LOWER, LENGTH, SUBSTR, REPLACE, etc. | UPPER, LOWER, LENGTH, SUBSTRING, CONCAT, TRIM, LTRIM, RTRIM, INSTR, LPAD, RPAD, REVERSE, LEFT, RIGHT, REPEAT, SPACE, CONCAT_WS, REPLACE, CHAR, UNICODE, ASCII |
-| **Math** | ABS, ROUND, CEIL, FLOOR, etc. | ABS, ROUND, CEIL, FLOOR, MOD, POWER, SQRT, SIGN, LOG, LOG10, EXP, PI, RANDOM |
-| **Date/Time** | date(), time(), datetime(), strftime() | DATE, TIME, DATETIME, YEAR, MONTH, DAY, HOUR, MINUTE, SECOND, WEEKDAY, QUARTER, LAST_DAY, DATE_ADD, DATE_SUB, DATEDIFF, STRFTIME, UNIX_TIMESTAMP, FROM_UNIXTIME, NOW, CURRENT_TIMESTAMP |
+| **String** | UPPER, LOWER, LENGTH, SUBSTR, REPLACE, etc. | UPPER, LOWER, LENGTH, SUBSTRING, CONCAT, TRIM, LTRIM, RTRIM, INSTR, LPAD, RPAD, REVERSE, LEFT, RIGHT, REPEAT, SPACE, CONCAT_WS, REPLACE, CHAR, UNICODE, ASCII, SOUNDEX, FORMAT |
+| **Math** | ABS, ROUND, CEIL, FLOOR, etc. | ABS, ROUND, CEIL, FLOOR, MOD, POWER, SQRT, SIGN, LOG, LOG10, EXP, PI, RANDOM, TRUNCATE, COS, SIN, TAN, ACOS, ASIN, ATAN, ATAN2, COT, DEGREES, RADIANS, RAND |
+| **Date/Time** | date(), time(), datetime(), strftime() | DATE, TIME, DATETIME, YEAR, MONTH, DAY, HOUR, MINUTE, SECOND, WEEKDAY, QUARTER, LAST_DAY, DATE_ADD, DATE_SUB, DATEDIFF, STRFTIME, UNIX_TIMESTAMP, FROM_UNIXTIME, NOW, CURRENT_TIMESTAMP, TIMESTAMPDIFF, MAKEDATE, MAKETIME, SEC_TO_TIME, TIME_TO_SEC |
+| **JSON** | json_extract(), json_array(), etc. | JSON_EXTRACT, JSON_ARRAY, JSON_OBJECT, JSON_TYPE, JSON_UNQUOTE, JSON_VALID, JSON_KEYS, JSON_LENGTH |
 | **Type Conversion** | CAST, typeof() | CAST, TYPEOF |
 | **NULL Handling** | COALESCE, NULLIF, IFNULL | COALESCE, NULLIF, IFNULL |
 | **Conditional** | CASE, IIF() | CASE/WHEN, IF, IIF |
-| **Utility** | GREATEST, LEAST | GREATEST, LEAST, REGEXP, LAST_INSERT_ID, ROW_COUNT, UUID |
+| **Utility** | GREATEST, LEAST | GREATEST, LEAST, REGEXP, LAST_INSERT_ID, ROW_COUNT, UUID, USER, CURRENT_USER, VERSION, CONNECTION_ID |
 | **BLOB Operations** | hex(), zeroblob() | HEX, UNHEX, LENGTH |
 
 ### Storage Engine
@@ -226,7 +229,7 @@ The following comparison highlights key differences between XxSql and SQLite acr
 | **Loadable Extensions** | Yes | No |
 | **Full-Text Search** | FTS5 extension | No |
 | **Spatial Index** | R-Tree extension | No |
-| **JSON Support** | JSON1 extension | No |
+| **JSON Support** | JSON1 extension | Built-in (JSON_EXTRACT, JSON_ARRAY, etc.) |
 
 ### Use Cases
 
