@@ -7580,6 +7580,403 @@ func (e *Executor) evaluateFunction(fc *sql.FunctionCall, r *row.Row, columnMap 
 
 		return t.Format(format), nil
 
+	case "JULIANDAY":
+		// Convert a date/time string to Julian day number
+		// Julian day is the number of days since noon UTC on January 1, 4713 BCE
+		if len(fc.Args) == 0 {
+			// Return Julian day for current time
+			return timeToJulianDay(time.Now()), nil
+		}
+		arg, err := evalExpr(fc.Args[0])
+		if err != nil {
+			return nil, err
+		}
+		if arg == nil {
+			return nil, nil
+		}
+
+		switch v := arg.(type) {
+		case string:
+			// Handle 'now' special case
+			if strings.ToLower(v) == "now" {
+				return timeToJulianDay(time.Now()), nil
+			}
+			// Try various date formats
+			formats := []string{
+				"2006-01-02 15:04:05",
+				"2006-01-02T15:04:05",
+				"2006-01-02",
+				"15:04:05",
+				time.RFC3339,
+			}
+			for _, fmt := range formats {
+				if t, err := time.Parse(fmt, v); err == nil {
+					return timeToJulianDay(t), nil
+				}
+			}
+			return nil, fmt.Errorf("JULIANDAY: invalid date format: %s", v)
+		case time.Time:
+			return timeToJulianDay(v), nil
+		case float64:
+			// Already a Julian day number
+			return v, nil
+		case int:
+			return float64(v), nil
+		case int64:
+			return float64(v), nil
+		default:
+			return nil, fmt.Errorf("JULIANDAY: unsupported argument type")
+		}
+
+	case "DATE_MODIFY":
+		// SQLite-style date modification
+		// Syntax: date_modify(date, '+N days', '-N months', etc.)
+		if len(fc.Args) < 2 {
+			return nil, fmt.Errorf("DATE_MODIFY requires at least 2 arguments")
+		}
+
+		dateArg, err := evalExpr(fc.Args[0])
+		if err != nil {
+			return nil, err
+		}
+		if dateArg == nil {
+			return nil, nil
+		}
+
+		// Parse the base date
+		var t time.Time
+		switch v := dateArg.(type) {
+		case string:
+			if strings.ToLower(v) == "now" {
+				t = time.Now()
+			} else if parsed, err := time.Parse("2006-01-02 15:04:05", v); err == nil {
+				t = parsed
+			} else if parsed, err := time.Parse("2006-01-02", v); err == nil {
+				t = parsed
+			} else {
+				return nil, fmt.Errorf("DATE_MODIFY: invalid date format")
+			}
+		case time.Time:
+			t = v
+		default:
+			return nil, fmt.Errorf("DATE_MODIFY: requires date argument")
+		}
+
+		// Apply modifiers
+		for i := 1; i < len(fc.Args); i++ {
+			modArg, err := evalExpr(fc.Args[i])
+			if err != nil {
+				return nil, err
+			}
+			modStr, ok := modArg.(string)
+			if !ok {
+				modStr = fmt.Sprintf("%v", modArg)
+			}
+			t = applyDateModifier(t, modStr)
+		}
+
+		return t.Format("2006-01-02 15:04:05"), nil
+
+	case "TIMESTAMPDIFF":
+		// MySQL-style timestamp difference
+		// Syntax: TIMESTAMPDIFF(unit, datetime1, datetime2)
+		if len(fc.Args) < 3 {
+			return nil, fmt.Errorf("TIMESTAMPDIFF requires 3 arguments")
+		}
+
+		unitArg, err := evalExpr(fc.Args[0])
+		if err != nil {
+			return nil, err
+		}
+		date1Arg, err := evalExpr(fc.Args[1])
+		if err != nil {
+			return nil, err
+		}
+		date2Arg, err := evalExpr(fc.Args[2])
+		if err != nil {
+			return nil, err
+		}
+
+		if date1Arg == nil || date2Arg == nil {
+			return nil, nil
+		}
+
+		// Get unit
+		unit := "DAY"
+		if u, ok := unitArg.(string); ok {
+			unit = strings.ToUpper(u)
+		}
+
+		// Parse dates
+		var t1, t2 time.Time
+		switch v := date1Arg.(type) {
+		case string:
+			t1, err = parseDateTime(v)
+			if err != nil {
+				return nil, err
+			}
+		case time.Time:
+			t1 = v
+		default:
+			return nil, fmt.Errorf("TIMESTAMPDIFF: invalid datetime1 type")
+		}
+		switch v := date2Arg.(type) {
+		case string:
+			t2, err = parseDateTime(v)
+			if err != nil {
+				return nil, err
+			}
+		case time.Time:
+			t2 = v
+		default:
+			return nil, fmt.Errorf("TIMESTAMPDIFF: invalid datetime2 type")
+		}
+
+		return timestampDiff(unit, t1, t2), nil
+
+	case "FROM_UNIXTIME":
+		// Convert Unix timestamp to datetime string
+		if len(fc.Args) == 0 {
+			return nil, fmt.Errorf("FROM_UNIXTIME requires 1 argument")
+		}
+		arg, err := evalExpr(fc.Args[0])
+		if err != nil {
+			return nil, err
+		}
+		if arg == nil {
+			return nil, nil
+		}
+
+		var timestamp int64
+		switch v := arg.(type) {
+		case int:
+			timestamp = int64(v)
+		case int64:
+			timestamp = v
+		case float64:
+			timestamp = int64(v)
+		default:
+			return nil, fmt.Errorf("FROM_UNIXTIME requires numeric argument")
+		}
+
+		t := time.Unix(timestamp, 0)
+		return t.Format("2006-01-02 15:04:05"), nil
+
+	case "UNIX_TIMESTAMP":
+		// Convert datetime to Unix timestamp
+		if len(fc.Args) == 0 {
+			return time.Now().Unix(), nil
+		}
+		arg, err := evalExpr(fc.Args[0])
+		if err != nil {
+			return nil, err
+		}
+		if arg == nil {
+			return nil, nil
+		}
+
+		switch v := arg.(type) {
+		case string:
+			t, err := parseDateTime(v)
+			if err != nil {
+				return nil, err
+			}
+			return t.Unix(), nil
+		case time.Time:
+			return v.Unix(), nil
+		default:
+			return nil, fmt.Errorf("UNIX_TIMESTAMP: invalid argument type")
+		}
+
+	case "QUARTER":
+		// Return quarter of year (1-4)
+		if len(fc.Args) == 0 {
+			return (int(time.Now().Month())-1)/3 + 1, nil
+		}
+		arg, err := evalExpr(fc.Args[0])
+		if err != nil {
+			return nil, err
+		}
+		if arg == nil {
+			return nil, nil
+		}
+
+		switch v := arg.(type) {
+		case string:
+			t, err := parseDateTime(v)
+			if err != nil {
+				return nil, err
+			}
+			return (int(t.Month())-1)/3 + 1, nil
+		case time.Time:
+			return (int(v.Month())-1)/3 + 1, nil
+		default:
+			return nil, fmt.Errorf("QUARTER: invalid argument type")
+		}
+
+	case "WEEK":
+		// Return week of year (1-53)
+		if len(fc.Args) == 0 {
+			_, week := time.Now().ISOWeek()
+			return week, nil
+		}
+		arg, err := evalExpr(fc.Args[0])
+		if err != nil {
+			return nil, err
+		}
+		if arg == nil {
+			return nil, nil
+		}
+
+		switch v := arg.(type) {
+		case string:
+			t, err := parseDateTime(v)
+			if err != nil {
+				return nil, err
+			}
+			_, week := t.ISOWeek()
+			return week, nil
+		case time.Time:
+			_, week := v.ISOWeek()
+			return week, nil
+		default:
+			return nil, fmt.Errorf("WEEK: invalid argument type")
+		}
+
+	case "WEEKDAY":
+		// Return day of week (0=Monday, 6=Sunday)
+		if len(fc.Args) == 0 {
+			return int(time.Now().Weekday()), nil
+		}
+		arg, err := evalExpr(fc.Args[0])
+		if err != nil {
+			return nil, err
+		}
+		if arg == nil {
+			return nil, nil
+		}
+
+		switch v := arg.(type) {
+		case string:
+			t, err := parseDateTime(v)
+			if err != nil {
+				return nil, err
+			}
+			return int(t.Weekday()), nil
+		case time.Time:
+			return int(v.Weekday()), nil
+		default:
+			return nil, fmt.Errorf("WEEKDAY: invalid argument type")
+		}
+
+	case "DAYOFYEAR":
+		// Return day of year (1-366)
+		if len(fc.Args) == 0 {
+			return time.Now().YearDay(), nil
+		}
+		arg, err := evalExpr(fc.Args[0])
+		if err != nil {
+			return nil, err
+		}
+		if arg == nil {
+			return nil, nil
+		}
+
+		switch v := arg.(type) {
+		case string:
+			t, err := parseDateTime(v)
+			if err != nil {
+				return nil, err
+			}
+			return t.YearDay(), nil
+		case time.Time:
+			return v.YearDay(), nil
+		default:
+			return nil, fmt.Errorf("DAYOFYEAR: invalid argument type")
+		}
+
+	case "DAYOFMONTH":
+		// Return day of month (1-31)
+		if len(fc.Args) == 0 {
+			return time.Now().Day(), nil
+		}
+		arg, err := evalExpr(fc.Args[0])
+		if err != nil {
+			return nil, err
+		}
+		if arg == nil {
+			return nil, nil
+		}
+
+		switch v := arg.(type) {
+		case string:
+			t, err := parseDateTime(v)
+			if err != nil {
+				return nil, err
+			}
+			return t.Day(), nil
+		case time.Time:
+			return v.Day(), nil
+		default:
+			return nil, fmt.Errorf("DAYOFMONTH: invalid argument type")
+		}
+
+	case "DAYOFWEEK":
+		// Return day of week (1=Sunday, 7=Saturday) - MySQL style
+		if len(fc.Args) == 0 {
+			return int(time.Now().Weekday()) + 1, nil
+		}
+		arg, err := evalExpr(fc.Args[0])
+		if err != nil {
+			return nil, err
+		}
+		if arg == nil {
+			return nil, nil
+		}
+
+		switch v := arg.(type) {
+		case string:
+			t, err := parseDateTime(v)
+			if err != nil {
+				return nil, err
+			}
+			return int(t.Weekday()) + 1, nil
+		case time.Time:
+			return int(v.Weekday()) + 1, nil
+		default:
+			return nil, fmt.Errorf("DAYOFWEEK: invalid argument type")
+		}
+
+	case "LAST_DAY":
+		// Return the last day of the month for the given date
+		if len(fc.Args) == 0 {
+			now := time.Now()
+			return time.Date(now.Year(), now.Month()+1, 0, 0, 0, 0, 0, time.Local).Format("2006-01-02"), nil
+		}
+		arg, err := evalExpr(fc.Args[0])
+		if err != nil {
+			return nil, err
+		}
+		if arg == nil {
+			return nil, nil
+		}
+
+		switch v := arg.(type) {
+		case string:
+			t, err := parseDateTime(v)
+			if err != nil {
+				return nil, err
+			}
+			// Last day = day 0 of next month
+			lastDay := time.Date(t.Year(), t.Month()+1, 0, 0, 0, 0, 0, t.Location())
+			return lastDay.Format("2006-01-02"), nil
+		case time.Time:
+			lastDay := time.Date(v.Year(), v.Month()+1, 0, 0, 0, 0, 0, v.Location())
+			return lastDay.Format("2006-01-02"), nil
+		default:
+			return nil, fmt.Errorf("LAST_DAY: invalid argument type")
+		}
+
 	// ========== String Functions ==========
 	case "TRIM":
 		if len(fc.Args) == 0 {
@@ -8181,79 +8578,6 @@ func (e *Executor) evaluateFunction(fc *sql.FunctionCall, r *row.Row, columnMap 
 		}
 		return int(str[0]), nil
 
-	// ========== Date/Time Functions ==========
-	case "UNIX_TIMESTAMP":
-		if len(fc.Args) == 0 {
-			return time.Now().Unix(), nil
-		}
-		arg, err := evalExpr(fc.Args[0])
-		if err != nil {
-			return nil, err
-		}
-		if arg == nil {
-			return nil, nil
-		}
-		var t time.Time
-		switch v := arg.(type) {
-		case string:
-			if parsed, err := time.Parse("2006-01-02 15:04:05", v); err == nil {
-				t = parsed
-			} else if parsed, err := time.Parse("2006-01-02", v); err == nil {
-				t = parsed
-			} else {
-				return nil, fmt.Errorf("UNIX_TIMESTAMP: invalid date format")
-			}
-		case time.Time:
-			t = v
-		default:
-			return nil, fmt.Errorf("UNIX_TIMESTAMP requires date argument")
-		}
-		return t.Unix(), nil
-
-	case "FROM_UNIXTIME":
-		if len(fc.Args) == 0 {
-			return nil, fmt.Errorf("FROM_UNIXTIME requires 1 argument")
-		}
-		arg, err := evalExpr(fc.Args[0])
-		if err != nil {
-			return nil, err
-		}
-		if arg == nil {
-			return nil, nil
-		}
-		var ts int64
-		switch v := arg.(type) {
-		case int:
-			ts = int64(v)
-		case int64:
-			ts = v
-		case float64:
-			ts = int64(v)
-		default:
-			return nil, fmt.Errorf("FROM_UNIXTIME requires numeric argument")
-		}
-		t := time.Unix(ts, 0)
-		// Optional format argument
-		if len(fc.Args) >= 2 {
-			formatArg, err := evalExpr(fc.Args[1])
-			if err != nil {
-				return nil, err
-			}
-			if formatArg != nil {
-				if format, ok := formatArg.(string); ok {
-					// Convert SQLite-style format to Go format
-					format = strings.ReplaceAll(format, "%Y", "2006")
-					format = strings.ReplaceAll(format, "%m", "01")
-					format = strings.ReplaceAll(format, "%d", "02")
-					format = strings.ReplaceAll(format, "%H", "15")
-					format = strings.ReplaceAll(format, "%M", "04")
-					format = strings.ReplaceAll(format, "%S", "05")
-					return t.Format(format), nil
-				}
-			}
-		}
-		return t.Format("2006-01-02 15:04:05"), nil
-
 	// ========== Utility Functions ==========
 	case "LAST_INSERT_ID":
 		// Return the last inserted ID from the session
@@ -8370,92 +8694,6 @@ func (e *Executor) evaluateFunction(fc *sql.FunctionCall, r *row.Row, columnMap 
 			}
 		}
 		return strings.Join(parts, sep), nil
-
-	// ========== More Date Functions ==========
-	case "WEEKDAY", "DAYOFWEEK":
-		if len(fc.Args) == 0 {
-			return int(time.Now().Weekday()), nil
-		}
-		arg, err := evalExpr(fc.Args[0])
-		if err != nil {
-			return nil, err
-		}
-		if arg == nil {
-			return nil, nil
-		}
-		switch v := arg.(type) {
-		case string:
-			if t, err := time.Parse("2006-01-02", v); err == nil {
-				return int(t.Weekday()), nil
-			}
-			if t, err := time.Parse("2006-01-02 15:04:05", v); err == nil {
-				return int(t.Weekday()), nil
-			}
-			return nil, fmt.Errorf("%s: invalid date format", funcName)
-		case time.Time:
-			return int(v.Weekday()), nil
-		default:
-			return nil, fmt.Errorf("%s requires date argument", funcName)
-		}
-
-	case "QUARTER":
-		if len(fc.Args) == 0 {
-			return (int(time.Now().Month())-1)/3 + 1, nil
-		}
-		arg, err := evalExpr(fc.Args[0])
-		if err != nil {
-			return nil, err
-		}
-		if arg == nil {
-			return nil, nil
-		}
-		var month int
-		switch v := arg.(type) {
-		case string:
-			if t, err := time.Parse("2006-01-02", v); err == nil {
-				month = int(t.Month())
-			} else if t, err := time.Parse("2006-01-02 15:04:05", v); err == nil {
-				month = int(t.Month())
-			} else {
-				return nil, fmt.Errorf("QUARTER: invalid date format")
-			}
-		case time.Time:
-			month = int(v.Month())
-		default:
-			return nil, fmt.Errorf("QUARTER requires date argument")
-		}
-		return (month-1)/3 + 1, nil
-
-	case "LAST_DAY":
-		if len(fc.Args) == 0 {
-			now := time.Now()
-			return time.Date(now.Year(), now.Month()+1, 0, 0, 0, 0, 0, time.UTC).Format("2006-01-02"), nil
-		}
-		arg, err := evalExpr(fc.Args[0])
-		if err != nil {
-			return nil, err
-		}
-		if arg == nil {
-			return nil, nil
-		}
-		var t time.Time
-		switch v := arg.(type) {
-		case string:
-			if parsed, err := time.Parse("2006-01-02", v); err == nil {
-				t = parsed
-			} else if parsed, err := time.Parse("2006-01-02 15:04:05", v); err == nil {
-				t = parsed
-			} else {
-				return nil, fmt.Errorf("LAST_DAY: invalid date format")
-			}
-		case time.Time:
-			t = v
-		default:
-			return nil, fmt.Errorf("LAST_DAY requires date argument")
-		}
-		// Get last day of month
-		lastDay := time.Date(t.Year(), t.Month()+1, 0, 0, 0, 0, 0, time.UTC)
-		return lastDay.Format("2006-01-02"), nil
 
 	// ========== Utility Functions ==========
 	case "IFNULL":
@@ -9258,45 +9496,6 @@ func (e *Executor) evaluateFunction(fc *sql.FunctionCall, r *row.Row, columnMap 
 			str2 = fmt.Sprintf("%v", arg2)
 		}
 		return soundexDifference(str1, str2), nil
-
-	// ========== Additional Date Functions ==========
-	case "TIMESTAMPDIFF":
-		if len(fc.Args) < 3 {
-			return nil, fmt.Errorf("TIMESTAMPDIFF requires 3 arguments")
-		}
-		unitArg, err := evalExpr(fc.Args[0])
-		if err != nil {
-			return nil, err
-		}
-		dt1Arg, err := evalExpr(fc.Args[1])
-		if err != nil {
-			return nil, err
-		}
-		dt2Arg, err := evalExpr(fc.Args[2])
-		if err != nil {
-			return nil, err
-		}
-		if dt1Arg == nil || dt2Arg == nil {
-			return nil, nil
-		}
-		unit, ok := unitArg.(string)
-		if !ok {
-			unit = fmt.Sprintf("%v", unitArg)
-		}
-		var t1, t2 time.Time
-		switch v := dt1Arg.(type) {
-		case string:
-			t1, _ = parseDateTime(v)
-		case time.Time:
-			t1 = v
-		}
-		switch v := dt2Arg.(type) {
-		case string:
-			t2, _ = parseDateTime(v)
-		case time.Time:
-			t2 = v
-		}
-		return timestampDiff(unit, t1, t2), nil
 
 	case "MAKEDATE":
 		if len(fc.Args) < 2 {
@@ -11077,4 +11276,80 @@ func (e *Executor) interfaceToValue(val interface{}, col *types.ColumnInfo) type
 		// Try to convert to string
 		return types.NewStringValue(fmt.Sprintf("%v", val), col.Type)
 	}
+}
+
+// ========== Date/Time Helper Functions ==========
+
+// timeToJulianDay converts a time.Time to Julian day number
+// Julian day is the number of days since noon UTC on January 1, 4713 BCE
+func timeToJulianDay(t time.Time) float64 {
+	// Use UTC for consistency
+	t = t.UTC()
+
+	// Get Unix timestamp
+	unix := t.Unix()
+
+	// Days from Unix epoch (1970-01-01) to Julian day reference
+	// Julian day 2440587.5 = Unix epoch (1970-01-01 00:00:00 UTC)
+	// The 0.5 accounts for Julian day starting at noon
+	const unixEpochJD = 2440587.5
+
+	// Calculate Julian day
+	jd := unixEpochJD + float64(unix)/86400.0
+
+	return jd
+}
+
+// applyDateModifier applies a SQLite-style date modifier
+// Examples: '+1 day', '-7 days', '+1 month', '+1 year', 'start of month'
+func applyDateModifier(t time.Time, modifier string) time.Time {
+	modifier = strings.TrimSpace(modifier)
+	modifier = strings.ToLower(modifier)
+
+	// Handle special modifiers
+	switch modifier {
+	case "start of month":
+		return time.Date(t.Year(), t.Month(), 1, 0, 0, 0, 0, t.Location())
+	case "start of year":
+		return time.Date(t.Year(), 1, 1, 0, 0, 0, 0, t.Location())
+	case "start of day":
+		return time.Date(t.Year(), t.Month(), t.Day(), 0, 0, 0, 0, t.Location())
+	case "end of month":
+		return time.Date(t.Year(), t.Month()+1, 0, 23, 59, 59, 0, t.Location())
+	case "end of year":
+		return time.Date(t.Year(), 12, 31, 23, 59, 59, 0, t.Location())
+	}
+
+	// Parse numeric modifiers: [+/-]N unit
+	re := regexp.MustCompile(`^([+-]?)\s*(\d+)\s+(day|days|month|months|year|years|hour|hours|minute|minutes|second|seconds)$`)
+	matches := re.FindStringSubmatch(modifier)
+	if matches == nil {
+		return t
+	}
+
+	sign := 1
+	if matches[1] == "-" {
+		sign = -1
+	}
+
+	value, _ := strconv.Atoi(matches[2])
+	value *= sign
+	unit := matches[3]
+
+	switch unit {
+	case "day", "days":
+		return t.AddDate(0, 0, value)
+	case "month", "months":
+		return t.AddDate(0, value, 0)
+	case "year", "years":
+		return t.AddDate(value, 0, 0)
+	case "hour", "hours":
+		return t.Add(time.Duration(value) * time.Hour)
+	case "minute", "minutes":
+		return t.Add(time.Duration(value) * time.Minute)
+	case "second", "seconds":
+		return t.Add(time.Duration(value) * time.Second)
+	}
+
+	return t
 }
