@@ -1582,3 +1582,148 @@ func TestStress_RapidOperations(t *testing.T) {
 	result, _ := exec.Execute("SELECT COUNT(*) FROM stress")
 	t.Logf("Final row count: %d", result.RowCount)
 }
+
+// =============================================================================
+// Trigger Tests
+// =============================================================================
+
+func TestSQL_Triggers(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "xxsql-trigger-test-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	engine := storage.NewEngine(tmpDir)
+	if err := engine.Open(); err != nil {
+		t.Fatalf("Failed to open engine: %v", err)
+	}
+	defer engine.Close()
+
+	exec := executor.NewExecutor(engine)
+	exec.SetDatabase("testdb")
+
+	// Create tables
+	_, err = exec.Execute("CREATE TABLE users (id INT, name VARCHAR(50), email VARCHAR(100))")
+	if err != nil {
+		t.Fatalf("Failed to create users table: %v", err)
+	}
+
+	_, err = exec.Execute("CREATE TABLE auditrecs (id INT, action VARCHAR(50), details VARCHAR(200))")
+	if err != nil {
+		t.Fatalf("Failed to create auditrecs table: %v", err)
+	}
+
+	// Test 1: CREATE TRIGGER - BEFORE INSERT
+	result, err := exec.Execute("CREATE TRIGGER log_insert BEFORE INSERT ON users FOR EACH ROW BEGIN INSERT INTO auditrecs VALUES (1, 'INSERT', 'new user'); END")
+	if err != nil {
+		t.Fatalf("CREATE TRIGGER failed: %v", err)
+	}
+	t.Logf("CREATE TRIGGER result: %v", result)
+
+	// Verify trigger was created
+	if !engine.TriggerExists("log_insert") {
+		t.Error("Trigger log_insert should exist")
+	}
+
+	// Test 2: INSERT should fire trigger
+	result, err = exec.Execute("INSERT INTO users VALUES (1, 'Alice', 'alice@example.com')")
+	if err != nil {
+		t.Fatalf("INSERT failed: %v", err)
+	}
+	t.Logf("INSERT result: %v", result)
+
+	// Check audit log has entry from trigger
+	result, err = exec.Execute("SELECT * FROM auditrecs")
+	if err != nil {
+		t.Fatalf("SELECT from auditrecs failed: %v", err)
+	}
+	if result.RowCount != 1 {
+		t.Errorf("Expected 1 row in auditrecs, got %d", result.RowCount)
+	} else {
+		t.Logf("Audit log row: %v", result.Rows[0])
+	}
+
+	// Test 3: CREATE TRIGGER - AFTER UPDATE
+	result, err = exec.Execute("CREATE TRIGGER log_update AFTER UPDATE ON users FOR EACH ROW BEGIN INSERT INTO auditrecs VALUES (2, 'UPDATE', 'user modified'); END")
+	if err != nil {
+		t.Fatalf("CREATE TRIGGER for UPDATE failed: %v", err)
+	}
+
+	// Test 4: UPDATE should fire trigger
+	result, err = exec.Execute("UPDATE users SET email = 'alice2@example.com' WHERE id = 1")
+	if err != nil {
+		t.Fatalf("UPDATE failed: %v", err)
+	}
+
+	// Check audit log has 2 entries now
+	result, err = exec.Execute("SELECT * FROM auditrecs")
+	if err != nil {
+		t.Fatalf("SELECT from auditrecs failed: %v", err)
+	}
+	if result.RowCount != 2 {
+		t.Errorf("Expected 2 rows in auditrecs, got %d", result.RowCount)
+	}
+
+	// Test 5: CREATE TRIGGER - AFTER DELETE
+	result, err = exec.Execute("CREATE TRIGGER log_delete AFTER DELETE ON users FOR EACH ROW BEGIN INSERT INTO auditrecs VALUES (3, 'DELETE', 'user removed'); END")
+	if err != nil {
+		t.Fatalf("CREATE TRIGGER for DELETE failed: %v", err)
+	}
+
+	// Insert another user to delete
+	exec.Execute("INSERT INTO users VALUES (2, 'Bob', 'bob@example.com')")
+
+	// DELETE should fire trigger
+	result, err = exec.Execute("DELETE FROM users WHERE id = 2")
+	if err != nil {
+		t.Fatalf("DELETE failed: %v", err)
+	}
+
+	// Check audit log has 4 entries (1 insert + 1 update + 1 insert + 1 delete)
+	result, err = exec.Execute("SELECT * FROM auditrecs")
+	if err != nil {
+		t.Fatalf("SELECT from auditrecs failed: %v", err)
+	}
+	t.Logf("Audit log has %d rows after all operations", result.RowCount)
+
+	// Test 6: DROP TRIGGER
+	result, err = exec.Execute("DROP TRIGGER log_insert")
+	if err != nil {
+		t.Fatalf("DROP TRIGGER failed: %v", err)
+	}
+	t.Logf("DROP TRIGGER result: %v", result)
+
+	// Verify trigger was dropped
+	if engine.TriggerExists("log_insert") {
+		t.Error("Trigger log_insert should not exist after DROP")
+	}
+
+	// Test 7: DROP TRIGGER IF EXISTS
+	result, err = exec.Execute("DROP TRIGGER IF EXISTS nonexistent_trigger")
+	if err != nil {
+		t.Fatalf("DROP TRIGGER IF EXISTS failed: %v", err)
+	}
+	t.Logf("DROP TRIGGER IF EXISTS (nonexistent) result: %v", result)
+
+	// Test 8: DROP TRIGGER on nonexistent should fail
+	_, err = exec.Execute("DROP TRIGGER nonexistent_trigger")
+	if err == nil {
+		t.Error("DROP TRIGGER on nonexistent should fail")
+	} else {
+		t.Logf("Expected error for DROP TRIGGER on nonexistent: %v", err)
+	}
+
+	// Test 9: CREATE TRIGGER IF NOT EXISTS
+	result, err = exec.Execute("CREATE TRIGGER IF NOT EXISTS log_update BEFORE INSERT ON users FOR EACH ROW BEGIN INSERT INTO audit_log VALUES (4, 'DUPLICATE', 'should not happen'); END")
+	if err != nil {
+		t.Fatalf("CREATE TRIGGER IF NOT EXISTS failed: %v", err)
+	}
+	// Since log_update already exists, it should not be created
+	t.Logf("CREATE TRIGGER IF NOT EXISTS result: %v", result)
+
+	// Test 10: List triggers
+	triggers := engine.ListTriggers()
+	t.Logf("Triggers: %v", triggers)
+}
+

@@ -19,25 +19,38 @@ const (
 
 // Catalog manages all table metadata.
 type Catalog struct {
-	dataDir string
-	tables  map[string]*table.Table
-	views   map[string]*ViewInfo
-	mu      sync.RWMutex
+	dataDir  string
+	tables   map[string]*table.Table
+	views    map[string]*ViewInfo
+	triggers map[string]*TriggerInfo
+	mu       sync.RWMutex
 }
 
 // ViewInfo stores view definition.
 type ViewInfo struct {
-	Name       string
-	Query      string // The SQL query string
-	Columns    []string
+	Name    string
+	Query   string // The SQL query string
+	Columns []string
+}
+
+// TriggerInfo stores trigger definition.
+type TriggerInfo struct {
+	Name        string
+	Timing      int // 0=BEFORE, 1=AFTER, 2=INSTEAD OF
+	Event       int // 0=INSERT, 1=UPDATE, 2=DELETE
+	TableName   string
+	Granularity int // 0=FOR EACH ROW, 1=FOR EACH STATEMENT
+	WhenClause  string
+	Body        string
 }
 
 // NewCatalog creates a new catalog.
 func NewCatalog(dataDir string) *Catalog {
 	return &Catalog{
-		dataDir: dataDir,
-		tables:  make(map[string]*table.Table),
-		views:   make(map[string]*ViewInfo),
+		dataDir:  dataDir,
+		tables:   make(map[string]*table.Table),
+		views:    make(map[string]*ViewInfo),
+		triggers: make(map[string]*TriggerInfo),
 	}
 }
 
@@ -83,6 +96,11 @@ func (c *Catalog) Open() error {
 		return err
 	}
 
+	// Load triggers
+	if err := c.loadTriggers(); err != nil {
+		return err
+	}
+
 	return nil
 }
 
@@ -95,6 +113,8 @@ func (c *Catalog) Close() error {
 		t.Close()
 	}
 	c.tables = make(map[string]*table.Table)
+	c.views = make(map[string]*ViewInfo)
+	c.triggers = make(map[string]*TriggerInfo)
 
 	return nil
 }
@@ -346,6 +366,126 @@ func (c *Catalog) loadViews() error {
 
 	for _, v := range viewInfos {
 		c.views[v.Name] = v
+	}
+	return nil
+}
+
+// CreateTrigger creates a new trigger.
+func (c *Catalog) CreateTrigger(name string, timing, event int, tableName string, granularity int, whenClause, body string) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	if _, exists := c.triggers[name]; exists {
+		return fmt.Errorf("trigger already exists: %s", name)
+	}
+
+	c.triggers[name] = &TriggerInfo{
+		Name:        name,
+		Timing:      timing,
+		Event:       event,
+		TableName:   tableName,
+		Granularity: granularity,
+		WhenClause:  whenClause,
+		Body:        body,
+	}
+	return c.saveTriggers()
+}
+
+// DropTrigger drops a trigger.
+func (c *Catalog) DropTrigger(name string) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	if _, exists := c.triggers[name]; !exists {
+		return fmt.Errorf("trigger not found: %s", name)
+	}
+
+	delete(c.triggers, name)
+	return c.saveTriggers()
+}
+
+// GetTrigger returns a trigger by name.
+func (c *Catalog) GetTrigger(name string) (*TriggerInfo, error) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+
+	t, exists := c.triggers[name]
+	if !exists {
+		return nil, fmt.Errorf("trigger not found: %s", name)
+	}
+
+	return t, nil
+}
+
+// TriggerExists checks if a trigger exists.
+func (c *Catalog) TriggerExists(name string) bool {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+
+	_, exists := c.triggers[name]
+	return exists
+}
+
+// ListTriggers returns all trigger names.
+func (c *Catalog) ListTriggers() []string {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+
+	names := make([]string, 0, len(c.triggers))
+	for name := range c.triggers {
+		names = append(names, name)
+	}
+	return names
+}
+
+// GetTriggersForTable returns all triggers for a specific table and event.
+func (c *Catalog) GetTriggersForTable(tableName string, event int) []*TriggerInfo {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+
+	var triggers []*TriggerInfo
+	for _, t := range c.triggers {
+		if t.TableName == tableName && t.Event == event {
+			triggers = append(triggers, t)
+		}
+	}
+	return triggers
+}
+
+// saveTriggers saves triggers to disk.
+func (c *Catalog) saveTriggers() error {
+	triggerInfos := make([]*TriggerInfo, 0, len(c.triggers))
+	for _, t := range c.triggers {
+		triggerInfos = append(triggerInfos, t)
+	}
+
+	data, err := json.MarshalIndent(triggerInfos, "", "  ")
+	if err != nil {
+		return err
+	}
+
+	triggersPath := filepath.Join(c.dataDir, "triggers.json")
+	return os.WriteFile(triggersPath, data, 0644)
+}
+
+// loadTriggers loads triggers from disk.
+func (c *Catalog) loadTriggers() error {
+	triggersPath := filepath.Join(c.dataDir, "triggers.json")
+	data, err := os.ReadFile(triggersPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return err
+	}
+
+	var triggerInfos []*TriggerInfo
+	if err := json.Unmarshal(data, &triggerInfos); err != nil {
+		return err
+	}
+
+	for _, t := range triggerInfos {
+		c.triggers[t.Name] = t
 	}
 	return nil
 }

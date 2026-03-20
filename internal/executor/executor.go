@@ -13,6 +13,7 @@ import (
 	"github.com/topxeq/xxsql/internal/backup"
 	"github.com/topxeq/xxsql/internal/sql"
 	"github.com/topxeq/xxsql/internal/storage"
+	"github.com/topxeq/xxsql/internal/storage/catalog"
 	"github.com/topxeq/xxsql/internal/storage/row"
 	"github.com/topxeq/xxsql/internal/storage/table"
 	"github.com/topxeq/xxsql/internal/storage/types"
@@ -294,6 +295,16 @@ func (e *Executor) ExecuteWithPerms(sqlStr string, checker PermissionChecker) (*
 		return e.executeCreateFunction(s)
 	case *sql.DropFunctionStmt:
 		return e.executeDropFunction(s)
+	case *sql.CreateTriggerStmt:
+		if err := checkPerm(PermCreateTable); err != nil {
+			return nil, err
+		}
+		return e.executeCreateTrigger(s)
+	case *sql.DropTriggerStmt:
+		if err := checkPerm(PermDropTable); err != nil {
+			return nil, err
+		}
+		return e.executeDropTrigger(s)
 	case *sql.WithStmt:
 		if err := checkPerm(PermSelect); err != nil {
 			return nil, err
@@ -2951,10 +2962,20 @@ func (e *Executor) executeInsert(stmt *sql.InsertStmt) (*Result, error) {
 			return nil, err
 		}
 
+		// Fire BEFORE INSERT triggers
+		if err := e.fireTriggers(tableName, 0, 0, nil); err != nil {
+			return nil, err
+		}
+
 		// Insert the row
 		rowID, err := e.engine.Insert(tableName, values)
 		if err != nil {
 			return nil, fmt.Errorf("insert error: %w", err)
+		}
+
+		// Fire AFTER INSERT triggers
+		if err := e.fireTriggers(tableName, 1, 0, nil); err != nil {
+			return nil, err
 		}
 
 		totalAffected++
@@ -3039,11 +3060,22 @@ func (e *Executor) executeUpdate(stmt *sql.UpdateStmt) (*Result, error) {
 		}
 	}
 
+	// Fire BEFORE UPDATE triggers
+	if err := e.fireTriggers(tableName, 0, 1, nil); err != nil {
+		return nil, err
+	}
+
 	// Execute update
 	affected, err := tbl.Update(predicate, updates)
 	if err != nil {
 		return nil, fmt.Errorf("update error: %w", err)
 	}
+
+	// Fire AFTER UPDATE triggers
+	if err := e.fireTriggers(tableName, 1, 1, nil); err != nil {
+		return nil, err
+	}
+
 	e.lastRowCount = int64(affected)
 
 	return &Result{
@@ -3088,9 +3120,21 @@ func (e *Executor) executeDelete(stmt *sql.DeleteStmt) (*Result, error) {
 		// No WHERE clause = delete all rows (use Truncate for efficiency)
 		// Capture row count BEFORE truncate since Truncate modifies it
 		rowCount := tblInfo.RowCount
+
+		// Fire BEFORE DELETE triggers
+		if err := e.fireTriggers(tableName, 0, 2, nil); err != nil {
+			return nil, err
+		}
+
 		if err := tbl.Truncate(); err != nil {
 			return nil, fmt.Errorf("delete error: %w", err)
 		}
+
+		// Fire AFTER DELETE triggers
+		if err := e.fireTriggers(tableName, 1, 2, nil); err != nil {
+			return nil, err
+		}
+
 		e.lastRowCount = int64(rowCount)
 		return &Result{
 			Affected: int(rowCount),
@@ -3098,11 +3142,22 @@ func (e *Executor) executeDelete(stmt *sql.DeleteStmt) (*Result, error) {
 		}, nil
 	}
 
+	// Fire BEFORE DELETE triggers
+	if err := e.fireTriggers(tableName, 0, 2, nil); err != nil {
+		return nil, err
+	}
+
 	// Execute delete
 	affected, err := tbl.Delete(predicate)
 	if err != nil {
 		return nil, fmt.Errorf("delete error: %w", err)
 	}
+
+	// Fire AFTER DELETE triggers
+	if err := e.fireTriggers(tableName, 1, 2, nil); err != nil {
+		return nil, err
+	}
+
 	e.lastRowCount = int64(affected)
 
 	return &Result{
@@ -4261,6 +4316,108 @@ func (e *Executor) executeDropFunction(stmt *sql.DropFunctionStmt) (*Result, err
 	return &Result{
 		Message: fmt.Sprintf("Function %s dropped", stmt.Name),
 	}, nil
+}
+
+// executeCreateTrigger executes a CREATE TRIGGER statement.
+func (e *Executor) executeCreateTrigger(stmt *sql.CreateTriggerStmt) (*Result, error) {
+	// Check if trigger already exists
+	if e.engine.TriggerExists(stmt.TriggerName) {
+		if stmt.IfNotExists {
+			return &Result{Message: "OK"}, nil
+		}
+		return nil, fmt.Errorf("trigger already exists: %s", stmt.TriggerName)
+	}
+
+	// Check if table exists
+	if !e.engine.TableExists(stmt.TableName) {
+		return nil, fmt.Errorf("table %s does not exist", stmt.TableName)
+	}
+
+	// Serialize the WHEN clause if present
+	whenClause := ""
+	if stmt.WhenClause != nil {
+		whenClause = stmt.WhenClause.String()
+	}
+
+	// Serialize the body statements
+	var bodyParts []string
+	for _, s := range stmt.Body {
+		bodyParts = append(bodyParts, s.String())
+	}
+	body := strings.Join(bodyParts, "; ")
+
+	// Create trigger in catalog
+	if err := e.engine.CreateTrigger(
+		stmt.TriggerName,
+		int(stmt.Timing),
+		int(stmt.Event),
+		stmt.TableName,
+		int(stmt.Granularity),
+		whenClause,
+		body,
+	); err != nil {
+		return nil, err
+	}
+
+	return &Result{Message: "OK"}, nil
+}
+
+// executeDropTrigger executes a DROP TRIGGER statement.
+func (e *Executor) executeDropTrigger(stmt *sql.DropTriggerStmt) (*Result, error) {
+	if !e.engine.TriggerExists(stmt.TriggerName) {
+		if stmt.IfExists {
+			return &Result{Message: "OK"}, nil
+		}
+		return nil, fmt.Errorf("trigger not found: %s", stmt.TriggerName)
+	}
+
+	if err := e.engine.DropTrigger(stmt.TriggerName); err != nil {
+		return nil, err
+	}
+
+	return &Result{Message: "OK"}, nil
+}
+
+// fireTriggers executes triggers for a given table and event.
+// timing: 0=BEFORE, 1=AFTER
+// event: 0=INSERT, 1=UPDATE, 2=DELETE
+// rowData contains OLD and NEW row data for the trigger context
+func (e *Executor) fireTriggers(tableName string, timing, event int, rowData map[string]interface{}) error {
+	triggers := e.engine.GetTriggersForTable(tableName, event)
+	if len(triggers) == 0 {
+		return nil
+	}
+
+	// Filter triggers by timing
+	var matchingTriggers []*catalog.TriggerInfo
+	for _, t := range triggers {
+		if t.Timing == timing {
+			matchingTriggers = append(matchingTriggers, t)
+		}
+	}
+
+	// Execute each matching trigger
+	for _, t := range matchingTriggers {
+		// Set up context for trigger execution (OLD and NEW references)
+		oldOuter := e.outerContext
+		e.outerContext = make(map[string]interface{})
+		for k, v := range rowData {
+			e.outerContext[k] = v
+		}
+
+		// Execute each statement in the trigger body
+		// We need to execute via Execute() which handles all statement types
+		_, err := e.Execute(t.Body)
+		if err != nil {
+			e.outerContext = oldOuter
+			return fmt.Errorf("trigger %s: %w", t.Name, err)
+		}
+
+		// Restore outer context
+		e.outerContext = oldOuter
+	}
+
+	return nil
 }
 
 // executeTruncate executes a TRUNCATE TABLE statement.

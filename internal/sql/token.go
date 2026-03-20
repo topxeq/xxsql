@@ -80,6 +80,7 @@ const (
 	TokDesc
 	TokLimit
 	TokOffset
+	TokOf
 
 	// Keywords - Data types
 	TokSeq      // Auto-increment integer
@@ -173,6 +174,15 @@ const (
 	TokReplace
 	TokLet
 	TokBegin
+
+	// Keywords - Trigger
+	TokTrigger
+	TokBefore
+	TokAfter
+	TokInstead
+	TokEach
+	TokRow
+	TokStatement
 
 	// Identifiers and literals
 	TokIdent   // identifier
@@ -299,6 +309,8 @@ func (t TokenType) String() string {
 		return "LIMIT"
 	case TokOffset:
 		return "OFFSET"
+	case TokOf:
+		return "OF"
 	case TokSeq:
 		return "SEQ"
 	case TokInt, TokInteger:
@@ -471,6 +483,20 @@ func (t TokenType) String() string {
 		return "LET"
 	case TokBegin:
 		return "BEGIN"
+	case TokTrigger:
+		return "TRIGGER"
+	case TokBefore:
+		return "BEFORE"
+	case TokAfter:
+		return "AFTER"
+	case TokInstead:
+		return "INSTEAD"
+	case TokEach:
+		return "EACH"
+	case TokRow:
+		return "ROW"
+	case TokStatement:
+		return "STATEMENT"
 	case TokDescribe:
 		return "DESCRIBE"
 	case TokBackup:
@@ -544,6 +570,7 @@ var keywords = map[string]TokenType{
 	"DESC":         TokDesc,
 	"LIMIT":        TokLimit,
 	"OFFSET":       TokOffset,
+	"OF":           TokOf,
 	"SEQ":          TokSeq,
 	"INT":          TokInt,
 	"INTEGER":      TokInteger,
@@ -624,6 +651,13 @@ var keywords = map[string]TokenType{
 	"REPLACE":      TokReplace,
 	"LET":          TokLet,
 	"BEGIN":        TokBegin,
+	"TRIGGER":      TokTrigger,
+	"BEFORE":       TokBefore,
+	"AFTER":        TokAfter,
+	"INSTEAD":      TokInstead,
+	"EACH":         TokEach,
+	"ROW":          TokRow,
+	"STATEMENT":    TokStatement,
 	"TRUE":         TokBoolLit,
 	"FALSE":        TokBoolLit,
 }

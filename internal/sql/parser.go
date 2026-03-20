@@ -95,6 +95,42 @@ func (p *Parser) curTokenIs(t TokenType) bool {
 	return p.currTok.Type == t
 }
 
+// isKeywordAsIdent checks if the current token is a keyword that can be used as an identifier.
+// Many SQL keywords can be used as column names or table names.
+func (p *Parser) isKeywordAsIdent() bool {
+	// List of keywords that can be used as identifiers (column names, table names)
+	switch p.currTok.Type {
+	case TokAction, TokCascade, TokRestrict, TokCheck, TokComment,
+		TokEngine, TokCharset, TokCollate, TokDefault, TokNull,
+		TokPrimary, TokKey, TokUnique, TokForeign, TokReferences,
+		TokConstraint, TokAutoIncrement, TokUnsigned, TokZerofill,
+		TokIndex, TokTable, TokView, TokTrigger, TokFunction,
+		TokUser, TokPassword, TokIdentified, TokRole, TokGrants,
+		TokOption, TokWith, TokRecursive, TokFor, TokAt,
+		TokBackup, TokRestore, TokDescribe, TokBegin, TokEnd,
+		TokWhen, TokThen, TokElse, TokCase, TokIf, TokExists,
+		TokAny, TokAll, TokDistinct, TokUsing, TokFrom, TokWhere,
+		TokGroup, TokBy, TokHaving, TokOrder, TokAsc, TokDesc,
+		TokLimit, TokOffset, TokInto, TokValues, TokSet,
+		TokSelect, TokInsert, TokUpdate, TokDelete, TokDrop,
+		TokCreate, TokAlter, TokAdd, TokColumn, TokRename,
+		TokModify, TokDatabase, TokSchema, TokUse, TokShow,
+		TokGrant, TokRevoke, TokPrivileges, TokTo,
+		TokTruncate, TokOn, TokAs, TokAnd, TokOr, TokNot,
+		TokIn, TokLike, TokBetween, TokIs,
+		TokJoin, TokInner, TokLeft, TokRight, TokCross, TokOuter,
+		TokFull, TokNatural, TokUnion, TokIntersect, TokExcept,
+		TokOver, TokPartition, TokWindow, TokRows, TokRange,
+		TokPreceding, TokFollowing, TokCurrent,
+		TokReturns, TokReturn, TokReplace, TokLet,
+		TokBefore, TokAfter, TokInstead, TokEach, TokRow, TokStatement,
+		TokOf:
+		return true
+	default:
+		return false
+	}
+}
+
 // peekTokenIs checks if the peek token is of the given type.
 func (p *Parser) peekTokenIs(t TokenType) bool {
 	return p.peekTok.Type == t
@@ -845,8 +881,10 @@ func (p *Parser) parseCreate() Statement {
 		return nil
 	case TokFunction:
 		return p.parseCreateFunction()
+	case TokTrigger:
+		return p.parseCreateTrigger()
 	default:
-		p.error("expected TABLE, INDEX, VIEW, USER or FUNCTION after CREATE")
+		p.error("expected TABLE, INDEX, VIEW, USER, FUNCTION or TRIGGER after CREATE")
 		return nil
 	}
 }
@@ -913,8 +951,8 @@ func (p *Parser) parseColumnDef() *ColumnDef {
 		Nullable: true,
 	}
 
-	// Column name
-	if !p.curTokenIs(TokIdent) {
+	// Column name - can be an identifier or a keyword used as identifier
+	if !p.curTokenIs(TokIdent) && !p.isKeywordAsIdent() {
 		p.error("expected column name")
 		return nil
 	}
@@ -1231,8 +1269,10 @@ func (p *Parser) parseDrop() Statement {
 		return p.parseDropUser()
 	case TokFunction:
 		return p.parseDropFunction()
+	case TokTrigger:
+		return p.parseDropTrigger()
 	default:
-		p.error("expected TABLE, INDEX, VIEW, USER or FUNCTION after DROP")
+		p.error("expected TABLE, INDEX, VIEW, USER, FUNCTION or TRIGGER after DROP")
 		return nil
 	}
 }
@@ -2701,6 +2741,165 @@ func (p *Parser) parseDropFunction() *DropFunctionStmt {
 
 	stmt.Name = p.currTok.Value
 	p.nextToken()
+
+	return stmt
+}
+
+// parseCreateTrigger parses a CREATE TRIGGER statement.
+// Syntax: CREATE TRIGGER [IF NOT EXISTS] name {BEFORE|AFTER|INSTEAD OF} {INSERT|UPDATE|DELETE} ON table [FOR EACH ROW] [WHEN condition] BEGIN statements END
+func (p *Parser) parseCreateTrigger() *CreateTriggerStmt {
+	p.nextToken() // consume TRIGGER
+
+	stmt := &CreateTriggerStmt{
+		Granularity: TriggerForEachRow, // default to FOR EACH ROW
+	}
+
+	// IF NOT EXISTS
+	if p.curTokenIs(TokIf) {
+		p.nextToken()
+		if !p.expect(TokNot) {
+			return nil
+		}
+		if !p.expect(TokExists) {
+			return nil
+		}
+		stmt.IfNotExists = true
+	}
+
+	// Trigger name
+	if !p.curTokenIs(TokIdent) {
+		p.error("expected trigger name")
+		return nil
+	}
+	stmt.TriggerName = p.currTok.Value
+	p.nextToken()
+
+	// Timing: BEFORE, AFTER, or INSTEAD OF
+	if p.curTokenIs(TokBefore) {
+		stmt.Timing = TriggerBefore
+		p.nextToken()
+	} else if p.curTokenIs(TokAfter) {
+		stmt.Timing = TriggerAfter
+		p.nextToken()
+	} else if p.curTokenIs(TokInstead) {
+		p.nextToken()
+		if !p.expect(TokOf) {
+			return nil
+		}
+		stmt.Timing = TriggerInsteadOf
+	} else {
+		p.error("expected BEFORE, AFTER, or INSTEAD OF")
+		return nil
+	}
+
+	// Event: INSERT, UPDATE, or DELETE
+	if p.curTokenIs(TokInsert) {
+		stmt.Event = TriggerInsert
+		p.nextToken()
+	} else if p.curTokenIs(TokUpdate) {
+		stmt.Event = TriggerUpdate
+		p.nextToken()
+	} else if p.curTokenIs(TokDelete) {
+		stmt.Event = TriggerDelete
+		p.nextToken()
+	} else {
+		p.error("expected INSERT, UPDATE, or DELETE")
+		return nil
+	}
+
+	// ON table
+	if !p.expect(TokOn) {
+		return nil
+	}
+	if !p.curTokenIs(TokIdent) {
+		p.error("expected table name")
+		return nil
+	}
+	stmt.TableName = p.currTok.Value
+	p.nextToken()
+
+	// FOR EACH ROW or FOR EACH STATEMENT (optional)
+	if p.curTokenIs(TokFor) {
+		p.nextToken()
+		if !p.expect(TokEach) {
+			return nil
+		}
+		if p.curTokenIs(TokRow) {
+			stmt.Granularity = TriggerForEachRow
+			p.nextToken()
+		} else if p.curTokenIs(TokStatement) {
+			stmt.Granularity = TriggerForEachStatement
+			p.nextToken()
+		} else {
+			p.error("expected ROW or STATEMENT after FOR EACH")
+			return nil
+		}
+	}
+
+	// WHEN clause (optional)
+	if p.curTokenIs(TokWhen) {
+		p.nextToken()
+		stmt.WhenClause = p.parseExpression()
+		if stmt.WhenClause == nil {
+			return nil
+		}
+	}
+
+	// BEGIN ... END block
+	if !p.expect(TokBegin) {
+		return nil
+	}
+
+	// Parse statements until END
+	for !p.curTokenIs(TokEnd) && p.err == nil {
+		s := p.parseStatement()
+		if s != nil {
+			stmt.Body = append(stmt.Body, s)
+		}
+		// Skip optional semicolon
+		if p.curTokenIs(TokSemi) {
+			p.nextToken()
+		}
+	}
+
+	if !p.expect(TokEnd) {
+		return nil
+	}
+
+	return stmt
+}
+
+// parseDropTrigger parses a DROP TRIGGER statement.
+func (p *Parser) parseDropTrigger() *DropTriggerStmt {
+	p.nextToken() // consume TRIGGER
+
+	stmt := &DropTriggerStmt{}
+
+	// IF EXISTS
+	if p.curTokenIs(TokIf) {
+		p.nextToken()
+		if !p.expect(TokExists) {
+			return nil
+		}
+		stmt.IfExists = true
+	}
+
+	// Trigger name
+	if !p.curTokenIs(TokIdent) {
+		p.error("expected trigger name")
+		return nil
+	}
+	stmt.TriggerName = p.currTok.Value
+	p.nextToken()
+
+	// Optional ON table (MySQL syntax)
+	if p.curTokenIs(TokOn) {
+		p.nextToken()
+		if p.curTokenIs(TokIdent) {
+			stmt.TableName = p.currTok.Value
+			p.nextToken()
+		}
+	}
 
 	return stmt
 }

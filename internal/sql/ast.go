@@ -1781,3 +1781,146 @@ type UserFunction struct {
 	ReturnType *DataType
 	Body       Expression
 }
+
+// ============================================================================
+// Trigger Statements
+// ============================================================================
+
+// TriggerTiming represents when a trigger fires.
+type TriggerTiming int
+
+const (
+	TriggerBefore TriggerTiming = iota
+	TriggerAfter
+	TriggerInsteadOf
+)
+
+func (t TriggerTiming) String() string {
+	switch t {
+	case TriggerBefore:
+		return "BEFORE"
+	case TriggerAfter:
+		return "AFTER"
+	case TriggerInsteadOf:
+		return "INSTEAD OF"
+	}
+	return "UNKNOWN"
+}
+
+// TriggerEvent represents the event that fires a trigger.
+type TriggerEvent int
+
+const (
+	TriggerInsert TriggerEvent = iota
+	TriggerUpdate
+	TriggerDelete
+)
+
+func (e TriggerEvent) String() string {
+	switch e {
+	case TriggerInsert:
+		return "INSERT"
+	case TriggerUpdate:
+		return "UPDATE"
+	case TriggerDelete:
+		return "DELETE"
+	}
+	return "UNKNOWN"
+}
+
+// TriggerGranularity represents FOR EACH ROW or FOR EACH STATEMENT.
+type TriggerGranularity int
+
+const (
+	TriggerForEachRow TriggerGranularity = iota
+	TriggerForEachStatement
+)
+
+func (g TriggerGranularity) String() string {
+	switch g {
+	case TriggerForEachRow:
+		return "FOR EACH ROW"
+	case TriggerForEachStatement:
+		return "FOR EACH STATEMENT"
+	}
+	return "UNKNOWN"
+}
+
+// CreateTriggerStmt represents a CREATE TRIGGER statement.
+// Syntax: CREATE TRIGGER name {BEFORE|AFTER|INSTEAD OF} {INSERT|UPDATE|DELETE} ON table [FOR EACH ROW] BEGIN statements END
+type CreateTriggerStmt struct {
+	TriggerName  string
+	Timing       TriggerTiming
+	Event        TriggerEvent
+	TableName    string
+	Granularity  TriggerGranularity
+	WhenClause   Expression    // optional WHEN condition
+	Body         []Statement   // trigger body statements
+	IfNotExists  bool
+}
+
+func (s *CreateTriggerStmt) node()      {}
+func (s *CreateTriggerStmt) statement() {}
+func (s *CreateTriggerStmt) String() string {
+	var sb strings.Builder
+	sb.WriteString("CREATE TRIGGER ")
+	if s.IfNotExists {
+		sb.WriteString("IF NOT EXISTS ")
+	}
+	sb.WriteString(s.TriggerName)
+	sb.WriteString(" ")
+	sb.WriteString(s.Timing.String())
+	sb.WriteString(" ")
+	sb.WriteString(s.Event.String())
+	sb.WriteString(" ON ")
+	sb.WriteString(s.TableName)
+	sb.WriteString(" ")
+	sb.WriteString(s.Granularity.String())
+	if s.WhenClause != nil {
+		sb.WriteString(" WHEN ")
+		sb.WriteString(s.WhenClause.String())
+	}
+	sb.WriteString(" BEGIN ")
+	for i, stmt := range s.Body {
+		if i > 0 {
+			sb.WriteString("; ")
+		}
+		sb.WriteString(stmt.String())
+	}
+	sb.WriteString(" END")
+	return sb.String()
+}
+
+// DropTriggerStmt represents a DROP TRIGGER statement.
+type DropTriggerStmt struct {
+	TriggerName string
+	TableName   string // optional, for MySQL compatibility
+	IfExists    bool
+}
+
+func (s *DropTriggerStmt) node()      {}
+func (s *DropTriggerStmt) statement() {}
+func (s *DropTriggerStmt) String() string {
+	var sb strings.Builder
+	sb.WriteString("DROP TRIGGER ")
+	if s.IfExists {
+		sb.WriteString("IF EXISTS ")
+	}
+	sb.WriteString(s.TriggerName)
+	if s.TableName != "" {
+		sb.WriteString(" ON ")
+		sb.WriteString(s.TableName)
+	}
+	return sb.String()
+}
+
+// TriggerInfo represents stored trigger information.
+type TriggerInfo struct {
+	Name        string
+	Timing      TriggerTiming
+	Event       TriggerEvent
+	TableName   string
+	Granularity TriggerGranularity
+	WhenClause  string // serialized WHEN expression
+	Body        string // serialized body statements
+}

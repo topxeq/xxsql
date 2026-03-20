@@ -162,6 +162,42 @@ func (e *Engine) ListViews() []string {
 	return e.catalog.ListViews()
 }
 
+// TriggerExists checks if a trigger exists.
+func (e *Engine) TriggerExists(name string) bool {
+	return e.catalog.TriggerExists(name)
+}
+
+// CreateTrigger creates a new trigger.
+func (e *Engine) CreateTrigger(name string, timing, event int, tableName string, granularity int, whenClause, body string) error {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+
+	return e.catalog.CreateTrigger(name, timing, event, tableName, granularity, whenClause, body)
+}
+
+// DropTrigger drops a trigger.
+func (e *Engine) DropTrigger(name string) error {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+
+	return e.catalog.DropTrigger(name)
+}
+
+// GetTrigger returns a trigger by name.
+func (e *Engine) GetTrigger(name string) (*catalog.TriggerInfo, error) {
+	return e.catalog.GetTrigger(name)
+}
+
+// ListTriggers returns all trigger names.
+func (e *Engine) ListTriggers() []string {
+	return e.catalog.ListTriggers()
+}
+
+// GetTriggersForTable returns all triggers for a specific table and event.
+func (e *Engine) GetTriggersForTable(tableName string, event int) []*catalog.TriggerInfo {
+	return e.catalog.GetTriggersForTable(tableName, event)
+}
+
 // GetDataDir returns the data directory path.
 func (e *Engine) GetDataDir() string {
 	return e.dataDir
