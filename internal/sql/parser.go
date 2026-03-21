@@ -2648,7 +2648,27 @@ func (p *Parser) parseBinaryExpr(minPrec int) Expression {
 		}
 
 		right := p.parseBinaryExpr(prec + 1)
-		left = &BinaryExpr{Left: left, Op: op, Right: right}
+		binaryExpr := &BinaryExpr{Left: left, Op: op, Right: right}
+
+		// Handle ESCAPE clause for LIKE/NOT LIKE
+		if op == OpLike || op == OpNotLike || op == OpGlob || op == OpNotGlob {
+			if p.curTokenIs(TokEscape) {
+				p.nextToken()
+				if !p.curTokenIs(TokString) {
+					p.error("expected string literal after ESCAPE")
+					return nil
+				}
+				escapeStr := p.currTok.Value
+				if len(escapeStr) != 1 {
+					p.error("ESCAPE character must be a single character")
+					return nil
+				}
+				binaryExpr.EscapeChar = escapeStr
+				p.nextToken()
+			}
+		}
+
+		left = binaryExpr
 	}
 
 	return left

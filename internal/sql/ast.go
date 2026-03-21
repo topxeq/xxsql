@@ -1094,10 +1094,11 @@ func (s *StarExpr) String() string {
 
 // BinaryExpr represents a binary expression.
 type BinaryExpr struct {
-	Left  Expression
-	Op    BinaryOp
-	Right Expression
-	Alias string // optional alias
+	Left       Expression
+	Op         BinaryOp
+	Right      Expression
+	Alias      string // optional alias
+	EscapeChar string // optional escape character for LIKE/NOT LIKE (default is '\')
 }
 
 type BinaryOp int

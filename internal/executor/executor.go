@@ -2207,7 +2207,7 @@ func (e *Executor) evaluateHaving(expr sql.Expression, resultRow []interface{}, 
 		if left == nil || right == nil {
 			return false, nil
 		}
-		return e.compareValues(left, ex.Op, right)
+		return e.compareValues(left, ex.Op, right, ex.EscapeChar)
 
 	case *sql.UnaryExpr:
 		if ex.Op == sql.OpNot {
@@ -5120,7 +5120,7 @@ func (e *Executor) evaluateWhereForRow(expr sql.Expression, r *row.Row, columns 
 		if err != nil {
 			return false, err
 		}
-		return e.compareValues(left, ex.Op, right)
+		return e.compareValues(left, ex.Op, right, ex.EscapeChar)
 
 	case *sql.UnaryExpr:
 		if ex.Op == sql.OpNot {
@@ -6074,7 +6074,7 @@ func (e *Executor) evaluateExprWithValues(expr sql.Expression, values map[string
 		if err != nil {
 			return nil, err
 		}
-		return e.compareValues(left, ex.Op, right)
+		return e.compareValues(left, ex.Op, right, ex.EscapeChar)
 
 	case *sql.UnaryExpr:
 		operand, err := e.evaluateExprWithValues(ex.Right, values)
@@ -8259,7 +8259,7 @@ func (e *Executor) evaluateWhere(expr sql.Expression, r *row.Row, columnMap map[
 			collation = e.extractCollation(ex.Right)
 		}
 
-		return e.compareValuesWithCollation(left, ex.Op, right, collation)
+		return e.compareValuesWithCollation(left, ex.Op, right, collation, ex.EscapeChar)
 
 	case *sql.UnaryExpr:
 		if ex.Op == sql.OpNot {
@@ -8543,7 +8543,7 @@ func (e *Executor) evaluateWhereWithCollation(expr sql.Expression, collation str
 		if err != nil {
 			return false, err
 		}
-		return e.compareValuesWithCollation(left, ex.Op, right, collation)
+		return e.compareValuesWithCollation(left, ex.Op, right, collation, ex.EscapeChar)
 
 	case *sql.ParenExpr:
 		return e.evaluateWhereWithCollation(ex.Expr, collation, r, columnMap, columnOrder)
@@ -12167,7 +12167,13 @@ func (e *Executor) evaluateUDFFunctionCall(fc *sql.FunctionCall, params map[stri
 }
 
 // compareValues compares two values with an operator.
-func (e *Executor) compareValues(left interface{}, op sql.BinaryOp, right interface{}) (bool, error) {
+// Optional escapeChar is used for LIKE operations.
+func (e *Executor) compareValues(left interface{}, op sql.BinaryOp, right interface{}, escapeChar ...string) (bool, error) {
+	esc := ""
+	if len(escapeChar) > 0 {
+		esc = escapeChar[0]
+	}
+
 	// Handle NULL comparisons
 	if left == nil || right == nil {
 		if op == sql.OpEq {
@@ -12250,12 +12256,8 @@ func (e *Executor) compareValues(left interface{}, op sql.BinaryOp, right interf
 	case sql.OpGe:
 		return leftStr >= rightStr, nil
 	case sql.OpLike:
-		// Simple LIKE implementation
-		pattern := strings.ReplaceAll(rightStr, "%", ".*")
-		pattern = strings.ReplaceAll(pattern, "_", ".")
-		pattern = "^" + pattern + "$"
-		matched, _ := regexp.MatchString(pattern, leftStr)
-		return matched, nil
+		// LIKE with optional escape character
+		return matchLikePattern(leftStr, rightStr, esc), nil
 	case sql.OpGlob:
 		// GLOB uses Unix-style wildcards: * and ?
 		// Convert GLOB pattern to regex
@@ -12343,7 +12345,13 @@ func collationEqual(a, b string, collation string) bool {
 }
 
 // compareValuesWithCollation compares values with optional collation support.
-func (e *Executor) compareValuesWithCollation(left interface{}, op sql.BinaryOp, right interface{}, collation string) (bool, error) {
+// escapeChar is used for LIKE operations.
+func (e *Executor) compareValuesWithCollation(left interface{}, op sql.BinaryOp, right interface{}, collation string, escapeChar ...string) (bool, error) {
+	esc := ""
+	if len(escapeChar) > 0 {
+		esc = escapeChar[0]
+	}
+
 	// Handle NULL comparisons
 	if left == nil || right == nil {
 		if op == sql.OpEq {
@@ -12431,12 +12439,7 @@ func (e *Executor) compareValuesWithCollation(left interface{}, op sql.BinaryOp,
 		case sql.OpLike:
 			// For LIKE with collation, use case-insensitive matching for NOCASE
 			if strings.ToUpper(collation) == "NOCASE" {
-				pattern := strings.ToLower(rightStr)
-				pattern = strings.ReplaceAll(pattern, "%", ".*")
-				pattern = strings.ReplaceAll(pattern, "_", ".")
-				pattern = "^" + pattern + "$"
-				matched, _ := regexp.MatchString(pattern, strings.ToLower(leftStr))
-				return matched, nil
+				return matchLikePattern(strings.ToLower(leftStr), strings.ToLower(rightStr), esc), nil
 			}
 			// Fall through for other collations
 		case sql.OpGlob:
@@ -12462,12 +12465,8 @@ func (e *Executor) compareValuesWithCollation(left interface{}, op sql.BinaryOp,
 	case sql.OpGe:
 		return leftStr >= rightStr, nil
 	case sql.OpLike:
-		// Simple LIKE implementation
-		pattern := strings.ReplaceAll(rightStr, "%", ".*")
-		pattern = strings.ReplaceAll(pattern, "_", ".")
-		pattern = "^" + pattern + "$"
-		matched, _ := regexp.MatchString(pattern, leftStr)
-		return matched, nil
+		// LIKE with optional escape character
+		return matchLikePattern(leftStr, rightStr, esc), nil
 	case sql.OpGlob:
 		// GLOB uses Unix-style wildcards: * and ?
 		pattern := globToRegex(rightStr)
@@ -12476,6 +12475,54 @@ func (e *Executor) compareValuesWithCollation(left interface{}, op sql.BinaryOp,
 	default:
 		return false, nil
 	}
+}
+
+// matchLikePattern matches a string against a LIKE pattern with optional escape character.
+// If escapeChar is empty, no escaping is done (standard LIKE behavior).
+// With escapeChar, the character following the escape char is treated literally.
+func matchLikePattern(str, pattern, escapeChar string) bool {
+	// Build a regex pattern from the LIKE pattern
+	var regexPattern strings.Builder
+	regexPattern.WriteString("^")
+
+	escape := false
+	if escapeChar != "" && len(escapeChar) == 1 {
+		escape = true
+	}
+
+	escapeRune := rune(0)
+	if escape {
+		escapeRune = []rune(escapeChar)[0]
+	}
+
+	for i, ch := range pattern {
+		if escape && ch == escapeRune {
+			// Skip the escape character and treat the next character literally
+			// This is handled by moving to the next character in the next iteration
+			continue
+		}
+
+		// Check if the previous character was an escape character
+		if escape && i > 0 && rune(pattern[i-1]) == escapeRune {
+			// This character was escaped, treat literally
+			regexPattern.WriteString(regexp.QuoteMeta(string(ch)))
+			continue
+		}
+
+		switch ch {
+		case '%':
+			regexPattern.WriteString(".*")
+		case '_':
+			regexPattern.WriteString(".")
+		default:
+			regexPattern.WriteString(regexp.QuoteMeta(string(ch)))
+		}
+	}
+
+	regexPattern.WriteString("$")
+
+	matched, _ := regexp.MatchString(regexPattern.String(), str)
+	return matched
 }
 
 // expressionToValue converts an expression to a storage value.

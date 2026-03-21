@@ -40,6 +40,7 @@ const (
 	TokLines
 	TokEnclosed
 	TokEscaped
+	TokEscape     // ESCAPE for LIKE
 	TokOptionally
 
 	// Keywords - DML
@@ -369,6 +370,8 @@ func (t TokenType) String() string {
 		return "ENCLOSED"
 	case TokEscaped:
 		return "ESCAPED"
+	case TokEscape:
+		return "ESCAPE"
 	case TokOptionally:
 		return "OPTIONALLY"
 	case TokAnd:
@@ -766,6 +769,7 @@ var keywords = map[string]TokenType{
 	"LINES":        TokLines,
 	"ENCLOSED":     TokEnclosed,
 	"ESCAPED":      TokEscaped,
+	"ESCAPE":       TokEscape,
 	"OPTIONALLY":   TokOptionally,
 	"AND":          TokAnd,
 	"OR":           TokOr,
