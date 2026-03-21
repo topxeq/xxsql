@@ -266,6 +266,11 @@ func (idx *FTSIndex) Save() error {
 	idx.mu.RLock()
 	defer idx.mu.RUnlock()
 
+	// Don't save if there's no data
+	if idx.invertedIdx.docCount == 0 {
+		return nil
+	}
+
 	// Create directory if needed
 	dir := filepath.Dir(idx.storagePath)
 	if err := os.MkdirAll(dir, 0755); err != nil {

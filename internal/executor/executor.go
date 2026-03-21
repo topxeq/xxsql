@@ -4082,6 +4082,8 @@ func (e *Executor) executeInsertInternal(stmt *sql.InsertStmt) (*Result, error) 
 						idx.IndexDocument(uint64(rowID), valuesMap)
 					}
 				}
+				// Save FTS index to disk
+				e.ftsManager.SaveAll()
 			}
 		}
 

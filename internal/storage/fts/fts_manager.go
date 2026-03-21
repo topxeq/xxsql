@@ -2,6 +2,7 @@
 package fts
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -193,7 +194,8 @@ func (m *FTSManager) LoadAll() error {
 		}
 
 		// Load index metadata
-		data, err := os.ReadFile(filepath.Join(ftsDir, entry.Name()))
+		filePath := filepath.Join(ftsDir, entry.Name())
+		data, err := os.ReadFile(filePath)
 		if err != nil {
 			continue
 		}
@@ -207,7 +209,16 @@ func (m *FTSManager) LoadAll() error {
 			continue
 		}
 
-		// Recreate the index
+		// Check if index already exists (created from catalog)
+		if idx, exists := m.indexes[saved.Name]; exists {
+			// Load the persisted data into existing index
+			if err := idx.Load(); err != nil {
+				continue
+			}
+			continue
+		}
+
+		// Index doesn't exist, create it
 		config := FTSIndexConfig{
 			Name:       saved.Name,
 			TableName:  saved.TableName,
@@ -230,7 +241,7 @@ func (m *FTSManager) LoadAll() error {
 
 // parseJSON is a helper to parse JSON data.
 func parseJSON(data []byte, v interface{}) error {
-	return nil // Simplified - use json.Unmarshal in production
+	return json.Unmarshal(data, v)
 }
 
 // GetStats returns statistics for all indexes.
