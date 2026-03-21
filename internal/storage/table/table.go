@@ -725,6 +725,40 @@ func (t *Table) Truncate() error {
 	return nil
 }
 
+// GetAllRows returns all rows in the table.
+func (t *Table) GetAllRows() ([]*row.Row, error) {
+	t.mu.RLock()
+	defer t.mu.RUnlock()
+
+	var rows []*row.Row
+
+	// Iterate through all pages
+	for pageID := page.PageID(1); pageID < t.info.NextPageID; pageID++ {
+		p, err := t.getPage(pageID)
+		if err != nil {
+			continue
+		}
+
+		// Read all rows from page
+		rowCount := p.RowCount()
+		for i := 0; i < rowCount; i++ {
+			rowData, err := p.GetRow(i)
+			if err != nil {
+				continue
+			}
+
+			r, err := row.DeserializeRow(rowData, t.info.Columns)
+			if err != nil {
+				continue
+			}
+
+			rows = append(rows, r)
+		}
+	}
+
+	return rows, nil
+}
+
 // AddColumn adds a column to the table.
 func (t *Table) AddColumn(col *types.ColumnInfo) error {
 	t.mu.Lock()

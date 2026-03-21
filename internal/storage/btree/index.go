@@ -137,6 +137,16 @@ func (idx *Index) Flush() error {
 	return idx.Tree.Flush()
 }
 
+// Clear removes all entries from the index.
+func (idx *Index) Clear() error {
+	idx.mu.Lock()
+	defer idx.mu.Unlock()
+
+	// Create a new empty tree
+	idx.Tree = NewBTree(DefaultOrder, idx.Info.KeyType, idx.Tree.pageManager)
+	return nil
+}
+
 // IndexManager manages all indexes for a table.
 type IndexManager struct {
 	tableName string

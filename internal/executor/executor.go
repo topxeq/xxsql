@@ -311,6 +311,8 @@ func (e *Executor) ExecuteWithPerms(sqlStr string, checker PermissionChecker) (*
 			return nil, err
 		}
 		return e.executeRestore(s)
+	case *sql.VacuumStmt:
+		return e.executeVacuum(s)
 	case *sql.CreateFunctionStmt:
 		return e.executeCreateFunction(s)
 	case *sql.DropFunctionStmt:
@@ -6562,6 +6564,183 @@ func (e *Executor) executeRestore(stmt *sql.RestoreStmt) (*Result, error) {
 	return &Result{
 		Message: fmt.Sprintf("Restore completed: %s (%d tables, %s)", stmt.Path, manifest.TableCount, manifest.Timestamp),
 	}, nil
+}
+
+// executeVacuum executes a VACUUM statement.
+// VACUUM rebuilds the database file, reclaiming unused space and defragmenting the data.
+func (e *Executor) executeVacuum(stmt *sql.VacuumStmt) (*Result, error) {
+	catalog := e.engine.GetCatalog()
+	if catalog == nil {
+		return nil, fmt.Errorf("catalog not available")
+	}
+
+	tables := catalog.ListTables()
+
+	// Check for specific non-existent table first
+	if stmt.Table != "" {
+		found := false
+		for _, tableName := range tables {
+			if strings.EqualFold(tableName, stmt.Table) {
+				found = true
+				break
+			}
+		}
+		if !found {
+			return nil, fmt.Errorf("table %s not found", stmt.Table)
+		}
+	}
+
+	if len(tables) == 0 {
+		return &Result{Message: "VACUUM completed: no tables to vacuum"}, nil
+	}
+
+	var totalRowsBefore, totalRowsAfter uint64
+	var tablesVacuumed int
+
+	for _, tableName := range tables {
+		// Skip if specific table requested and this isn't it
+		if stmt.Table != "" && !strings.EqualFold(tableName, stmt.Table) {
+			continue
+		}
+
+		tbl, err := catalog.GetTable(tableName)
+		if err != nil {
+			continue
+		}
+
+		info := tbl.GetInfo()
+		rowsBefore := info.RowCount
+		totalRowsBefore += rowsBefore
+
+		// Vacuum the table - compact and rebuild
+		if err := e.vacuumTable(tbl); err != nil {
+			return nil, fmt.Errorf("failed to vacuum table %s: %w", tableName, err)
+		}
+
+		// Flush the table to disk
+		if err := tbl.Flush(); err != nil {
+			return nil, fmt.Errorf("failed to flush table %s: %w", tableName, err)
+		}
+
+		// Get updated row count
+		info = tbl.GetInfo()
+		rowsAfter := info.RowCount
+		totalRowsAfter += rowsAfter
+
+		tablesVacuumed++
+	}
+
+	if tablesVacuumed == 0 && stmt.Table != "" {
+		return nil, fmt.Errorf("table %s not found", stmt.Table)
+	}
+
+	// Handle VACUUM INTO - export to a different file
+	if stmt.IntoPath != "" {
+		backupMgr := NewBackupManager(e.engine)
+		opts := backup.BackupOptions{
+			Path:     stmt.IntoPath,
+			Compress: false,
+			Database: e.database,
+		}
+		_, err := backupMgr.Backup(opts)
+		if err != nil {
+			return nil, fmt.Errorf("VACUUM INTO failed: %w", err)
+		}
+		return &Result{
+			Message: fmt.Sprintf("VACUUM INTO completed: exported to %s (%d tables)", stmt.IntoPath, tablesVacuumed),
+		}, nil
+	}
+
+	return &Result{
+		Message: fmt.Sprintf("VACUUM completed: %d tables processed, %d rows", tablesVacuumed, totalRowsAfter),
+	}, nil
+}
+
+// vacuumTable compacts a single table by rebuilding it.
+func (e *Executor) vacuumTable(tbl *table.Table) error {
+	// Get all rows
+	rows, err := tbl.GetAllRows()
+	if err != nil {
+		return err
+	}
+
+	// Get table info
+	info := tbl.GetInfo()
+	columns := info.Columns
+
+	// Clear the table's data pages
+	if err := tbl.Truncate(); err != nil {
+		return err
+	}
+
+	// Re-insert all rows
+	for _, r := range rows {
+		if _, err := tbl.Insert(r.Values); err != nil {
+			return err
+		}
+	}
+
+	// Rebuild indexes
+	indexMgr := tbl.GetIndexManager()
+	if indexMgr != nil {
+		// Get all index names
+		indexNames := indexMgr.ListIndexes()
+
+		for _, idxName := range indexNames {
+			idx, err := indexMgr.GetIndex(idxName)
+			if err != nil {
+				continue
+			}
+
+			// Clear and rebuild the index
+			idx.Clear()
+
+			// Re-insert all rows into the index
+			colMap := make(map[string]int)
+			for i, col := range columns {
+				colMap[strings.ToLower(col.Name)] = i
+			}
+
+			for rowIdx, r := range rows {
+				if len(idx.Info.Columns) == 0 {
+					continue
+				}
+				colIdx, ok := colMap[strings.ToLower(idx.Info.Columns[0])]
+				if !ok || colIdx >= len(r.Values) {
+					continue
+				}
+				key := r.Values[colIdx]
+				if err := idx.Insert(key, row.RowID(rowIdx)); err != nil {
+					return err
+				}
+			}
+		}
+
+		// Rebuild primary key index
+		primary := indexMgr.GetPrimary()
+		if primary != nil && len(info.PrimaryKey) > 0 {
+			primary.Clear()
+			colMap := make(map[string]int)
+			for i, col := range columns {
+				colMap[strings.ToLower(col.Name)] = i
+			}
+
+			pkCol := info.PrimaryKey[0]
+			colIdx, ok := colMap[strings.ToLower(pkCol)]
+			if ok {
+				for rowIdx, r := range rows {
+					if colIdx < len(r.Values) {
+						key := r.Values[colIdx]
+						if err := primary.Insert(key, row.RowID(rowIdx)); err != nil {
+							return err
+						}
+					}
+				}
+			}
+		}
+	}
+
+	return nil
 }
 
 // executeCreateFunction executes a CREATE FUNCTION statement.

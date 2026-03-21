@@ -1889,6 +1889,30 @@ func (s *RestoreStmt) String() string {
 	return fmt.Sprintf("RESTORE DATABASE FROM '%s'", s.Path)
 }
 
+// VacuumStmt represents a VACUUM statement.
+// Syntax: VACUUM [table_name] [INTO 'filename']
+type VacuumStmt struct {
+	Table    string // optional table name, empty means vacuum entire database
+	IntoPath string // optional INTO path for vacuum into a different file
+}
+
+func (s *VacuumStmt) node()      {}
+func (s *VacuumStmt) statement() {}
+func (s *VacuumStmt) String() string {
+	var sb strings.Builder
+	sb.WriteString("VACUUM")
+	if s.Table != "" {
+		sb.WriteString(" ")
+		sb.WriteString(s.Table)
+	}
+	if s.IntoPath != "" {
+		sb.WriteString(" INTO '")
+		sb.WriteString(s.IntoPath)
+		sb.WriteString("'")
+	}
+	return sb.String()
+}
+
 // ============================================================================
 // UDF Expression Types
 // ============================================================================

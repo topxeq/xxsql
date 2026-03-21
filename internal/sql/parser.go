@@ -227,6 +227,8 @@ func (p *Parser) parseStatement() Statement {
 		return p.parseBackup()
 	case TokRestore:
 		return p.parseRestore()
+	case TokVacuum:
+		return p.parseVacuum()
 	case TokExplain:
 		return p.parseExplain()
 	case TokBegin:
@@ -3526,6 +3528,33 @@ func (p *Parser) parseRestore() *RestoreStmt {
 		Path: p.currTok.Value,
 	}
 	p.nextToken()
+
+	return stmt
+}
+
+// parseVacuum parses a VACUUM statement.
+// Syntax: VACUUM [table_name] [INTO 'filename']
+func (p *Parser) parseVacuum() *VacuumStmt {
+	p.nextToken() // consume VACUUM
+
+	stmt := &VacuumStmt{}
+
+	// Check for table name (identifier) or INTO
+	if p.curTokenIs(TokIdent) {
+		stmt.Table = p.currTok.Value
+		p.nextToken()
+	}
+
+	// Check for INTO clause
+	if p.curTokenIs(TokInto) {
+		p.nextToken()
+		if !p.curTokenIs(TokString) {
+			p.error("expected file path string after INTO")
+			return nil
+		}
+		stmt.IntoPath = p.currTok.Value
+		p.nextToken()
+	}
 
 	return stmt
 }
