@@ -136,6 +136,22 @@ func NewExecutor(engine *storage.Engine) *Executor {
 	var ftsMgr *fts.FTSManager
 	if engine != nil {
 		ftsMgr = fts.NewFTSManager(engine.GetDataDir())
+
+		// Load existing FTS indexes from catalog
+		catalog := engine.GetCatalog()
+		if catalog != nil {
+			for _, ftsInfo := range catalog.ListFTSIndexes() {
+				info, err := catalog.GetFTSIndex(ftsInfo)
+				if err != nil {
+					continue
+				}
+				// Create the FTS index in memory
+				ftsMgr.CreateIndex(info.Name, info.TableName, info.Columns, info.Tokenizer)
+			}
+		}
+
+		// Try to load persisted FTS data
+		ftsMgr.LoadAll()
 	}
 	return &Executor{
 		engine:        engine,
@@ -5010,6 +5026,34 @@ func (e *Executor) evaluateWhereForRow(expr sql.Expression, r *row.Row, columns 
 				return b, nil
 			}
 		}
+
+	case *sql.MatchExpr:
+		// For FTS matching, check if the row ID matches FTS results
+		if e.ftsManager == nil {
+			return false, nil
+		}
+
+		// Get FTS indexes for the table
+		ftsIndexes := e.engine.GetCatalog().GetFTSIndexesForTable(ex.Table)
+		if len(ftsIndexes) == 0 {
+			return false, nil
+		}
+
+		// Search using the first matching index
+		for _, ftsInfo := range ftsIndexes {
+			results, err := e.ftsManager.Search(ftsInfo.Name, ex.Query)
+			if err != nil {
+				continue
+			}
+			// Check if this row's ID is in the results
+			rowID := uint64(r.ID)
+			for _, result := range results {
+				if result.DocID == rowID {
+					return true, nil
+				}
+			}
+		}
+		return false, nil
 	}
 
 	return false, nil
@@ -5321,8 +5365,10 @@ func (e *Executor) executeDropIndex(stmt *sql.DropIndexStmt) (*Result, error) {
 
 // executeCreateFTS executes a CREATE FTS INDEX statement.
 func (e *Executor) executeCreateFTS(stmt *sql.CreateFTSStmt) (*Result, error) {
+	tableName := strings.ToLower(stmt.TableName)
+
 	// Check if table exists
-	if !e.engine.TableExists(stmt.TableName) {
+	if !e.engine.TableExists(tableName) {
 		return nil, fmt.Errorf("table '%s' does not exist", stmt.TableName)
 	}
 
@@ -5341,19 +5387,19 @@ func (e *Executor) executeCreateFTS(stmt *sql.CreateFTSStmt) (*Result, error) {
 	}
 
 	// Create FTS index in catalog
-	if err := e.engine.GetCatalog().CreateFTSIndex(stmt.IndexName, stmt.TableName, stmt.Columns, tokenizer); err != nil {
+	if err := e.engine.GetCatalog().CreateFTSIndex(stmt.IndexName, tableName, stmt.Columns, tokenizer); err != nil {
 		return nil, fmt.Errorf("create FTS index error: %w", err)
 	}
 
 	// Create the actual FTS index
 	if e.ftsManager != nil {
-		_, err := e.ftsManager.CreateIndex(stmt.IndexName, stmt.TableName, stmt.Columns, tokenizer)
+		idx, err := e.ftsManager.CreateIndex(stmt.IndexName, tableName, stmt.Columns, tokenizer)
 		if err != nil {
 			return nil, fmt.Errorf("create FTS index error: %w", err)
 		}
 
 		// Index existing data in the table
-		tbl, err := e.engine.GetTable(stmt.TableName)
+		tbl, err := e.engine.GetTable(tableName)
 		if err != nil {
 			return nil, err
 		}
@@ -5367,10 +5413,10 @@ func (e *Executor) executeCreateFTS(stmt *sql.CreateFTSStmt) (*Result, error) {
 			values := make(map[string]interface{})
 			for i, col := range tbl.Columns() {
 				if i < len(row.Values) {
-					values[col.Name] = row.Values[i]
+					values[strings.ToLower(col.Name)] = e.valueToInterface(row.Values[i])
 				}
 			}
-			if err := e.ftsManager.IndexDocument(stmt.TableName, uint64(row.ID), values); err != nil {
+			if err := idx.IndexDocument(uint64(row.ID), values); err != nil {
 				return nil, err
 			}
 		}
