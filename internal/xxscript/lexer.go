@@ -26,6 +26,9 @@ const (
 	TokReturn   // return
 	TokBreak    // break
 	TokContinue // continue
+	TokTry      // try
+	TokCatch    // catch
+	TokThrow    // throw
 
 	// Operators
 	TokPlus     // +
@@ -102,6 +105,12 @@ func (t TokenType) String() string {
 		return "BREAK"
 	case TokContinue:
 		return "CONTINUE"
+	case TokTry:
+		return "TRY"
+	case TokCatch:
+		return "CATCH"
+	case TokThrow:
+		return "THROW"
 	case TokPlus:
 		return "+"
 	case TokMinus:
@@ -408,6 +417,12 @@ func (l *Lexer) readIdent() Token {
 		return Token{Type: TokBreak, Value: value, Line: l.line, Col: l.col}
 	case "continue":
 		return Token{Type: TokContinue, Value: value, Line: l.line, Col: l.col}
+	case "try":
+		return Token{Type: TokTry, Value: value, Line: l.line, Col: l.col}
+	case "catch":
+		return Token{Type: TokCatch, Value: value, Line: l.line, Col: l.col}
+	case "throw":
+		return Token{Type: TokThrow, Value: value, Line: l.line, Col: l.col}
 	case "true", "false":
 		return Token{Type: TokBool, Value: value, Line: l.line, Col: l.col}
 	case "null":

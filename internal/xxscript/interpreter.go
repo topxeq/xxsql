@@ -3,7 +3,9 @@ package xxscript
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"reflect"
 	"strings"
@@ -16,18 +18,27 @@ import (
 // Value represents a runtime value.
 type Value interface{}
 
+// ThrowError represents an error thrown by the throw statement.
+type ThrowError struct {
+	Value Value
+}
+
+func (e *ThrowError) Error() string {
+	return fmt.Sprintf("%v", e.Value)
+}
+
 // Context provides the execution context.
 type Context struct {
-	Variables  map[string]Value
-	Functions  map[string]*UserFunc
-	Executor   *executor.Executor
-	Engine     *storage.Engine
-	HTTPWriter http.ResponseWriter
+	Variables   map[string]Value
+	Functions   map[string]*UserFunc
+	Executor    *executor.Executor
+	Engine      *storage.Engine
+	HTTPWriter  http.ResponseWriter
 	HTTPRequest *http.Request
-	MaxSteps   int
-	steps      int
-	returning  bool
-	breaking   bool
+	MaxSteps    int
+	steps       int
+	returning   bool
+	breaking    bool
 	continueing bool
 	returnValue Value
 }
@@ -121,6 +132,10 @@ func (i *Interpreter) executeStmt(stmt Statement) (Value, error) {
 	case *ContinueStmt:
 		i.ctx.continueing = true
 		return nil, nil
+	case *TryStmt:
+		return i.executeTryStmt(s)
+	case *ThrowStmt:
+		return i.executeThrowStmt(s)
 	default:
 		return nil, fmt.Errorf("unknown statement type: %T", stmt)
 	}
@@ -283,6 +298,46 @@ func (i *Interpreter) executeReturnStmt(stmt *ReturnStmt) (Value, error) {
 	i.ctx.returnValue = val
 	i.ctx.returning = true
 	return val, nil
+}
+
+func (i *Interpreter) executeTryStmt(stmt *TryStmt) (Value, error) {
+	// Execute try block
+	result, err := i.executeBlockStmt(stmt.TryBlock)
+	if err != nil {
+		// Check if it's a thrown error
+		var throwErr *ThrowError
+		if errors.As(err, &throwErr) {
+			// We have a catch block
+			if stmt.CatchBlock != nil {
+				// Set the catch variable
+				if stmt.CatchVar != "" {
+					i.ctx.Variables[stmt.CatchVar] = throwErr.Value
+				}
+				// Execute catch block
+				catchResult, catchErr := i.executeBlockStmt(stmt.CatchBlock)
+				if catchErr != nil {
+					return nil, catchErr
+				}
+				return catchResult, nil
+			}
+		}
+		// No catch block or not a thrown error - propagate
+		return nil, err
+	}
+
+	return result, nil
+}
+
+func (i *Interpreter) executeThrowStmt(stmt *ThrowStmt) (Value, error) {
+	var errValue Value
+	if stmt.Error != nil {
+		val, err := i.evaluate(stmt.Error)
+		if err != nil {
+			return nil, err
+		}
+		errValue = val
+	}
+	return nil, &ThrowError{Value: errValue}
 }
 
 func (i *Interpreter) evaluate(expr Expression) (Value, error) {
@@ -972,8 +1027,14 @@ func (i *Interpreter) callBuiltin(name string, args []Value) (Value, bool) {
 		return i.builtinSprintf(args), true
 	case "json":
 		return i.builtinJSON(args), true
+	case "jsonParse":
+		return i.builtinJSONParse(args), true
 	case "now":
 		return i.builtinNow(args), true
+	case "formatTime":
+		return i.builtinFormatTime(args), true
+	case "parseTime":
+		return i.builtinParseTime(args), true
 	case "int":
 		return i.builtinInt(args), true
 	case "float":
@@ -988,6 +1049,57 @@ func (i *Interpreter) callBuiltin(name string, args []Value) (Value, bool) {
 		return i.builtinValues(args), true
 	case "range":
 		return i.builtinRange(args), true
+	// String manipulation
+	case "split":
+		return i.builtinSplit(args), true
+	case "join":
+		return i.builtinJoin(args), true
+	case "replace":
+		return i.builtinReplace(args), true
+	case "trim":
+		return i.builtinTrim(args), true
+	case "trimPrefix":
+		return i.builtinTrimPrefix(args), true
+	case "trimSuffix":
+		return i.builtinTrimSuffix(args), true
+	case "upper":
+		return i.builtinUpper(args), true
+	case "lower":
+		return i.builtinLower(args), true
+	case "hasPrefix":
+		return i.builtinHasPrefix(args), true
+	case "hasSuffix":
+		return i.builtinHasSuffix(args), true
+	case "contains":
+		return i.builtinContains(args), true
+	case "indexOf":
+		return i.builtinIndexOf(args), true
+	case "substr":
+		return i.builtinSubstr(args), true
+	// Array functions
+	case "push":
+		return i.builtinPush(args), true
+	case "pop":
+		return i.builtinPop(args), true
+	case "slice":
+		return i.builtinSlice(args), true
+	// Math functions
+	case "abs":
+		return i.builtinAbs(args), true
+	case "min":
+		return i.builtinMin(args), true
+	case "max":
+		return i.builtinMax(args), true
+	case "floor":
+		return i.builtinFloor(args), true
+	case "ceil":
+		return i.builtinCeil(args), true
+	case "round":
+		return i.builtinRound(args), true
+	case "sqrt":
+		return i.builtinSqrt(args), true
+	case "pow":
+		return i.builtinPow(args), true
 	default:
 		return nil, false
 	}
@@ -1174,6 +1286,481 @@ func (i *Interpreter) builtinRange(args []Value) Value {
 }
 
 // ============================================================================
+// Additional Built-in Functions
+// ============================================================================
+
+func (i *Interpreter) builtinJSONParse(args []Value) Value {
+	if len(args) == 0 {
+		return nil
+	}
+	s, ok := args[0].(string)
+	if !ok {
+		return nil
+	}
+	var result interface{}
+	if err := json.Unmarshal([]byte(s), &result); err != nil {
+		return nil
+	}
+	return convertJSONToValue(result)
+}
+
+func convertJSONToValue(v interface{}) Value {
+	switch val := v.(type) {
+	case nil:
+		return nil
+	case bool:
+		return val
+	case float64:
+		return val
+	case string:
+		return val
+	case []interface{}:
+		arr := make([]Value, len(val))
+		for i, item := range val {
+			arr[i] = convertJSONToValue(item)
+		}
+		return arr
+	case map[string]interface{}:
+		m := make(map[string]Value)
+		for k, v := range val {
+			m[k] = convertJSONToValue(v)
+		}
+		return m
+	default:
+		return nil
+	}
+}
+
+func (i *Interpreter) builtinFormatTime(args []Value) Value {
+	if len(args) < 2 {
+		return ""
+	}
+	timestamp, ok := args[0].(float64)
+	if !ok {
+		timestamp = float64(i.toInt(args[0]))
+	}
+	format, ok := args[1].(string)
+	if !ok {
+		return ""
+	}
+	t := time.Unix(int64(timestamp), 0)
+	return t.Format(format)
+}
+
+func (i *Interpreter) builtinParseTime(args []Value) Value {
+	if len(args) < 2 {
+		return 0
+	}
+	timeStr, ok := args[0].(string)
+	if !ok {
+		return 0
+	}
+	format, ok := args[1].(string)
+	if !ok {
+		return 0
+	}
+	t, err := time.Parse(format, timeStr)
+	if err != nil {
+		return 0
+	}
+	return t.Unix()
+}
+
+// String manipulation functions
+
+func (i *Interpreter) builtinSplit(args []Value) Value {
+	if len(args) < 2 {
+		return []Value{}
+	}
+	s, ok := args[0].(string)
+	if !ok {
+		return []Value{}
+	}
+	sep, ok := args[1].(string)
+	if !ok {
+		return []Value{}
+	}
+	parts := strings.Split(s, sep)
+	result := make([]Value, len(parts))
+	for i, p := range parts {
+		result[i] = p
+	}
+	return result
+}
+
+func (i *Interpreter) builtinJoin(args []Value) Value {
+	if len(args) < 2 {
+		return ""
+	}
+	arr, ok := args[0].([]Value)
+	if !ok {
+		return ""
+	}
+	sep, ok := args[1].(string)
+	if !ok {
+		return ""
+	}
+	strs := make([]string, len(arr))
+	for i, v := range arr {
+		strs[i] = fmt.Sprintf("%v", v)
+	}
+	return strings.Join(strs, sep)
+}
+
+func (i *Interpreter) builtinReplace(args []Value) Value {
+	if len(args) < 3 {
+		return ""
+	}
+	s, ok := args[0].(string)
+	if !ok {
+		return ""
+	}
+	old, ok := args[1].(string)
+	if !ok {
+		return ""
+	}
+	newStr, ok := args[2].(string)
+	if !ok {
+		return ""
+	}
+	n := -1
+	if len(args) > 3 {
+		n = i.toInt(args[3])
+	}
+	return strings.Replace(s, old, newStr, n)
+}
+
+func (i *Interpreter) builtinTrim(args []Value) Value {
+	if len(args) == 0 {
+		return ""
+	}
+	s, ok := args[0].(string)
+	if !ok {
+		return ""
+	}
+	cutset := " \t\n\r"
+	if len(args) > 1 {
+		cutset, _ = args[1].(string)
+	}
+	return strings.Trim(s, cutset)
+}
+
+func (i *Interpreter) builtinTrimPrefix(args []Value) Value {
+	if len(args) < 2 {
+		return ""
+	}
+	s, ok := args[0].(string)
+	if !ok {
+		return ""
+	}
+	prefix, ok := args[1].(string)
+	if !ok {
+		return ""
+	}
+	return strings.TrimPrefix(s, prefix)
+}
+
+func (i *Interpreter) builtinTrimSuffix(args []Value) Value {
+	if len(args) < 2 {
+		return ""
+	}
+	s, ok := args[0].(string)
+	if !ok {
+		return ""
+	}
+	suffix, ok := args[1].(string)
+	if !ok {
+		return ""
+	}
+	return strings.TrimSuffix(s, suffix)
+}
+
+func (i *Interpreter) builtinUpper(args []Value) Value {
+	if len(args) == 0 {
+		return ""
+	}
+	s, ok := args[0].(string)
+	if !ok {
+		return ""
+	}
+	return strings.ToUpper(s)
+}
+
+func (i *Interpreter) builtinLower(args []Value) Value {
+	if len(args) == 0 {
+		return ""
+	}
+	s, ok := args[0].(string)
+	if !ok {
+		return ""
+	}
+	return strings.ToLower(s)
+}
+
+func (i *Interpreter) builtinHasPrefix(args []Value) Value {
+	if len(args) < 2 {
+		return false
+	}
+	s, ok := args[0].(string)
+	if !ok {
+		return false
+	}
+	prefix, ok := args[1].(string)
+	if !ok {
+		return false
+	}
+	return strings.HasPrefix(s, prefix)
+}
+
+func (i *Interpreter) builtinHasSuffix(args []Value) Value {
+	if len(args) < 2 {
+		return false
+	}
+	s, ok := args[0].(string)
+	if !ok {
+		return false
+	}
+	suffix, ok := args[1].(string)
+	if !ok {
+		return false
+	}
+	return strings.HasSuffix(s, suffix)
+}
+
+func (i *Interpreter) builtinContains(args []Value) Value {
+	if len(args) < 2 {
+		return false
+	}
+	s, ok := args[0].(string)
+	if !ok {
+		return false
+	}
+	substr, ok := args[1].(string)
+	if !ok {
+		return false
+	}
+	return strings.Contains(s, substr)
+}
+
+func (i *Interpreter) builtinIndexOf(args []Value) Value {
+	if len(args) < 2 {
+		return -1
+	}
+	s, ok := args[0].(string)
+	if !ok {
+		return -1
+	}
+	substr, ok := args[1].(string)
+	if !ok {
+		return -1
+	}
+	return strings.Index(s, substr)
+}
+
+func (i *Interpreter) builtinSubstr(args []Value) Value {
+	if len(args) < 2 {
+		return ""
+	}
+	s, ok := args[0].(string)
+	if !ok {
+		return ""
+	}
+	start := i.toInt(args[1])
+	if start < 0 {
+		start = 0
+	}
+	if start >= len(s) {
+		return ""
+	}
+	if len(args) > 2 {
+		length := i.toInt(args[2])
+		end := start + length
+		if end > len(s) {
+			end = len(s)
+		}
+		return s[start:end]
+	}
+	return s[start:]
+}
+
+// Array functions
+
+func (i *Interpreter) builtinPush(args []Value) Value {
+	if len(args) < 2 {
+		return args[0]
+	}
+	arr, ok := args[0].([]Value)
+	if !ok {
+		return []Value{args[1]}
+	}
+	return append(arr, args[1])
+}
+
+func (i *Interpreter) builtinPop(args []Value) Value {
+	if len(args) == 0 {
+		return nil
+	}
+	arr, ok := args[0].([]Value)
+	if !ok || len(arr) == 0 {
+		return nil
+	}
+	return arr[len(arr)-1]
+}
+
+func (i *Interpreter) builtinSlice(args []Value) Value {
+	if len(args) < 2 {
+		return []Value{}
+	}
+	arr, ok := args[0].([]Value)
+	if !ok {
+		return []Value{}
+	}
+	start := i.toInt(args[1])
+	if start < 0 {
+		start = 0
+	}
+	if start >= len(arr) {
+		return []Value{}
+	}
+	if len(args) > 2 {
+		end := i.toInt(args[2])
+		if end > len(arr) {
+			end = len(arr)
+		}
+		return arr[start:end]
+	}
+	return arr[start:]
+}
+
+// Math functions
+
+func (i *Interpreter) builtinAbs(args []Value) Value {
+	if len(args) == 0 {
+		return 0
+	}
+	switch v := args[0].(type) {
+	case int:
+		if v < 0 {
+			return -v
+		}
+		return v
+	case int64:
+		if v < 0 {
+			return -v
+		}
+		return v
+	case float64:
+		if v < 0 {
+			return -v
+		}
+		return v
+	default:
+		return 0
+	}
+}
+
+func (i *Interpreter) builtinMin(args []Value) Value {
+	if len(args) == 0 {
+		return 0
+	}
+	minVal := i.toFloat(args[0])
+	for _, v := range args[1:] {
+		f := i.toFloat(v)
+		if f < minVal {
+			minVal = f
+		}
+	}
+	return minVal
+}
+
+func (i *Interpreter) builtinMax(args []Value) Value {
+	if len(args) == 0 {
+		return 0
+	}
+	maxVal := i.toFloat(args[0])
+	for _, v := range args[1:] {
+		f := i.toFloat(v)
+		if f > maxVal {
+			maxVal = f
+		}
+	}
+	return maxVal
+}
+
+func (i *Interpreter) toFloat(v Value) float64 {
+	switch val := v.(type) {
+	case int:
+		return float64(val)
+	case int64:
+		return float64(val)
+	case float64:
+		return val
+	default:
+		return 0
+	}
+}
+
+func (i *Interpreter) builtinFloor(args []Value) Value {
+	if len(args) == 0 {
+		return 0
+	}
+	f := i.toFloat(args[0])
+	return int(f)
+}
+
+func (i *Interpreter) builtinCeil(args []Value) Value {
+	if len(args) == 0 {
+		return 0
+	}
+	f := i.toFloat(args[0])
+	return int(f) + 1
+}
+
+func (i *Interpreter) builtinRound(args []Value) Value {
+	if len(args) == 0 {
+		return 0
+	}
+	f := i.toFloat(args[0])
+	return int(f + 0.5)
+}
+
+func (i *Interpreter) builtinSqrt(args []Value) Value {
+	if len(args) == 0 {
+		return 0
+	}
+	f := i.toFloat(args[0])
+	if f < 0 {
+		return 0
+	}
+	// Simple square root using Newton's method
+	if f == 0 {
+		return 0.0
+	}
+	x := f
+	for i := 0; i < 20; i++ {
+		x = 0.5 * (x + f/x)
+	}
+	return x
+}
+
+func (i *Interpreter) builtinPow(args []Value) Value {
+	if len(args) < 2 {
+		return 0
+	}
+	base := i.toFloat(args[0])
+	exp := i.toFloat(args[1])
+	result := 1.0
+	for exp > 0 {
+		if int(exp)%2 == 1 {
+			result *= base
+		}
+		base *= base
+		exp = float64(int(exp) / 2)
+	}
+	return result
+}
+
+// ============================================================================
 // HTTP Object
 // ============================================================================
 
@@ -1211,6 +1798,8 @@ func (h *HTTPObject) GetMember(name string) (Value, error) {
 		return h.ctx.HTTPRequest.URL.RawQuery, nil
 	case "body":
 		return &HTTPBodyFunc{ctx: h.ctx}, nil
+	case "bodyJSON":
+		return &HTTPBodyJSONFunc{ctx: h.ctx}, nil
 	case "json":
 		return &HTTPJSONFunc{ctx: h.ctx}, nil
 	case "status":
@@ -1221,6 +1810,25 @@ func (h *HTTPObject) GetMember(name string) (Value, error) {
 		return &HTTPWriteFunc{ctx: h.ctx}, nil
 	case "redirect":
 		return &HTTPRedirectFunc{ctx: h.ctx}, nil
+	case "cookie":
+		return &HTTPCookieFunc{ctx: h.ctx}, nil
+	case "setCookie":
+		return &HTTPSetCookieFunc{ctx: h.ctx}, nil
+	case "remoteAddr":
+		if h.ctx.HTTPRequest == nil {
+			return "", nil
+		}
+		return h.ctx.HTTPRequest.RemoteAddr, nil
+	case "contentType":
+		if h.ctx.HTTPRequest == nil {
+			return "", nil
+		}
+		return h.ctx.HTTPRequest.Header.Get("Content-Type"), nil
+	case "userAgent":
+		if h.ctx.HTTPRequest == nil {
+			return "", nil
+		}
+		return h.ctx.HTTPRequest.UserAgent(), nil
 	default:
 		return nil, fmt.Errorf("unknown http method: %s", name)
 	}
@@ -1270,13 +1878,32 @@ func (f *HTTPBodyFunc) Call(args []Value) (Value, error) {
 	if f.ctx.HTTPRequest == nil {
 		return "", nil
 	}
-	body, err := f.ctx.HTTPRequest.GetBody()
+	data, err := io.ReadAll(f.ctx.HTTPRequest.Body)
 	if err != nil {
 		return "", nil
 	}
-	data := make([]byte, 0)
-	body.Read(data)
 	return string(data), nil
+}
+
+// HTTPBodyJSONFunc parses the request body as JSON.
+type HTTPBodyJSONFunc struct {
+	ctx *Context
+}
+
+// Call implements Callable.
+func (f *HTTPBodyJSONFunc) Call(args []Value) (Value, error) {
+	if f.ctx.HTTPRequest == nil {
+		return nil, nil
+	}
+	data, err := io.ReadAll(f.ctx.HTTPRequest.Body)
+	if err != nil {
+		return nil, nil
+	}
+	var result interface{}
+	if err := json.Unmarshal(data, &result); err != nil {
+		return nil, fmt.Errorf("invalid JSON: %v", err)
+	}
+	return convertJSONToValue(result), nil
 }
 
 // HTTPJSONFunc writes JSON response.
@@ -1373,6 +2000,79 @@ func (f *HTTPRedirectFunc) Call(args []Value) (Value, error) {
 		code = int(iToInt(args[1]))
 	}
 	http.Redirect(f.ctx.HTTPWriter, f.ctx.HTTPRequest, url, code)
+	return nil, nil
+}
+
+// HTTPCookieFunc gets a cookie value.
+type HTTPCookieFunc struct {
+	ctx *Context
+}
+
+// Call implements Callable.
+func (f *HTTPCookieFunc) Call(args []Value) (Value, error) {
+	if len(args) == 0 || f.ctx.HTTPRequest == nil {
+		return "", nil
+	}
+	name, ok := args[0].(string)
+	if !ok {
+		return "", nil
+	}
+	cookie, err := f.ctx.HTTPRequest.Cookie(name)
+	if err != nil {
+		return "", nil
+	}
+	return cookie.Value, nil
+}
+
+// HTTPSetCookieFunc sets a cookie.
+type HTTPSetCookieFunc struct {
+	ctx *Context
+}
+
+// Call implements Callable.
+func (f *HTTPSetCookieFunc) Call(args []Value) (Value, error) {
+	if len(args) < 2 || f.ctx.HTTPWriter == nil {
+		return nil, nil
+	}
+	name, ok1 := args[0].(string)
+	value, ok2 := args[1].(string)
+	if !ok1 || !ok2 {
+		return nil, nil
+	}
+
+	cookie := &http.Cookie{
+		Name:  name,
+		Value: value,
+		Path:  "/",
+	}
+
+	// Optional: max age
+	if len(args) > 2 {
+		cookie.MaxAge = int(iToInt(args[2]))
+	}
+
+	// Optional: domain
+	if len(args) > 3 {
+		if domain, ok := args[3].(string); ok {
+			cookie.Domain = domain
+		}
+	}
+
+	// Optional: secure
+	if len(args) > 4 {
+		if secure, ok := args[4].(bool); ok {
+			cookie.Secure = secure
+		}
+	}
+
+	// Optional: httpOnly
+	if len(args) > 5 {
+		if httpOnly, ok := args[5].(bool); ok {
+			cookie.HttpOnly = httpOnly
+		}
+	}
+
+	http.SetCookie(f.ctx.HTTPWriter, cookie)
 	return nil, nil
 }
 

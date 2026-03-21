@@ -271,6 +271,276 @@ count
 	}
 }
 
+func TestTryCatch(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		expected Value
+	}{
+		{
+			name: "catch thrown error",
+			input: `
+var result = "none"
+try {
+	throw "error occurred"
+} catch (e) {
+	result = e
+}
+result
+`,
+			expected: "error occurred",
+		},
+		{
+			name: "no error in try",
+			input: `
+var result = "success"
+try {
+	result = "completed"
+} catch (e) {
+	result = "caught"
+}
+result
+`,
+			expected: "completed",
+		},
+		{
+			name: "nested try catch",
+			input: `
+var result = ""
+try {
+	try {
+		throw "inner"
+	} catch (e) {
+		result = e
+	}
+} catch (e) {
+	result = "outer"
+}
+result
+`,
+			expected: "inner",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result, err := Run(tt.input, nil)
+			if err != nil {
+				t.Errorf("Run error: %v", err)
+				return
+			}
+			if !compareValues(result, tt.expected) {
+				t.Errorf("Expected %v, got %v", tt.expected, result)
+			}
+		})
+	}
+}
+
+func TestStringFunctions(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		expected Value
+	}{
+		{
+			name:     "split",
+			input:    `split("a,b,c", ",")`,
+			expected: []Value{"a", "b", "c"},
+		},
+		{
+			name:     "join",
+			input:    `join([1, 2, 3], "-")`,
+			expected: "1-2-3",
+		},
+		{
+			name:     "replace",
+			input:    `replace("hello world", "world", "XxSql")`,
+			expected: "hello XxSql",
+		},
+		{
+			name:     "trim",
+			input:    `trim("  hello  ")`,
+			expected: "hello",
+		},
+		{
+			name:     "upper",
+			input:    `upper("hello")`,
+			expected: "HELLO",
+		},
+		{
+			name:     "lower",
+			input:    `lower("HELLO")`,
+			expected: "hello",
+		},
+		{
+			name:     "hasPrefix",
+			input:    `hasPrefix("hello world", "hello")`,
+			expected: true,
+		},
+		{
+			name:     "hasSuffix",
+			input:    `hasSuffix("hello world", "world")`,
+			expected: true,
+		},
+		{
+			name:     "contains",
+			input:    `contains("hello world", "world")`,
+			expected: true,
+		},
+		{
+			name:     "indexOf",
+			input:    `indexOf("hello world", "world")`,
+			expected: 6,
+		},
+		{
+			name:     "substr",
+			input:    `substr("hello world", 0, 5)`,
+			expected: "hello",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result, err := Run(tt.input, nil)
+			if err != nil {
+				t.Errorf("Run error: %v", err)
+				return
+			}
+			if !compareValues(result, tt.expected) {
+				t.Errorf("Expected %v, got %v", tt.expected, result)
+			}
+		})
+	}
+}
+
+func TestMathFunctions(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		expected Value
+	}{
+		{
+			name:     "abs positive",
+			input:    `abs(-5)`,
+			expected: 5,
+		},
+		{
+			name:     "min",
+			input:    `min(3, 1, 2)`,
+			expected: 1.0,
+		},
+		{
+			name:     "max",
+			input:    `max(3, 1, 2)`,
+			expected: 3.0,
+		},
+		{
+			name:     "floor",
+			input:    `floor(3.7)`,
+			expected: 3,
+		},
+		{
+			name:     "ceil",
+			input:    `ceil(3.2)`,
+			expected: 4,
+		},
+		{
+			name:     "round",
+			input:    `round(3.5)`,
+			expected: 4,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result, err := Run(tt.input, nil)
+			if err != nil {
+				t.Errorf("Run error: %v", err)
+				return
+			}
+			if !compareValues(result, tt.expected) {
+				t.Errorf("Expected %v, got %v", tt.expected, result)
+			}
+		})
+	}
+}
+
+func TestArrayFunctions(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		expected Value
+	}{
+		{
+			name:     "push",
+			input:    `len(push([1, 2], 3))`,
+			expected: 3,
+		},
+		{
+			name:     "pop",
+			input:    `pop([1, 2, 3])`,
+			expected: 3,
+		},
+		{
+			name:     "slice",
+			input:    `slice([1, 2, 3, 4], 1, 3)`,
+			expected: []Value{2.0, 3.0},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result, err := Run(tt.input, nil)
+			if err != nil {
+				t.Errorf("Run error: %v", err)
+				return
+			}
+			if !compareValues(result, tt.expected) {
+				t.Errorf("Expected %v, got %v", tt.expected, result)
+			}
+		})
+	}
+}
+
+func TestJSONParse(t *testing.T) {
+	input := `jsonParse("{\"name\": \"test\", \"value\": 42}")`
+	result, err := Run(input, nil)
+	if err != nil {
+		t.Fatalf("Run error: %v", err)
+	}
+
+	obj, ok := result.(map[string]Value)
+	if !ok {
+		t.Fatalf("Expected map, got %T", result)
+	}
+
+	if obj["name"] != "test" {
+		t.Errorf("Expected name 'test', got %v", obj["name"])
+	}
+	if obj["value"] != 42.0 {
+		t.Errorf("Expected value 42, got %v", obj["value"])
+	}
+}
+
+func TestTimeFunctions(t *testing.T) {
+	// Test formatTime
+	input := `formatTime(0, "2006-01-02")`
+	result, err := Run(input, nil)
+	if err != nil {
+		t.Fatalf("Run error: %v", err)
+	}
+
+	str, ok := result.(string)
+	if !ok {
+		t.Fatalf("Expected string, got %T", result)
+	}
+
+	// Unix timestamp 0 = 1970-01-01
+	if len(str) != 10 {
+		t.Errorf("Expected 10 char date, got %q", str)
+	}
+}
+
 func compareValues(a, b Value) bool {
 	// Handle nil
 	if a == nil && b == nil {

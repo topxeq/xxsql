@@ -271,6 +271,30 @@ func (s *ContinueStmt) node()       {}
 func (s *ContinueStmt) stmtNode()   {}
 func (s *ContinueStmt) String() string { return "continue" }
 
+// TryStmt represents a try-catch statement.
+type TryStmt struct {
+	TryBlock  *BlockStmt
+	CatchVar  string // variable name for caught error
+	CatchBlock *BlockStmt
+}
+
+func (s *TryStmt) node()       {}
+func (s *TryStmt) stmtNode()   {}
+func (s *TryStmt) String() string {
+	return fmt.Sprintf("try %s catch (%s) %s", s.TryBlock, s.CatchVar, s.CatchBlock)
+}
+
+// ThrowStmt represents a throw statement.
+type ThrowStmt struct {
+	Error Expression
+}
+
+func (s *ThrowStmt) node()       {}
+func (s *ThrowStmt) stmtNode()   {}
+func (s *ThrowStmt) String() string {
+	return fmt.Sprintf("throw %s", s.Error)
+}
+
 // FuncStmt represents a function declaration.
 type FuncStmt struct {
 	Name   string
@@ -355,6 +379,10 @@ func (p *Parser) parseStatement() Statement {
 	case TokContinue:
 		p.advance()
 		return &ContinueStmt{}
+	case TokTry:
+		return p.parseTryStmt()
+	case TokThrow:
+		return p.parseThrowStmt()
 	case TokLBrace:
 		// Peek ahead to determine if this is a block or map literal
 		if p.isMapLiteral() {
@@ -492,6 +520,48 @@ func (p *Parser) parseReturnStmt() *ReturnStmt {
 	}
 
 	return &ReturnStmt{Value: value}
+}
+
+func (p *Parser) parseTryStmt() *TryStmt {
+	p.advance() // consume 'try'
+
+	tryBlock := p.parseBlockStmt()
+
+	var catchVar string
+	var catchBlock *BlockStmt
+
+	if p.current().Type == TokCatch {
+		p.advance() // consume 'catch'
+
+		// Optional catch variable: catch (e) { ... }
+		if p.current().Type == TokLParen {
+			p.advance()
+			if p.current().Type == TokIdent {
+				catchVar = p.current().Value
+				p.advance()
+			}
+			p.expect(TokRParen)
+		}
+
+		catchBlock = p.parseBlockStmt()
+	}
+
+	return &TryStmt{
+		TryBlock:   tryBlock,
+		CatchVar:   catchVar,
+		CatchBlock: catchBlock,
+	}
+}
+
+func (p *Parser) parseThrowStmt() *ThrowStmt {
+	p.advance() // consume 'throw'
+
+	var errExpr Expression
+	if p.current().Type != TokSemicolon && p.current().Type != TokRBrace && p.current().Type != TokEOF {
+		errExpr = p.parseExpression()
+	}
+
+	return &ThrowStmt{Error: errExpr}
 }
 
 func (p *Parser) parseBlockStmt() *BlockStmt {
