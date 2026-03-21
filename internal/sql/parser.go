@@ -1166,8 +1166,10 @@ func (p *Parser) parseCreate() Statement {
 		return p.parseCreateFunction()
 	case TokTrigger:
 		return p.parseCreateTrigger()
+	case TokFts:
+		return p.parseCreateFTS()
 	default:
-		p.error("expected TABLE, INDEX, VIEW, USER, FUNCTION or TRIGGER after CREATE")
+		p.error("expected TABLE, INDEX, FTS, VIEW, USER, FUNCTION or TRIGGER after CREATE")
 		return nil
 	}
 }
@@ -1519,6 +1521,77 @@ func (p *Parser) parseCreateIndex() *CreateIndexStmt {
 	return stmt
 }
 
+// parseCreateFTS parses a CREATE FTS INDEX statement.
+// Syntax: CREATE FTS INDEX [IF NOT EXISTS] name ON table(column1, column2, ...) [WITH TOKENIZER tokenizer]
+func (p *Parser) parseCreateFTS() *CreateFTSStmt {
+	p.nextToken() // consume FTS
+
+	// Expect INDEX
+	if !p.expect(TokIndex) {
+		return nil
+	}
+
+	stmt := &CreateFTSStmt{}
+
+	// IF NOT EXISTS
+	if p.curTokenIs(TokIf) {
+		p.nextToken()
+		if !p.expect(TokNot) {
+			return nil
+		}
+		if !p.expect(TokExists) {
+			return nil
+		}
+		stmt.IfNotExists = true
+	}
+
+	// Index name
+	if !p.isIdentOrKeyword() {
+		p.error("expected FTS index name")
+		return nil
+	}
+	stmt.IndexName = p.currTok.Value
+	p.nextToken()
+
+	// ON
+	if !p.expect(TokOn) {
+		return nil
+	}
+
+	// Table name
+	if !p.isIdentOrKeyword() {
+		p.error("expected table name")
+		return nil
+	}
+	stmt.TableName = p.currTok.Value
+	p.nextToken()
+
+	// Columns
+	if !p.expect(TokLParen) {
+		return nil
+	}
+	stmt.Columns = p.parseIdentifierList()
+	if !p.expect(TokRParen) {
+		return nil
+	}
+
+	// Optional WITH TOKENIZER clause
+	if p.curTokenIs(TokWith) {
+		p.nextToken()
+		if !p.expect(TokTokenizer) {
+			return nil
+		}
+		if !p.isIdentOrKeyword() {
+			p.error("expected tokenizer name")
+			return nil
+		}
+		stmt.Tokenizer = strings.ToLower(p.currTok.Value)
+		p.nextToken()
+	}
+
+	return stmt
+}
+
 // parseCreateView parses a CREATE VIEW or CREATE OR REPLACE VIEW statement.
 func (p *Parser) parseCreateView(orReplace bool) *CreateViewStmt {
 	p.nextToken() // consume VIEW
@@ -1577,8 +1650,10 @@ func (p *Parser) parseDrop() Statement {
 		return p.parseDropFunction()
 	case TokTrigger:
 		return p.parseDropTrigger()
+	case TokFts:
+		return p.parseDropFTS()
 	default:
-		p.error("expected TABLE, INDEX, VIEW, USER, FUNCTION or TRIGGER after DROP")
+		p.error("expected TABLE, INDEX, FTS, VIEW, USER, FUNCTION or TRIGGER after DROP")
 		return nil
 	}
 }
@@ -2414,6 +2489,37 @@ func (p *Parser) parseBinaryExpr(minPrec int) Expression {
 			continue
 		}
 
+		// Special handling for MATCH (full-text search)
+		if p.curTokenIs(TokMatch) {
+			p.nextToken() // consume MATCH
+
+			// Expect string literal for the query
+			if !p.curTokenIs(TokString) {
+				p.error("expected string after MATCH")
+				return nil
+			}
+			query := p.currTok.Value
+			p.nextToken()
+
+			// Determine the table name from the left expression
+			tableName := ""
+			if colRef, ok := left.(*ColumnRef); ok {
+				if colRef.Table != "" {
+					tableName = colRef.Table
+				} else {
+					tableName = colRef.Name
+				}
+			} else if star, ok := left.(*StarExpr); ok {
+				tableName = star.Table
+			}
+
+			left = &MatchExpr{
+				Table: tableName,
+				Query: query,
+			}
+			continue
+		}
+
 		// Check if current token is a binary operator
 		if !p.isBinaryOpToken() {
 			break
@@ -2557,6 +2663,9 @@ func (p *Parser) parsePrimaryExpr() Expression {
 		}
 		// Otherwise it's an identifier
 		return &ColumnRef{Name: name}
+	// FTS RANK expression
+	case TokRank:
+		return p.parseRankExpr()
 	default:
 		p.error("unexpected token in expression: %s", p.currTok.Type)
 		return nil
@@ -3815,6 +3924,38 @@ func (p *Parser) parseDropTrigger() *DropTriggerStmt {
 	return stmt
 }
 
+// parseDropFTS parses a DROP FTS INDEX statement.
+// Syntax: DROP FTS INDEX [IF EXISTS] name
+func (p *Parser) parseDropFTS() *DropFTSStmt {
+	p.nextToken() // consume FTS
+
+	// Expect INDEX
+	if !p.expect(TokIndex) {
+		return nil
+	}
+
+	stmt := &DropFTSStmt{}
+
+	// IF EXISTS
+	if p.curTokenIs(TokIf) {
+		p.nextToken()
+		if !p.expect(TokExists) {
+			return nil
+		}
+		stmt.IfExists = true
+	}
+
+	// Index name
+	if !p.isIdentOrKeyword() {
+		p.error("expected FTS index name")
+		return nil
+	}
+	stmt.IndexName = p.currTok.Value
+	p.nextToken()
+
+	return stmt
+}
+
 // ============================================================================
 // UDF Expression Parsing
 // ============================================================================
@@ -3918,6 +4059,28 @@ func (p *Parser) parseBlockExpr() *BlockExpr {
 
 	if !p.expect(TokEnd) {
 		return nil
+	}
+
+	return expr
+}
+
+// parseRankExpr parses a RANK expression for FTS.
+// Syntax: RANK or RANK(index_name)
+func (p *Parser) parseRankExpr() *RankExpr {
+	p.nextToken() // consume RANK
+
+	expr := &RankExpr{}
+
+	// Check for optional parentheses with index name
+	if p.curTokenIs(TokLParen) {
+		p.nextToken()
+		if p.isIdentOrKeyword() {
+			expr.IndexName = p.currTok.Value
+			p.nextToken()
+		}
+		if !p.expect(TokRParen) {
+			return nil
+		}
 	}
 
 	return expr

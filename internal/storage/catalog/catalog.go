@@ -23,6 +23,7 @@ type Catalog struct {
 	tables   map[string]*table.Table
 	views    map[string]*ViewInfo
 	triggers map[string]*TriggerInfo
+	fts      map[string]*FTSInfo // FTS indexes
 	mu       sync.RWMutex
 }
 
@@ -44,6 +45,14 @@ type TriggerInfo struct {
 	Body        string
 }
 
+// FTSInfo stores FTS index definition.
+type FTSInfo struct {
+	Name      string   // Index name
+	TableName string   // Table name
+	Columns   []string // Indexed columns
+	Tokenizer string   // Tokenizer type
+}
+
 // NewCatalog creates a new catalog.
 func NewCatalog(dataDir string) *Catalog {
 	return &Catalog{
@@ -51,6 +60,7 @@ func NewCatalog(dataDir string) *Catalog {
 		tables:   make(map[string]*table.Table),
 		views:    make(map[string]*ViewInfo),
 		triggers: make(map[string]*TriggerInfo),
+		fts:      make(map[string]*FTSInfo),
 	}
 }
 
@@ -101,6 +111,11 @@ func (c *Catalog) Open() error {
 		return err
 	}
 
+	// Load FTS indexes
+	if err := c.loadFTS(); err != nil {
+		return err
+	}
+
 	return nil
 }
 
@@ -115,6 +130,7 @@ func (c *Catalog) Close() error {
 	c.tables = make(map[string]*table.Table)
 	c.views = make(map[string]*ViewInfo)
 	c.triggers = make(map[string]*TriggerInfo)
+	c.fts = make(map[string]*FTSInfo)
 
 	return nil
 }
@@ -486,6 +502,128 @@ func (c *Catalog) loadTriggers() error {
 
 	for _, t := range triggerInfos {
 		c.triggers[t.Name] = t
+	}
+	return nil
+}
+
+// CreateFTSIndex creates a new FTS index.
+func (c *Catalog) CreateFTSIndex(name, tableName string, columns []string, tokenizer string) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	if _, exists := c.fts[name]; exists {
+		return fmt.Errorf("FTS index already exists: %s", name)
+	}
+
+	// Verify table exists
+	if _, exists := c.tables[tableName]; !exists {
+		return fmt.Errorf("table not found: %s", tableName)
+	}
+
+	c.fts[name] = &FTSInfo{
+		Name:      name,
+		TableName: tableName,
+		Columns:   columns,
+		Tokenizer: tokenizer,
+	}
+	return c.saveFTS()
+}
+
+// DropFTSIndex drops an FTS index.
+func (c *Catalog) DropFTSIndex(name string) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	if _, exists := c.fts[name]; !exists {
+		return fmt.Errorf("FTS index not found: %s", name)
+	}
+
+	delete(c.fts, name)
+	return c.saveFTS()
+}
+
+// GetFTSIndex returns an FTS index by name.
+func (c *Catalog) GetFTSIndex(name string) (*FTSInfo, error) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+
+	fts, exists := c.fts[name]
+	if !exists {
+		return nil, fmt.Errorf("FTS index not found: %s", name)
+	}
+
+	return fts, nil
+}
+
+// FTSIndexExists checks if an FTS index exists.
+func (c *Catalog) FTSIndexExists(name string) bool {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+
+	_, exists := c.fts[name]
+	return exists
+}
+
+// ListFTSIndexes returns all FTS index names.
+func (c *Catalog) ListFTSIndexes() []string {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+
+	names := make([]string, 0, len(c.fts))
+	for name := range c.fts {
+		names = append(names, name)
+	}
+	return names
+}
+
+// GetFTSIndexesForTable returns all FTS indexes for a table.
+func (c *Catalog) GetFTSIndexesForTable(tableName string) []*FTSInfo {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+
+	var indexes []*FTSInfo
+	for _, fts := range c.fts {
+		if fts.TableName == tableName {
+			indexes = append(indexes, fts)
+		}
+	}
+	return indexes
+}
+
+// saveFTS saves FTS indexes to disk.
+func (c *Catalog) saveFTS() error {
+	ftsInfos := make([]*FTSInfo, 0, len(c.fts))
+	for _, fts := range c.fts {
+		ftsInfos = append(ftsInfos, fts)
+	}
+
+	data, err := json.MarshalIndent(ftsInfos, "", "  ")
+	if err != nil {
+		return err
+	}
+
+	ftsPath := filepath.Join(c.dataDir, "fts.json")
+	return os.WriteFile(ftsPath, data, 0644)
+}
+
+// loadFTS loads FTS indexes from disk.
+func (c *Catalog) loadFTS() error {
+	ftsPath := filepath.Join(c.dataDir, "fts.json")
+	data, err := os.ReadFile(ftsPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return err
+	}
+
+	var ftsInfos []*FTSInfo
+	if err := json.Unmarshal(data, &ftsInfos); err != nil {
+		return err
+	}
+
+	for _, fts := range ftsInfos {
+		c.fts[fts.Name] = fts
 	}
 	return nil
 }

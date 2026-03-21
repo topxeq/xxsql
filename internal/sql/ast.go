@@ -2385,3 +2385,105 @@ func (s *LoadDataStmt) String() string {
 	}
 	return sb.String()
 }
+
+// ============================================================================
+// Full-Text Search Statements
+// ============================================================================
+
+// CreateFTSStmt represents a CREATE FTS INDEX statement.
+// Syntax: CREATE FTS INDEX name ON table(column1, column2, ...) [WITH TOKENIZER tokenizer]
+type CreateFTSStmt struct {
+	IndexName   string   // Name of the FTS index
+	TableName   string   // Table to index
+	Columns     []string // Columns to include in the index
+	Tokenizer   string   // Tokenizer type: "simple" (default), "porter"
+	IfNotExists bool     // IF NOT EXISTS clause
+}
+
+func (s *CreateFTSStmt) node()      {}
+func (s *CreateFTSStmt) statement() {}
+func (s *CreateFTSStmt) String() string {
+	var sb strings.Builder
+	sb.WriteString("CREATE FTS INDEX ")
+	if s.IfNotExists {
+		sb.WriteString("IF NOT EXISTS ")
+	}
+	sb.WriteString(s.IndexName)
+	sb.WriteString(" ON ")
+	sb.WriteString(s.TableName)
+	sb.WriteString("(")
+	for i, col := range s.Columns {
+		if i > 0 {
+			sb.WriteString(", ")
+		}
+		sb.WriteString(col)
+	}
+	sb.WriteString(")")
+	if s.Tokenizer != "" && s.Tokenizer != "simple" {
+		sb.WriteString(" WITH TOKENIZER ")
+		sb.WriteString(s.Tokenizer)
+	}
+	return sb.String()
+}
+
+// DropFTSStmt represents a DROP FTS INDEX statement.
+// Syntax: DROP FTS INDEX name
+type DropFTSStmt struct {
+	IndexName string
+	IfExists  bool
+}
+
+func (s *DropFTSStmt) node()      {}
+func (s *DropFTSStmt) statement() {}
+func (s *DropFTSStmt) String() string {
+	var sb strings.Builder
+	sb.WriteString("DROP FTS INDEX ")
+	if s.IfExists {
+		sb.WriteString("IF EXISTS ")
+	}
+	sb.WriteString(s.IndexName)
+	return sb.String()
+}
+
+// MatchExpr represents a MATCH expression for full-text search.
+// Syntax: table_name MATCH 'search query'
+// Used in WHERE clause for FTS queries.
+type MatchExpr struct {
+	Table   string   // Table name (or alias)
+	Query   string   // Search query string
+	Columns []string // Optional: specific columns to search
+}
+
+func (e *MatchExpr) node()       {}
+func (e *MatchExpr) expression() {}
+func (e *MatchExpr) String() string {
+	var sb strings.Builder
+	if len(e.Columns) > 0 {
+		for i, col := range e.Columns {
+			if i > 0 {
+				sb.WriteString(", ")
+			}
+			sb.WriteString(col)
+		}
+		sb.WriteString(" ")
+	}
+	sb.WriteString("MATCH '")
+	sb.WriteString(e.Query)
+	sb.WriteString("'")
+	return sb.String()
+}
+
+// RankExpr represents a RANK expression for FTS result ordering.
+// Returns the relevance score of the FTS match.
+type RankExpr struct {
+	IndexName string // Optional: specific index name
+}
+
+func (e *RankExpr) node()       {}
+func (e *RankExpr) expression() {}
+func (e *RankExpr) String() string {
+	if e.IndexName != "" {
+		return fmt.Sprintf("RANK(%s)", e.IndexName)
+	}
+	return "RANK"
+}

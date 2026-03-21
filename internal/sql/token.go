@@ -254,6 +254,12 @@ const (
 	TokVirtual
 	TokStored
 
+	// Keywords - Full-Text Search
+	TokMatch     // MATCH
+	TokFts       // FTS
+	TokRank      // RANK
+	TokTokenizer // TOKENIZER
+
 	// Identifiers and literals
 	TokIdent   // identifier
 	TokNumber  // numeric literal
@@ -679,6 +685,14 @@ func (t TokenType) String() string {
 		return "VIRTUAL"
 	case TokStored:
 		return "STORED"
+	case TokMatch:
+		return "MATCH"
+	case TokFts:
+		return "FTS"
+	case TokRank:
+		return "RANK"
+	case TokTokenizer:
+		return "TOKENIZER"
 	case TokDescribe:
 		return "DESCRIBE"
 	case TokBackup:
@@ -894,6 +908,10 @@ var keywords = map[string]TokenType{
 	"ALWAYS":       TokAlways,
 	"VIRTUAL":      TokVirtual,
 	"STORED":       TokStored,
+	"MATCH":        TokMatch,
+	"FTS":          TokFts,
+	"RANK":         TokRank,
+	"TOKENIZER":    TokTokenizer,
 	"TRUE":         TokBoolLit,
 	"FALSE":        TokBoolLit,
 }

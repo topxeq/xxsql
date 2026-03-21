@@ -20,6 +20,7 @@ import (
 	"github.com/topxeq/xxsql/internal/sql"
 	"github.com/topxeq/xxsql/internal/storage"
 	"github.com/topxeq/xxsql/internal/storage/catalog"
+	"github.com/topxeq/xxsql/internal/storage/fts"
 	"github.com/topxeq/xxsql/internal/storage/row"
 	"github.com/topxeq/xxsql/internal/storage/table"
 	"github.com/topxeq/xxsql/internal/storage/types"
@@ -99,6 +100,7 @@ type Executor struct {
 	cteResults    map[string]*Result     // CTE results for WITH clause support
 	lastInsertID  int64                  // Last auto-generated insert ID
 	lastRowCount  int64                  // Number of rows affected by last operation
+	ftsManager    *fts.FTSManager        // Full-text search manager
 
 	// Transaction state
 	inTransaction bool
@@ -131,9 +133,14 @@ type AuthManager interface {
 
 // NewExecutor creates a new executor.
 func NewExecutor(engine *storage.Engine) *Executor {
+	var ftsMgr *fts.FTSManager
+	if engine != nil {
+		ftsMgr = fts.NewFTSManager(engine.GetDataDir())
+	}
 	return &Executor{
 		engine:        engine,
 		subqueryCache: make(map[string]interface{}),
+		ftsManager:    ftsMgr,
 	}
 }
 
@@ -342,6 +349,16 @@ func (e *Executor) ExecuteWithPerms(sqlStr string, checker PermissionChecker) (*
 			return nil, err
 		}
 		return e.executeLoadData(s)
+	case *sql.CreateFTSStmt:
+		if err := checkPerm(PermCreateIndex); err != nil {
+			return nil, err
+		}
+		return e.executeCreateFTS(s)
+	case *sql.DropFTSStmt:
+		if err := checkPerm(PermDropIndex); err != nil {
+			return nil, err
+		}
+		return e.executeDropFTS(s)
 	default:
 		return nil, fmt.Errorf("unsupported statement type: %T", stmt)
 	}
@@ -4051,6 +4068,22 @@ func (e *Executor) executeInsertInternal(stmt *sql.InsertStmt) (*Result, error) 
 			return nil, err
 		}
 
+		// Update FTS indexes
+		if e.ftsManager != nil {
+			ftsIndexes := e.engine.GetCatalog().GetFTSIndexesForTable(tableName)
+			if len(ftsIndexes) > 0 {
+				valuesMap := make(map[string]interface{})
+				for i, col := range tblInfo.Columns {
+					valuesMap[col.Name] = e.valueToInterface(values[i])
+				}
+				for _, ftsInfo := range ftsIndexes {
+					if idx, err := e.ftsManager.GetIndex(ftsInfo.Name); err == nil {
+						idx.IndexDocument(uint64(rowID), valuesMap)
+					}
+				}
+			}
+		}
+
 		totalAffected++
 		lastInsertID = uint64(rowID)
 
@@ -4400,6 +4433,30 @@ func (e *Executor) executeUpdateInternal(stmt *sql.UpdateStmt) (*Result, error) 
 		return nil, err
 	}
 
+	// Update FTS indexes
+	if e.ftsManager != nil && affected > 0 {
+		ftsIndexes := e.engine.GetCatalog().GetFTSIndexesForTable(tableName)
+		if len(ftsIndexes) > 0 {
+			// Re-scan and update FTS for affected rows
+			rows, err := tbl.Scan()
+			if err == nil {
+				for _, r := range rows {
+					if predicate(r) {
+						valuesMap := make(map[string]interface{})
+						for i, col := range tblInfo.Columns {
+							valuesMap[col.Name] = e.valueToInterface(r.Values[i])
+						}
+						for _, ftsInfo := range ftsIndexes {
+							if idx, err := e.ftsManager.GetIndex(ftsInfo.Name); err == nil {
+								idx.UpdateDocument(uint64(r.ID), valuesMap)
+							}
+						}
+					}
+				}
+			}
+		}
+	}
+
 	e.lastRowCount = int64(affected)
 
 	result := &Result{
@@ -4568,6 +4625,11 @@ func (e *Executor) executeDeleteInternal(stmt *sql.DeleteStmt) (*Result, error) 
 			return nil, err
 		}
 
+		// Clear FTS indexes for the table
+		if e.ftsManager != nil {
+			e.ftsManager.DropIndexForTable(tableName)
+		}
+
 		e.lastRowCount = int64(rowCount)
 		result := &Result{
 			Affected: int(rowCount),
@@ -4632,6 +4694,22 @@ func (e *Executor) executeDeleteInternal(stmt *sql.DeleteStmt) (*Result, error) 
 		}
 	}
 
+	// Collect row IDs for FTS index cleanup
+	var rowIDsToDelete []uint64
+	if e.ftsManager != nil {
+		ftsIndexes := e.engine.GetCatalog().GetFTSIndexesForTable(tableName)
+		if len(ftsIndexes) > 0 {
+			rows, err := tbl.Scan()
+			if err == nil {
+				for _, r := range rows {
+					if predicate(r) {
+						rowIDsToDelete = append(rowIDsToDelete, uint64(r.ID))
+					}
+				}
+			}
+		}
+	}
+
 	// Fire BEFORE DELETE triggers
 	if err := e.fireTriggers(tableName, 0, 2, nil); err != nil {
 		return nil, err
@@ -4646,6 +4724,13 @@ func (e *Executor) executeDeleteInternal(stmt *sql.DeleteStmt) (*Result, error) 
 	// Fire AFTER DELETE triggers
 	if err := e.fireTriggers(tableName, 1, 2, nil); err != nil {
 		return nil, err
+	}
+
+	// Remove deleted rows from FTS indexes
+	if e.ftsManager != nil && len(rowIDsToDelete) > 0 {
+		for _, docID := range rowIDsToDelete {
+			e.ftsManager.RemoveDocument(tableName, docID)
+		}
 	}
 
 	e.lastRowCount = int64(affected)
@@ -5232,6 +5317,96 @@ func (e *Executor) executeDropIndex(stmt *sql.DropIndexStmt) (*Result, error) {
 	}
 
 	return &Result{Message: "OK"}, nil
+}
+
+// executeCreateFTS executes a CREATE FTS INDEX statement.
+func (e *Executor) executeCreateFTS(stmt *sql.CreateFTSStmt) (*Result, error) {
+	// Check if table exists
+	if !e.engine.TableExists(stmt.TableName) {
+		return nil, fmt.Errorf("table '%s' does not exist", stmt.TableName)
+	}
+
+	// Check if FTS index already exists
+	if e.engine.GetCatalog().FTSIndexExists(stmt.IndexName) {
+		if stmt.IfNotExists {
+			return &Result{Message: "OK"}, nil
+		}
+		return nil, fmt.Errorf("FTS index '%s' already exists", stmt.IndexName)
+	}
+
+	// Set default tokenizer
+	tokenizer := stmt.Tokenizer
+	if tokenizer == "" {
+		tokenizer = "simple"
+	}
+
+	// Create FTS index in catalog
+	if err := e.engine.GetCatalog().CreateFTSIndex(stmt.IndexName, stmt.TableName, stmt.Columns, tokenizer); err != nil {
+		return nil, fmt.Errorf("create FTS index error: %w", err)
+	}
+
+	// Create the actual FTS index
+	if e.ftsManager != nil {
+		_, err := e.ftsManager.CreateIndex(stmt.IndexName, stmt.TableName, stmt.Columns, tokenizer)
+		if err != nil {
+			return nil, fmt.Errorf("create FTS index error: %w", err)
+		}
+
+		// Index existing data in the table
+		tbl, err := e.engine.GetTable(stmt.TableName)
+		if err != nil {
+			return nil, err
+		}
+
+		rows, err := tbl.Scan()
+		if err != nil {
+			return nil, err
+		}
+
+		for _, row := range rows {
+			values := make(map[string]interface{})
+			for i, col := range tbl.Columns() {
+				if i < len(row.Values) {
+					values[col.Name] = row.Values[i]
+				}
+			}
+			if err := e.ftsManager.IndexDocument(stmt.TableName, uint64(row.ID), values); err != nil {
+				return nil, err
+			}
+		}
+	}
+
+	return &Result{Message: "OK"}, nil
+}
+
+// executeDropFTS executes a DROP FTS INDEX statement.
+func (e *Executor) executeDropFTS(stmt *sql.DropFTSStmt) (*Result, error) {
+	// Check if FTS index exists
+	if !e.engine.GetCatalog().FTSIndexExists(stmt.IndexName) {
+		if stmt.IfExists {
+			return &Result{Message: "OK"}, nil
+		}
+		return nil, fmt.Errorf("FTS index '%s' does not exist", stmt.IndexName)
+	}
+
+	// Drop from FTS manager
+	if e.ftsManager != nil {
+		if err := e.ftsManager.DropIndex(stmt.IndexName); err != nil {
+			return nil, fmt.Errorf("drop FTS index error: %w", err)
+		}
+	}
+
+	// Drop from catalog
+	if err := e.engine.GetCatalog().DropFTSIndex(stmt.IndexName); err != nil {
+		return nil, fmt.Errorf("drop FTS index error: %w", err)
+	}
+
+	return &Result{Message: "OK"}, nil
+}
+
+// GetFTSManager returns the FTS manager for external use.
+func (e *Executor) GetFTSManager() *fts.FTSManager {
+	return e.ftsManager
 }
 
 // executeCreateView executes a CREATE VIEW statement.
@@ -6367,6 +6542,36 @@ func (e *Executor) evaluateWhere(expr sql.Expression, r *row.Row, columnMap map[
 	case *sql.ParenExpr:
 		// Evaluate the inner expression
 		return e.evaluateWhere(ex.Expr, r, columnMap, columnOrder)
+
+	case *sql.MatchExpr:
+		// For FTS matching, we need to check if the row ID matches FTS results
+		// This requires the FTS manager to have performed a search beforehand
+		// For simplicity, we check if this row's ID is in the matched results
+		if e.ftsManager == nil {
+			return false, nil
+		}
+
+		// Get FTS indexes for the table
+		ftsIndexes := e.engine.GetCatalog().GetFTSIndexesForTable(ex.Table)
+		if len(ftsIndexes) == 0 {
+			return false, nil
+		}
+
+		// Search using the first matching index
+		for _, ftsInfo := range ftsIndexes {
+			results, err := e.ftsManager.Search(ftsInfo.Name, ex.Query)
+			if err != nil {
+				continue
+			}
+			// Check if this row's ID is in the results
+			rowID := uint64(r.ID)
+			for _, result := range results {
+				if result.DocID == rowID {
+					return true, nil
+				}
+			}
+		}
+		return false, nil
 	}
 
 	return false, nil
@@ -6609,6 +6814,23 @@ func (e *Executor) evaluateExpression(expr sql.Expression, r *row.Row, columnMap
 	case *sql.ParenExpr:
 		// Evaluate the inner expression
 		return e.evaluateExpression(ex.Expr, r, columnMap, columnOrder)
+
+	case *sql.RankExpr:
+		// Return the FTS rank score for the current row
+		// This is a placeholder - actual rank should be computed during FTS search
+		// and stored in a context variable
+		if e.ftsManager == nil {
+			return 0.0, nil
+		}
+
+		// Get FTS rank from context if available
+		if e.outerContext != nil {
+			if rank, ok := e.outerContext["__fts_rank"].(float64); ok {
+				return rank, nil
+			}
+		}
+
+		return 0.0, nil
 	}
 	return nil, nil
 }
