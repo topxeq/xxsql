@@ -908,6 +908,10 @@ func (i *Interpreter) toInt(val Value) int {
 		return int(v)
 	case float64:
 		return int(v)
+	case string:
+		var n int
+		fmt.Sscanf(v, "%d", &n)
+		return n
 	default:
 		return 0
 	}
@@ -1058,7 +1062,20 @@ func (i *Interpreter) builtinInt(args []Value) Value {
 	if len(args) == 0 {
 		return 0
 	}
-	return i.toInt(args[0])
+	switch v := args[0].(type) {
+	case int:
+		return v
+	case int64:
+		return int(v)
+	case float64:
+		return int(v)
+	case string:
+		var n int
+		fmt.Sscanf(v, "%d", &n)
+		return n
+	default:
+		return 0
+	}
 }
 
 func (i *Interpreter) builtinFloat(args []Value) Value {
