@@ -522,6 +522,219 @@ find $BACKUP_DIR -name "*.xbak.gz" -mtime +$KEEP_DAYS -delete
 
 ## Database Migration
 
+### Data Directory Migration (Portable Deployment)
+
+XxSql supports portable deployment - the data directory is fully self-contained and can be copied to another server or directory without modification.
+
+#### Why It Works
+
+XxSql stores all data using relative paths within the data directory:
+
+| File | Description |
+|------|-------------|
+| `catalog.json` | Table catalog (list of all tables) |
+| `users.json` | User accounts and credentials |
+| `grants.json` | User permissions |
+| `api_keys.json` | API keys for REST API |
+| `udf.json` | SQL-based user-defined functions |
+| `script_udf.json` | XxScript-based user-defined functions |
+| `<table>.xmeta` | Table metadata |
+| `<table>.xdb` | Table data (rows) |
+| `<table>.xidx` | Index data |
+| `<table>_sequences.seq` | Auto-increment sequences |
+
+No absolute paths are stored in any of these files, making the data directory completely portable.
+
+#### Migration Steps
+
+**Step 1: Stop the Source Server**
+
+```bash
+# On the source server
+# Method 1: Using systemctl (if configured as service)
+sudo systemctl stop xxsql
+
+# Method 2: Using PID file
+kill $(cat /var/run/xxsql.pid)
+
+# Method 3: Find and kill process
+pkill xxsqls
+
+# Verify server is stopped
+pgrep xxsqls || echo "Server stopped"
+```
+
+**Step 2: Create a Backup (Recommended)**
+
+```bash
+# Create a backup before migration
+./xxsqlc -u admin -e "BACKUP DATABASE TO '/backup/pre-migration.xbak' WITH COMPRESS"
+
+# Or use file copy
+cp -r /var/lib/xxsql/data /backup/xxsql-data-backup
+```
+
+**Step 3: Copy Data Directory**
+
+```bash
+# Method 1: Using scp (remote server)
+scp -r /var/lib/xxsql/data user@newserver:/var/lib/xxsql/
+
+# Method 2: Using rsync (recommended for large data)
+rsync -avz --progress /var/lib/xxsql/data/ user@newserver:/var/lib/xxsql/data/
+
+# Method 3: Using tar archive
+tar -czf xxsql-data.tar.gz -C /var/lib/xxsql data
+scp xxsql-data.tar.gz user@newserver:/tmp/
+# On new server:
+tar -xzf /tmp/xxsql-data.tar.gz -C /var/lib/xxsql/
+
+# Method 4: Local directory copy (same server)
+cp -r /old/path/data /new/path/data
+```
+
+**Step 4: Prepare Configuration on Destination**
+
+```bash
+# Create configuration file
+cat > /etc/xxsql/xxsql.json << 'EOF'
+{
+  "server": {
+    "name": "xxsql",
+    "data_dir": "/var/lib/xxsql/data",
+    "pid_file": "/var/run/xxsql.pid"
+  },
+  "network": {
+    "private_port": 9527,
+    "mysql_port": 3306,
+    "http_port": 8080,
+    "bind": "0.0.0.0"
+  },
+  "log": {
+    "level": "INFO",
+    "file": "/var/log/xxsql/server.log"
+  },
+  "auth": {
+    "enabled": true
+  }
+}
+EOF
+
+# Create directories
+sudo mkdir -p /var/log/xxsql /var/run
+```
+
+**Step 5: Set Permissions**
+
+```bash
+# Set ownership
+sudo chown -R xxsql:xxsql /var/lib/xxsql/data
+sudo chown -R xxsql:xxsql /var/log/xxsql
+
+# Set permissions
+chmod 750 /var/lib/xxsql/data
+chmod 640 /var/lib/xxsql/data/*.json
+```
+
+**Step 6: Start the Destination Server**
+
+```bash
+# Method 1: Using config file
+./xxsqls -config /etc/xxsql/xxsql.json
+
+# Method 2: Using command line
+./xxsqls -data-dir /var/lib/xxsql/data
+
+# Method 3: Using systemctl (if configured)
+sudo systemctl start xxsql
+```
+
+**Step 7: Verify Migration**
+
+```bash
+# Connect and check tables
+./xxsqlc -u admin -d mydb -e "SHOW TABLES;"
+
+# Check user accounts
+./xxsqlc -u admin -e "SELECT * FROM (SELECT 'users' as type) WHERE 1=0; SHOW GRANTS;"
+
+# Test a query
+./xxsqlc -u admin -d mydb -e "SELECT COUNT(*) FROM users;"
+
+# Check server status
+curl http://localhost:8080/api/status
+```
+
+#### Cross-Platform Migration
+
+XxSql data files are compatible across platforms:
+
+| Source → Destination | Compatibility | Notes |
+|---------------------|---------------|-------|
+| Linux → Linux | ✅ Full | Direct copy works |
+| Linux → macOS | ✅ Full | Direct copy works |
+| macOS → Linux | ✅ Full | Direct copy works |
+| Linux/macOS → Windows | ✅ Full | Use binary for Windows |
+| Windows → Linux/macOS | ✅ Full | Path separators handled |
+
+**Cross-platform example (Linux to Windows):**
+
+```bash
+# On Linux: Create archive
+tar -czf xxsql-data.tar.gz -C /var/lib/xxsql data
+
+# Transfer to Windows (using WinSCP, etc.)
+
+# On Windows PowerShell:
+# Extract (use 7-Zip or WSL)
+wsl tar -xzf xxsql-data.tar.gz
+
+# Start with new path
+.\xxsqls.exe -data-dir .\data
+```
+
+#### Migration Checklist
+
+- [ ] Source server stopped completely
+- [ ] Backup created before migration
+- [ ] Data directory copied successfully
+- [ ] File permissions set correctly on destination
+- [ ] Configuration file updated with correct paths
+- [ ] Destination server starts without errors
+- [ ] All tables accessible
+- [ ] User accounts working
+- [ ] Applications can connect
+
+#### Troubleshooting
+
+**Permission denied errors:**
+```bash
+# Fix ownership
+chown -R $(whoami):$(whoami) /path/to/data
+
+# Fix permissions
+chmod -R 755 /path/to/data
+chmod 644 /path/to/data/*.json
+```
+
+**Table not found:**
+```bash
+# Check catalog.json exists
+ls -la /path/to/data/catalog.json
+
+# Check table files exist
+ls -la /path/to/data/*.xmeta
+```
+
+**User authentication fails:**
+```bash
+# Check users.json exists and is readable
+cat /path/to/data/users.json
+
+# If lost, reset admin password
+./xxsqlc -u admin -e "CREATE USER 'admin' IDENTIFIED BY 'newpassword';"
+```
+
 ### Exporting Data
 
 #### SQL Dump
