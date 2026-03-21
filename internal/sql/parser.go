@@ -1881,12 +1881,27 @@ func (p *Parser) parseExplain() Statement {
 func (p *Parser) parseBegin() Statement {
 	p.nextToken() // consume BEGIN
 
+	stmt := &BeginStmt{}
+
+	// Optional transaction type: DEFERRED, IMMEDIATE, EXCLUSIVE
+	switch p.currTok.Type {
+	case TokDeferred:
+		stmt.TransactionType = "DEFERRED"
+		p.nextToken()
+	case TokImmediate:
+		stmt.TransactionType = "IMMEDIATE"
+		p.nextToken()
+	case TokExclusive:
+		stmt.TransactionType = "EXCLUSIVE"
+		p.nextToken()
+	}
+
 	// Optional TRANSACTION or WORK keyword
 	if p.curTokenIs(TokTransaction) || p.curTokenIs(TokWork) {
 		p.nextToken()
 	}
 
-	return &BeginStmt{}
+	return stmt
 }
 
 // parseCommit parses a COMMIT [TRANSACTION] statement.

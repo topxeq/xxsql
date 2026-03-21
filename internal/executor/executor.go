@@ -105,6 +105,7 @@ type Executor struct {
 
 	// Transaction state
 	inTransaction bool
+	txMode        string   // "DEFERRED", "IMMEDIATE", or "EXCLUSIVE"
 	savepoints    []string // Stack of savepoint names
 }
 
@@ -13678,6 +13679,21 @@ func (e *Executor) executeBegin(stmt *sql.BeginStmt) (*Result, error) {
 		return nil, fmt.Errorf("already in transaction")
 	}
 
+	// Set transaction mode
+	// SQLite semantics:
+	// - DEFERRED (default): Don't acquire any locks until first read/write
+	// - IMMEDIATE: Acquire RESERVED lock immediately (prevent other writers)
+	// - EXCLUSIVE: Acquire EXCLUSIVE lock immediately (prevent all other access)
+	//
+	// For XxSQL's simplified model:
+	// - We track the mode but don't implement full locking
+	// - The storage engine handles basic transaction state
+
+	e.txMode = stmt.TransactionType
+	if e.txMode == "" {
+		e.txMode = "DEFERRED" // default
+	}
+
 	// Begin transaction in storage engine
 	if err := e.engine.BeginTransaction(); err != nil {
 		return nil, fmt.Errorf("failed to begin transaction: %w", err)
@@ -13686,9 +13702,14 @@ func (e *Executor) executeBegin(stmt *sql.BeginStmt) (*Result, error) {
 	e.inTransaction = true
 	e.savepoints = nil
 
+	modeStr := ""
+	if stmt.TransactionType != "" {
+		modeStr = " " + stmt.TransactionType
+	}
+
 	return &Result{
 		Columns:  []ColumnInfo{{Name: "Result"}},
-		Rows:     [][]interface{}{{"Transaction started"}},
+		Rows:     [][]interface{}{{fmt.Sprintf("Transaction started%s", modeStr)}},
 		RowCount: 1,
 		Message:  "BEGIN",
 	}, nil

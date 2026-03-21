@@ -2262,13 +2262,23 @@ type TriggerInfo struct {
 
 // BeginStmt represents a BEGIN [TRANSACTION] statement.
 type BeginStmt struct {
-	// BEGIN starts a new transaction
+	// TransactionType: "", "DEFERRED", "IMMEDIATE", or "EXCLUSIVE"
+	TransactionType string
 }
 
 func (s *BeginStmt) node()      {}
 func (s *BeginStmt) statement() {}
 func (s *BeginStmt) String() string {
-	return "BEGIN TRANSACTION"
+	switch s.TransactionType {
+	case "DEFERRED":
+		return "BEGIN DEFERRED TRANSACTION"
+	case "IMMEDIATE":
+		return "BEGIN IMMEDIATE TRANSACTION"
+	case "EXCLUSIVE":
+		return "BEGIN EXCLUSIVE TRANSACTION"
+	default:
+		return "BEGIN TRANSACTION"
+	}
 }
 
 // CommitStmt represents a COMMIT [TRANSACTION] statement.

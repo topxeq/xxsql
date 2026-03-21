@@ -232,6 +232,9 @@ const (
 	TokSavepoint
 	TokRelease
 	TokWork // optional keyword in COMMIT/ROLLBACK
+	TokDeferred   // DEFERRED transaction
+	TokImmediate  // IMMEDIATE transaction
+	TokExclusive  // EXCLUSIVE transaction
 
 	// Keywords - Trigger
 	TokTrigger
@@ -660,6 +663,12 @@ func (t TokenType) String() string {
 		return "RELEASE"
 	case TokWork:
 		return "WORK"
+	case TokDeferred:
+		return "DEFERRED"
+	case TokImmediate:
+		return "IMMEDIATE"
+	case TokExclusive:
+		return "EXCLUSIVE"
 	case TokTrigger:
 		return "TRIGGER"
 	case TokBefore:
@@ -909,6 +918,9 @@ var keywords = map[string]TokenType{
 	"SAVEPOINT":    TokSavepoint,
 	"RELEASE":      TokRelease,
 	"WORK":         TokWork,
+	"DEFERRED":     TokDeferred,
+	"IMMEDIATE":    TokImmediate,
+	"EXCLUSIVE":    TokExclusive,
 	"TRIGGER":      TokTrigger,
 	"BEFORE":       TokBefore,
 	"AFTER":        TokAfter,
