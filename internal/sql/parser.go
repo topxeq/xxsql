@@ -497,7 +497,7 @@ func (p *Parser) parseSelectColumn() Expression {
 func isKeywordAsIdent(t TokenType) bool {
 	switch t {
 	case TokCumeDist, TokPercentRank, TokNthValue, TokNtile, TokLead, TokLag,
-		TokFirstValue, TokLastValue, TokCount, TokSum,
+		TokFirstValue, TokLastValue, TokCount, TokSum, TokRank,
 		TokAvg, TokMin, TokMax, TokCoalesce, TokNullIf, TokCast, TokCase,
 		TokWhen, TokThen, TokElse, TokEnd, TokIf, TokExists, TokAny,
 		TokOver, TokPartition, TokWindow, TokRows, TokRange, TokPreceding,
@@ -2663,8 +2663,22 @@ func (p *Parser) parsePrimaryExpr() Expression {
 		}
 		// Otherwise it's an identifier
 		return &ColumnRef{Name: name}
-	// FTS RANK expression
+	// FTS RANK expression or window function RANK()
 	case TokRank:
+		// Check if followed by () and OVER - then it's a window function
+		if p.peekTok.Type == TokLParen {
+			p.nextToken() // consume RANK
+			p.nextToken() // consume (
+			if !p.expect(TokRParen) {
+				return nil
+			}
+			// Check for OVER clause
+			if p.curTokenIs(TokOver) {
+				return p.parseWindowFunction(&FunctionCall{Name: "RANK"}, false, false)
+			}
+			// RANK() without OVER - return as function call
+			return &FunctionCall{Name: "RANK"}
+		}
 		return p.parseRankExpr()
 	default:
 		p.error("unexpected token in expression: %s", p.currTok.Type)
