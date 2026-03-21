@@ -816,11 +816,15 @@ type OrderByItem struct {
 	Ascending  bool
 	NullsFirst bool // NULLS FIRST specified
 	NullsLast  bool // NULLS LAST specified
+	Collate    string // COLLATE collation name
 }
 
 func (o *OrderByItem) node() {}
 func (o *OrderByItem) String() string {
 	s := o.Expr.String()
+	if o.Collate != "" {
+		s += " COLLATE " + o.Collate
+	}
 	if o.Ascending {
 		s += " ASC"
 	} else {
@@ -859,6 +863,7 @@ type ColumnDef struct {
 	PrimaryKey      bool
 	Unique          bool
 	Comment         string
+	Collate         string    // COLLATE collation name
 	GeneratedExpr   Expression // GENERATED ALWAYS AS expression
 	GeneratedStored bool       // true if STORED, false if VIRTUAL
 }
@@ -894,6 +899,10 @@ func (c *ColumnDef) String() string {
 	}
 	if c.Unique {
 		sb.WriteString(" UNIQUE")
+	}
+	if c.Collate != "" {
+		sb.WriteString(" COLLATE ")
+		sb.WriteString(c.Collate)
 	}
 	return sb.String()
 }
@@ -1457,6 +1466,19 @@ func (e *ParenExpr) node()       {}
 func (e *ParenExpr) expression() {}
 func (e *ParenExpr) String() string {
 	return fmt.Sprintf("(%s)", e.Expr.String())
+}
+
+// CollateExpr represents a COLLATE expression.
+// Syntax: expr COLLATE collation_name
+type CollateExpr struct {
+	Expr     Expression
+	Collate  string
+}
+
+func (e *CollateExpr) node()       {}
+func (e *CollateExpr) expression() {}
+func (e *CollateExpr) String() string {
+	return fmt.Sprintf("%s COLLATE %s", e.Expr.String(), e.Collate)
 }
 
 // SubqueryExpr represents a subquery expression (e.g., in IN clause).

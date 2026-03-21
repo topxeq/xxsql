@@ -1101,3 +1101,27 @@ func compareInts(a, b int64) int {
 	}
 	return 0
 }
+
+// compareValuesWithCollation compares two values with optional collation support for strings.
+func compareValuesWithCollation(a, b interface{}, collation string) int {
+	// Handle NULL values
+	if a == nil && b == nil {
+		return 0
+	}
+	if a == nil {
+		return -1
+	}
+	if b == nil {
+		return 1
+	}
+
+	// Handle string comparison with collation
+	if sa, ok := a.(string); ok {
+		if sb, ok := b.(string); ok {
+			return collationCompare(sa, sb, collation)
+		}
+	}
+
+	// Fall back to normal comparison for non-strings
+	return compareValues(a, b)
+}

@@ -774,6 +774,17 @@ func (p *Parser) parseOrderByItems() []*OrderByItem {
 			Ascending: true,
 		}
 
+		// Handle COLLATE
+		if p.curTokenIs(TokCollate) {
+			p.nextToken()
+			if !p.curTokenIs(TokIdent) {
+				p.error("expected collation name")
+				return nil
+			}
+			item.Collate = p.currTok.Value
+			p.nextToken()
+		}
+
 		if p.curTokenIs(TokAsc) {
 			p.nextToken()
 		} else if p.curTokenIs(TokDesc) {
@@ -1306,6 +1317,14 @@ func (p *Parser) parseColumnDef() *ColumnDef {
 				cd.GeneratedStored = false
 				p.nextToken()
 			}
+		case TokCollate:
+			p.nextToken()
+			if !p.curTokenIs(TokIdent) {
+				p.error("expected collation name")
+				return nil
+			}
+			cd.Collate = p.currTok.Value
+			p.nextToken()
 		default:
 			return cd
 		}
@@ -2608,7 +2627,20 @@ func (p *Parser) parseUnaryExpr() Expression {
 		return &UnaryExpr{Op: OpNeg, Right: p.parseUnaryExpr()}
 	}
 
-	return p.parsePrimaryExpr()
+	expr := p.parsePrimaryExpr()
+
+	// Handle COLLATE as postfix operator
+	if p.curTokenIs(TokCollate) {
+		p.nextToken()
+		if !p.curTokenIs(TokIdent) {
+			p.error("expected collation name")
+			return nil
+		}
+		expr = &CollateExpr{Expr: expr, Collate: p.currTok.Value}
+		p.nextToken()
+	}
+
+	return expr
 }
 
 // parsePrimaryExpr parses a primary expression.

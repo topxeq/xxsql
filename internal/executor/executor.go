@@ -654,6 +654,7 @@ func (e *Executor) sortRows(orderBy []*sql.OrderByItem, cols []ColumnInfo, rows 
 		ascending  bool
 		nullsFirst bool
 		nullsLast  bool
+		collation  string
 	}
 	sortKeys := make([]sortKeyData, 0, len(orderBy))
 
@@ -669,6 +670,7 @@ func (e *Executor) sortRows(orderBy []*sql.OrderByItem, cols []ColumnInfo, rows 
 					ascending:  item.Ascending,
 					nullsFirst: item.NullsFirst,
 					nullsLast:  item.NullsLast,
+					collation:  item.Collate,
 				})
 			}
 		case *sql.Literal:
@@ -692,6 +694,7 @@ func (e *Executor) sortRows(orderBy []*sql.OrderByItem, cols []ColumnInfo, rows 
 						ascending:  item.Ascending,
 						nullsFirst: item.NullsFirst,
 						nullsLast:  item.NullsLast,
+						collation:  item.Collate,
 					})
 				}
 			}
@@ -703,6 +706,7 @@ func (e *Executor) sortRows(orderBy []*sql.OrderByItem, cols []ColumnInfo, rows 
 				ascending:  item.Ascending,
 				nullsFirst: item.NullsFirst,
 				nullsLast:  item.NullsLast,
+				collation:  item.Collate,
 			})
 		}
 	}
@@ -765,7 +769,13 @@ func (e *Executor) sortRows(orderBy []*sql.OrderByItem, cols []ColumnInfo, rows 
 			}
 
 			// Both non-NULL, use normal comparison
-			cmp := compareValues(vi, vj)
+			var cmp int
+			if key.collation != "" {
+				// Use collation-aware comparison
+				cmp = compareValuesWithCollation(vi, vj, key.collation)
+			} else {
+				cmp = compareValues(vi, vj)
+			}
 			if cmp == 0 {
 				continue
 			}
@@ -7150,6 +7160,10 @@ func (e *Executor) executeTruncate(stmt *sql.TruncateTableStmt) (*Result, error)
 // evaluateWhere evaluates a WHERE expression against a row.
 func (e *Executor) evaluateWhere(expr sql.Expression, r *row.Row, columnMap map[string]*types.ColumnInfo, columnOrder []*types.ColumnInfo) (bool, error) {
 	switch ex := expr.(type) {
+	case *sql.CollateExpr:
+		// Handle COLLATE in WHERE - evaluate inner expression with collation
+		return e.evaluateWhereWithCollation(ex.Expr, ex.Collate, r, columnMap, columnOrder)
+
 	case *sql.BinaryExpr:
 		// Handle logical operators
 		if ex.Op == sql.OpAnd {
@@ -7228,7 +7242,14 @@ func (e *Executor) evaluateWhere(expr sql.Expression, r *row.Row, columnMap map[
 		if err != nil {
 			return false, err
 		}
-		return e.compareValues(left, ex.Op, right)
+
+		// Extract collation from either left or right expression
+		collation := e.extractCollation(ex.Left)
+		if collation == "" {
+			collation = e.extractCollation(ex.Right)
+		}
+
+		return e.compareValuesWithCollation(left, ex.Op, right, collation)
 
 	case *sql.UnaryExpr:
 		if ex.Op == sql.OpNot {
@@ -7469,6 +7490,59 @@ func (e *Executor) evaluateWhere(expr sql.Expression, r *row.Row, columnMap map[
 	return false, nil
 }
 
+// extractCollation extracts the collation name from an expression if it's a CollateExpr.
+func (e *Executor) extractCollation(expr sql.Expression) string {
+	if collate, ok := expr.(*sql.CollateExpr); ok {
+		return collate.Collate
+	}
+	return ""
+}
+
+// evaluateWhereWithCollation evaluates a WHERE expression with a specific collation.
+func (e *Executor) evaluateWhereWithCollation(expr sql.Expression, collation string, r *row.Row, columnMap map[string]*types.ColumnInfo, columnOrder []*types.ColumnInfo) (bool, error) {
+	switch ex := expr.(type) {
+	case *sql.BinaryExpr:
+		// Handle logical operators
+		if ex.Op == sql.OpAnd {
+			left, err := e.evaluateWhereWithCollation(ex.Left, collation, r, columnMap, columnOrder)
+			if err != nil {
+				return false, err
+			}
+			if !left {
+				return false, nil
+			}
+			return e.evaluateWhereWithCollation(ex.Right, collation, r, columnMap, columnOrder)
+		}
+		if ex.Op == sql.OpOr {
+			left, err := e.evaluateWhereWithCollation(ex.Left, collation, r, columnMap, columnOrder)
+			if err != nil {
+				return false, err
+			}
+			if left {
+				return true, nil
+			}
+			return e.evaluateWhereWithCollation(ex.Right, collation, r, columnMap, columnOrder)
+		}
+
+		// Comparison operators
+		left, err := e.evaluateExpression(ex.Left, r, columnMap, columnOrder)
+		if err != nil {
+			return false, err
+		}
+		right, err := e.evaluateExpression(ex.Right, r, columnMap, columnOrder)
+		if err != nil {
+			return false, err
+		}
+		return e.compareValuesWithCollation(left, ex.Op, right, collation)
+
+	case *sql.ParenExpr:
+		return e.evaluateWhereWithCollation(ex.Expr, collation, r, columnMap, columnOrder)
+
+	default:
+		return e.evaluateWhere(expr, r, columnMap, columnOrder)
+	}
+}
+
 // compareEqual checks if two values are equal.
 func compareEqual(a, b interface{}) bool {
 	if a == nil && b == nil {
@@ -7569,6 +7643,11 @@ func (e *Executor) evaluateExpression(expr sql.Expression, r *row.Row, columnMap
 			}
 		}
 		return val, nil
+
+	case *sql.CollateExpr:
+		// COLLATE expression - evaluate inner expression
+		// The collation is used in comparisons, not in value evaluation
+		return e.evaluateExpression(ex.Expr, r, columnMap, columnOrder)
 
 	case *sql.FunctionCall:
 		return e.evaluateFunction(ex, r, columnMap, columnOrder)
@@ -11212,6 +11291,181 @@ func (e *Executor) bytesCompare(a, b []byte) int {
 		return 1
 	}
 	return 0
+}
+
+// Collation functions for string comparison
+
+// collationCompare compares two strings using the specified collation.
+// Returns -1 if a < b, 0 if a == b, 1 if a > b.
+func collationCompare(a, b string, collation string) int {
+	switch strings.ToUpper(collation) {
+	case "NOCASE":
+		return collationCompareNOCASE(a, b)
+	case "RTRIM":
+		return collationCompareRTRIM(a, b)
+	case "BINARY":
+		fallthrough
+	default:
+		// BINARY is the default - exact byte comparison
+		return strings.Compare(a, b)
+	}
+}
+
+// collationCompareNOCASE compares strings case-insensitively.
+func collationCompareNOCASE(a, b string) int {
+	// Compare character by character, case-insensitively
+	aUpper := strings.ToUpper(a)
+	bUpper := strings.ToUpper(b)
+	return strings.Compare(aUpper, bUpper)
+}
+
+// collationCompareRTRIM compares strings with trailing spaces ignored.
+func collationCompareRTRIM(a, b string) int {
+	// Trim trailing spaces and compare
+	aTrimmed := strings.TrimRight(a, " ")
+	bTrimmed := strings.TrimRight(b, " ")
+	return strings.Compare(aTrimmed, bTrimmed)
+}
+
+// collationEqual checks if two strings are equal using the specified collation.
+func collationEqual(a, b string, collation string) bool {
+	return collationCompare(a, b, collation) == 0
+}
+
+// compareValuesWithCollation compares values with optional collation support.
+func (e *Executor) compareValuesWithCollation(left interface{}, op sql.BinaryOp, right interface{}, collation string) (bool, error) {
+	// Handle NULL comparisons
+	if left == nil || right == nil {
+		if op == sql.OpEq {
+			return left == nil && right == nil, nil
+		}
+		if op == sql.OpNe {
+			return !(left == nil && right == nil), nil
+		}
+		return false, nil
+	}
+
+	// Handle BLOB comparisons
+	leftBytes, leftIsBytes := left.([]byte)
+	rightBytes, rightIsBytes := right.([]byte)
+
+	if leftIsBytes || rightIsBytes {
+		// At least one is a byte slice
+		// Try to convert string to bytes if needed
+		if leftIsBytes && !rightIsBytes {
+			rightStr := fmt.Sprintf("%v", right)
+			// Check if it's a hex string (0x...)
+			if len(rightStr) >= 2 && (rightStr[0:2] == "0x" || rightStr[0:2] == "0X") {
+				blob, err := types.HexToBlob(rightStr)
+				if err == nil {
+					rightBytes = blob.Data
+					rightIsBytes = true
+				}
+			} else {
+				rightBytes = []byte(rightStr)
+				rightIsBytes = true
+			}
+		} else if !leftIsBytes && rightIsBytes {
+			leftStr := fmt.Sprintf("%v", left)
+			if len(leftStr) >= 2 && (leftStr[0:2] == "0x" || leftStr[0:2] == "0X") {
+				blob, err := types.HexToBlob(leftStr)
+				if err == nil {
+					leftBytes = blob.Data
+					leftIsBytes = true
+				}
+			} else {
+				leftBytes = []byte(leftStr)
+				leftIsBytes = true
+			}
+		}
+
+		if leftIsBytes && rightIsBytes {
+			// Compare as byte slices
+			switch op {
+			case sql.OpEq:
+				return e.bytesEqual(leftBytes, rightBytes), nil
+			case sql.OpNe:
+				return !e.bytesEqual(leftBytes, rightBytes), nil
+			case sql.OpLt:
+				return e.bytesCompare(leftBytes, rightBytes) < 0, nil
+			case sql.OpLe:
+				return e.bytesCompare(leftBytes, rightBytes) <= 0, nil
+			case sql.OpGt:
+				return e.bytesCompare(leftBytes, rightBytes) > 0, nil
+			case sql.OpGe:
+				return e.bytesCompare(leftBytes, rightBytes) >= 0, nil
+			}
+		}
+	}
+
+	// Convert to comparable values
+	leftStr := fmt.Sprintf("%v", left)
+	rightStr := fmt.Sprintf("%v", right)
+
+	// Use collation-aware comparison if specified
+	if collation != "" {
+		cmp := collationCompare(leftStr, rightStr, collation)
+		switch op {
+		case sql.OpEq:
+			return cmp == 0, nil
+		case sql.OpNe:
+			return cmp != 0, nil
+		case sql.OpLt:
+			return cmp < 0, nil
+		case sql.OpLe:
+			return cmp <= 0, nil
+		case sql.OpGt:
+			return cmp > 0, nil
+		case sql.OpGe:
+			return cmp >= 0, nil
+		case sql.OpLike:
+			// For LIKE with collation, use case-insensitive matching for NOCASE
+			if strings.ToUpper(collation) == "NOCASE" {
+				pattern := strings.ToLower(rightStr)
+				pattern = strings.ReplaceAll(pattern, "%", ".*")
+				pattern = strings.ReplaceAll(pattern, "_", ".")
+				pattern = "^" + pattern + "$"
+				matched, _ := regexp.MatchString(pattern, strings.ToLower(leftStr))
+				return matched, nil
+			}
+			// Fall through for other collations
+		case sql.OpGlob:
+			// GLOB uses Unix-style wildcards: * and ?
+			pattern := globToRegex(rightStr)
+			matched, _ := regexp.MatchString(pattern, leftStr)
+			return matched, nil
+		}
+	}
+
+	// Standard comparison (BINARY collation default)
+	switch op {
+	case sql.OpEq:
+		return leftStr == rightStr, nil
+	case sql.OpNe:
+		return leftStr != rightStr, nil
+	case sql.OpLt:
+		return leftStr < rightStr, nil
+	case sql.OpLe:
+		return leftStr <= rightStr, nil
+	case sql.OpGt:
+		return leftStr > rightStr, nil
+	case sql.OpGe:
+		return leftStr >= rightStr, nil
+	case sql.OpLike:
+		// Simple LIKE implementation
+		pattern := strings.ReplaceAll(rightStr, "%", ".*")
+		pattern = strings.ReplaceAll(pattern, "_", ".")
+		pattern = "^" + pattern + "$"
+		matched, _ := regexp.MatchString(pattern, leftStr)
+		return matched, nil
+	case sql.OpGlob:
+		// GLOB uses Unix-style wildcards: * and ?
+		pattern := globToRegex(rightStr)
+		matched, _ := regexp.MatchString(pattern, leftStr)
+		return matched, nil
+	default:
+		return false, nil
+	}
 }
 
 // expressionToValue converts an expression to a storage value.
