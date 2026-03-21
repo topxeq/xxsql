@@ -3636,7 +3636,8 @@ func (p *Parser) parsePragma() *PragmaStmt {
 	// Check for (argument) - function-style pragma
 	if p.curTokenIs(TokLParen) {
 		p.nextToken()
-		if !p.curTokenIs(TokIdent) {
+		// Accept identifier or string literal as argument
+		if !p.curTokenIs(TokIdent) && !p.curTokenIs(TokString) {
 			p.error("expected pragma argument")
 			return nil
 		}
