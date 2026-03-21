@@ -29,9 +29,10 @@ type Catalog struct {
 
 // ViewInfo stores view definition.
 type ViewInfo struct {
-	Name    string
-	Query   string // The SQL query string
-	Columns []string
+	Name        string
+	Query       string // The SQL query string
+	Columns     []string
+	CheckOption string // "CASCADED", "LOCAL", or "" (empty for no check)
 }
 
 // TriggerInfo stores trigger definition.
@@ -281,7 +282,7 @@ func (c *Catalog) RenameTable(oldName, newName string) error {
 }
 
 // CreateView creates a new view.
-func (c *Catalog) CreateView(name string, query string, columns []string) error {
+func (c *Catalog) CreateView(name string, query string, columns []string, checkOption string) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
@@ -294,9 +295,10 @@ func (c *Catalog) CreateView(name string, query string, columns []string) error 
 	}
 
 	c.views[name] = &ViewInfo{
-		Name:    name,
-		Query:   query,
-		Columns: columns,
+		Name:        name,
+		Query:       query,
+		Columns:     columns,
+		CheckOption: checkOption,
 	}
 	return c.saveViews()
 }

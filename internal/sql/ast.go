@@ -462,10 +462,11 @@ func (s *DropIndexStmt) String() string {
 
 // CreateViewStmt represents a CREATE VIEW statement.
 type CreateViewStmt struct {
-	ViewName   string
-	Columns    []string // Optional column names
-	SelectStmt Statement
-	OrReplace  bool
+	ViewName    string
+	Columns     []string // Optional column names
+	SelectStmt  Statement
+	OrReplace   bool
+	CheckOption string // "CASCADED", "LOCAL", or "" (empty for no check)
 }
 
 func (s *CreateViewStmt) node()      {}
@@ -490,6 +491,11 @@ func (s *CreateViewStmt) String() string {
 	}
 	sb.WriteString(" AS ")
 	sb.WriteString(s.SelectStmt.String())
+	if s.CheckOption != "" {
+		sb.WriteString(" WITH ")
+		sb.WriteString(s.CheckOption)
+		sb.WriteString(" CHECK OPTION")
+	}
 	return sb.String()
 }
 

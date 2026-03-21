@@ -1668,6 +1668,30 @@ func (p *Parser) parseCreateView(orReplace bool) *CreateViewStmt {
 		return nil
 	}
 
+	// Optional WITH [CASCADED | LOCAL] CHECK OPTION
+	if p.curTokenIs(TokWith) {
+		p.nextToken()
+		// Check for CASCADED or LOCAL (default is CASCADED)
+		if p.curTokenIs(TokCascaded) {
+			stmt.CheckOption = "CASCADED"
+			p.nextToken()
+		} else if p.curTokenIs(TokLocal) {
+			stmt.CheckOption = "LOCAL"
+			p.nextToken()
+		} else {
+			// Default to CASCADED if just WITH CHECK OPTION
+			stmt.CheckOption = "CASCADED"
+		}
+
+		// Expect CHECK OPTION
+		if !p.expect(TokCheck) {
+			return nil
+		}
+		if !p.expect(TokOption) {
+			return nil
+		}
+	}
+
 	return stmt
 }
 

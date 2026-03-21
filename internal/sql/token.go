@@ -162,8 +162,10 @@ const (
 	TokComment
 	TokCheck
 	TokCascade
+	TokCascaded // CASCADED for VIEW CHECK OPTION
 	TokRestrict
 	TokAction
+	TokLocal    // LOCAL for VIEW CHECK OPTION
 	TokDescribe
 	TokBackup
 	TokRestore
@@ -580,6 +582,8 @@ func (t TokenType) String() string {
 		return "GRANTS"
 	case TokOption:
 		return "OPTION"
+	case TokCascaded:
+		return "CASCADED"
 	case TokWith:
 		return "WITH"
 	case TokRecursive:
@@ -848,8 +852,10 @@ var keywords = map[string]TokenType{
 	"COMMENT":      TokComment,
 	"CHECK":        TokCheck,
 	"CASCADE":      TokCascade,
+	"CASCADED":     TokCascaded,
 	"RESTRICT":     TokRestrict,
 	"ACTION":       TokAction,
+	"LOCAL":        TokLocal,
 	"DESCRIBE":     TokDescribe,
 	"BACKUP":       TokBackup,
 	"RESTORE":      TokRestore,

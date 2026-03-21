@@ -4010,13 +4010,30 @@ func (e *Executor) executeInsertInternal(stmt *sql.InsertStmt) (*Result, error) 
 		return nil, fmt.Errorf("table name is required")
 	}
 
-	// Check if table exists
-	if !e.engine.TableOrTempExists(tableName) {
-		return nil, fmt.Errorf("table %s does not exist", tableName)
+	// Check if this is a view and get updatable view info
+	var viewInfo *UpdatableViewInfo
+	var baseTableName string = tableName
+
+	viewInfo, err := e.getUpdatableViewInfo(tableName)
+	if err != nil {
+		return nil, fmt.Errorf("view check error: %w", err)
+	}
+
+	if viewInfo != nil {
+		// This is an updatable view
+		baseTableName = viewInfo.BaseTableName
+	} else if e.engine.ViewExists(tableName) {
+		// This is a non-updatable view
+		return nil, fmt.Errorf("view '%s' is not updatable", tableName)
+	}
+
+	// Check if base table exists
+	if !e.engine.TableOrTempExists(baseTableName) {
+		return nil, fmt.Errorf("table %s does not exist", baseTableName)
 	}
 
 	// Get table info for column mapping
-	tbl, _, err := e.engine.GetTableOrTemp(tableName)
+	tbl, _, err := e.engine.GetTableOrTemp(baseTableName)
 	if err != nil {
 		return nil, err
 	}
@@ -4030,6 +4047,28 @@ func (e *Executor) executeInsertInternal(stmt *sql.InsertStmt) (*Result, error) 
 		for _, col := range tblInfo.Columns {
 			colOrder = append(colOrder, col.Name)
 		}
+	}
+
+	// If inserting through a view, map view columns to base table columns
+	if viewInfo != nil {
+		mappedColOrder := make([]string, len(colOrder))
+		for i, colName := range colOrder {
+			found := false
+			for j, viewCol := range viewInfo.ViewColumns {
+				if strings.EqualFold(viewCol, colName) {
+					if viewInfo.BaseTableCols[j] != "" {
+						mappedColOrder[i] = viewInfo.BaseTableCols[j]
+						found = true
+					}
+					break
+				}
+			}
+			if !found {
+				// Use the original column name (might be a base table column)
+				mappedColOrder[i] = colName
+			}
+		}
+		colOrder = mappedColOrder
 	}
 
 	// Build column index map
@@ -4184,6 +4223,20 @@ func (e *Executor) executeInsertInternal(stmt *sql.InsertStmt) (*Result, error) 
 		// Validate CHECK constraints
 		if err := e.validateCheckConstraints(tbl, values); err != nil {
 			return nil, err
+		}
+
+		// Validate CHECK OPTION for view inserts
+		if viewInfo != nil && viewInfo.CheckOption != "" {
+			// Build values map for CHECK OPTION validation
+			valuesMap := make(map[string]interface{})
+			for i, col := range tblInfo.Columns {
+				if !values[i].Null {
+					valuesMap[strings.ToLower(col.Name)] = e.valueToInterface(values[i])
+				}
+			}
+			if err := e.validateCheckOption(viewInfo, valuesMap, "INSERT"); err != nil {
+				return nil, err
+			}
 		}
 
 		// Validate FOREIGN KEY constraints
@@ -4437,13 +4490,30 @@ func (e *Executor) executeUpdateInternal(stmt *sql.UpdateStmt) (*Result, error) 
 		return nil, fmt.Errorf("table name is required")
 	}
 
-	// Check if table exists
-	if !e.engine.TableOrTempExists(tableName) {
-		return nil, fmt.Errorf("table %s does not exist", tableName)
+	// Check if this is a view and get updatable view info
+	var viewInfo *UpdatableViewInfo
+	var baseTableName string = tableName
+
+	viewInfo, err := e.getUpdatableViewInfo(tableName)
+	if err != nil {
+		return nil, fmt.Errorf("view check error: %w", err)
+	}
+
+	if viewInfo != nil {
+		// This is an updatable view
+		baseTableName = viewInfo.BaseTableName
+	} else if e.engine.ViewExists(tableName) {
+		// This is a non-updatable view
+		return nil, fmt.Errorf("view '%s' is not updatable", tableName)
+	}
+
+	// Check if base table exists
+	if !e.engine.TableOrTempExists(baseTableName) {
+		return nil, fmt.Errorf("table %s does not exist", baseTableName)
 	}
 
 	// Get table info
-	tbl, _, err := e.engine.GetTableOrTemp(tableName)
+	tbl, _, err := e.engine.GetTableOrTemp(baseTableName)
 	if err != nil {
 		return nil, err
 	}
@@ -4594,7 +4664,44 @@ func (e *Executor) executeUpdateInternal(stmt *sql.UpdateStmt) (*Result, error) 
 	}
 
 	// Execute update
-	affected, err := tbl.Update(predicate, updates)
+	var affected int
+
+	// If updating through a view with CHECK OPTION, validate each row
+	if viewInfo != nil && viewInfo.CheckOption != "" {
+		// Get all rows and validate CHECK OPTION
+		rows, err := tbl.Scan()
+		if err != nil {
+			return nil, fmt.Errorf("scan error: %w", err)
+		}
+
+		for _, r := range rows {
+			if !predicate(r) {
+				continue
+			}
+
+			// Build new values after update
+			newVals := make([]types.Value, len(r.Values))
+			copy(newVals, r.Values)
+			for idx, val := range updates {
+				newVals[idx] = val
+			}
+
+			// Build values map for CHECK OPTION validation
+			valuesMap := make(map[string]interface{})
+			for i, col := range tblInfo.Columns {
+				if !newVals[i].Null {
+					valuesMap[strings.ToLower(col.Name)] = e.valueToInterface(newVals[i])
+				}
+			}
+
+			// Validate CHECK OPTION
+			if err := e.validateCheckOption(viewInfo, valuesMap, "UPDATE"); err != nil {
+				return nil, err
+			}
+		}
+	}
+
+	affected, err = tbl.Update(predicate, updates)
 	if err != nil {
 		return nil, fmt.Errorf("update error: %w", err)
 	}
@@ -5666,6 +5773,360 @@ func (e *Executor) GetFTSManager() *fts.FTSManager {
 	return e.ftsManager
 }
 
+// UpdatableViewInfo contains information about an updatable view.
+type UpdatableViewInfo struct {
+	BaseTableName  string
+	BaseTableCols  []string // Column names in the base table
+	ViewColumns    []string // Column names in the view (mapped to base)
+	WhereClause    sql.Expression
+	CheckOption    string // "CASCADED", "LOCAL", or ""
+	UnderlyingView *UpdatableViewInfo // For nested views
+}
+
+// getUpdatableViewInfo checks if a name refers to an updatable view
+// and returns information needed for INSERT/UPDATE/DELETE operations.
+func (e *Executor) getUpdatableViewInfo(name string) (*UpdatableViewInfo, error) {
+	// Check if it's a view
+	if !e.engine.ViewExists(name) {
+		return nil, nil // Not a view
+	}
+
+	viewInfo, err := e.engine.GetView(name)
+	if err != nil {
+		return nil, err
+	}
+
+	// Parse the view's query
+	parser := sql.NewParser(viewInfo.Query)
+	selectStmt, err := parser.Parse()
+	if err != nil {
+		return nil, fmt.Errorf("view query parse error: %w", err)
+	}
+
+	selectNode, ok := selectStmt.(*sql.SelectStmt)
+	if !ok {
+		return nil, nil // Not a simple SELECT
+	}
+
+	// Check if it's a simple updatable view (single table, no GROUP BY, no DISTINCT, no aggregates)
+	if selectNode.From == nil || selectNode.From.Table == nil {
+		return nil, nil // No FROM clause
+	}
+
+	// Check for JOINs
+	if len(selectNode.From.Joins) > 0 {
+		return nil, nil // Has joins
+	}
+
+	// Check for subquery in FROM
+	if selectNode.From.Table.Subquery != nil {
+		return nil, nil // Subquery in FROM
+	}
+
+	baseTableName := selectNode.From.Table.Name
+	if baseTableName == "" {
+		return nil, nil
+	}
+
+	// Check if base table exists (could be another view)
+	var underlyingView *UpdatableViewInfo
+	if e.engine.ViewExists(baseTableName) {
+		// Recursively get underlying view info
+		underlyingView, err = e.getUpdatableViewInfo(baseTableName)
+		if err != nil {
+			return nil, err
+		}
+		if underlyingView == nil {
+			return nil, nil // Underlying view is not updatable
+		}
+		baseTableName = underlyingView.BaseTableName
+	} else if !e.engine.TableOrTempExists(selectNode.From.Table.Name) {
+		return nil, nil // Base doesn't exist
+	}
+
+	// Check for GROUP BY, HAVING, aggregates
+	if len(selectNode.GroupBy) > 0 || selectNode.Having != nil {
+		return nil, nil
+	}
+	if selectNode.Distinct {
+		return nil, nil
+	}
+
+	// Check for aggregates in SELECT
+	for _, col := range selectNode.Columns {
+		if hasAggregate(col) {
+			return nil, nil
+		}
+	}
+
+	// Get column mappings
+	viewColumns := make([]string, 0, len(selectNode.Columns))
+	baseTableCols := make([]string, 0, len(selectNode.Columns))
+
+	for _, col := range selectNode.Columns {
+		// Check for alias - use column string representation
+		viewColumns = append(viewColumns, col.String())
+
+		// Get the base column name
+		if colRef, ok := col.(*sql.ColumnRef); ok {
+			baseTableCols = append(baseTableCols, colRef.Name)
+		} else {
+			// Complex expression - not directly updatable
+			baseTableCols = append(baseTableCols, "")
+		}
+	}
+
+	// Determine effective check option
+	checkOption := viewInfo.CheckOption
+
+	return &UpdatableViewInfo{
+		BaseTableName:  baseTableName,
+		BaseTableCols:  baseTableCols,
+		ViewColumns:    viewColumns,
+		WhereClause:    selectNode.Where,
+		CheckOption:    checkOption,
+		UnderlyingView: underlyingView,
+	}, nil
+}
+
+// hasAggregate checks if an expression contains an aggregate function.
+func hasAggregate(expr sql.Expression) bool {
+	if expr == nil {
+		return false
+	}
+
+	switch e := expr.(type) {
+	case *sql.FunctionCall:
+		switch strings.ToUpper(e.Name) {
+		case "COUNT", "SUM", "AVG", "MIN", "MAX", "GROUP_CONCAT":
+			return true
+		}
+		for _, arg := range e.Args {
+			if hasAggregate(arg) {
+				return true
+			}
+		}
+	case *sql.BinaryExpr:
+		return hasAggregate(e.Left) || hasAggregate(e.Right)
+	case *sql.UnaryExpr:
+		return hasAggregate(e.Right)
+	case *sql.CaseExpr:
+		if hasAggregate(e.Expr) {
+			return true
+		}
+		for _, when := range e.Whens {
+			if hasAggregate(when.Condition) || hasAggregate(when.Result) {
+				return true
+			}
+		}
+		if hasAggregate(e.Else) {
+			return true
+		}
+	}
+
+	return false
+}
+
+// validateCheckOption validates that a row satisfies the view's WHERE clause.
+// Returns an error if CHECK OPTION is set and the row doesn't match.
+func (e *Executor) validateCheckOption(viewInfo *UpdatableViewInfo, rowValues map[string]interface{}, operation string) error {
+	if viewInfo.CheckOption == "" {
+		return nil
+	}
+
+	// For CASCADED, check all underlying views regardless of their CHECK OPTION
+	// For LOCAL, only check underlying views that have their own CHECK OPTION
+	if viewInfo.UnderlyingView != nil {
+		if viewInfo.CheckOption == "CASCADED" {
+			// CASCADED: Check all underlying views
+			if err := e.validateCheckOptionRecursive(viewInfo.UnderlyingView, rowValues, operation); err != nil {
+				return err
+			}
+		} else if viewInfo.UnderlyingView.CheckOption != "" {
+			// LOCAL: Only check underlying views that have their own CHECK OPTION
+			if err := e.validateCheckOption(viewInfo.UnderlyingView, rowValues, operation); err != nil {
+				return err
+			}
+		}
+	}
+
+	// Check current view's WHERE clause
+	if viewInfo.WhereClause != nil {
+		// Evaluate the WHERE clause with the row values
+		result, err := e.evaluateConditionWithValues(viewInfo.WhereClause, rowValues)
+		if err != nil {
+			return fmt.Errorf("check option evaluation error: %w", err)
+		}
+
+		if !result {
+			return fmt.Errorf("CHECK OPTION violation: %s would not be visible through the view", operation)
+		}
+	}
+
+	return nil
+}
+
+// validateCheckOptionRecursive checks all views in the hierarchy regardless of their CHECK OPTION settings.
+// This is used for CASCADED check option.
+func (e *Executor) validateCheckOptionRecursive(viewInfo *UpdatableViewInfo, rowValues map[string]interface{}, operation string) error {
+	// Check underlying views first
+	if viewInfo.UnderlyingView != nil {
+		if err := e.validateCheckOptionRecursive(viewInfo.UnderlyingView, rowValues, operation); err != nil {
+			return err
+		}
+	}
+
+	// Check current view's WHERE clause
+	if viewInfo.WhereClause != nil {
+		result, err := e.evaluateConditionWithValues(viewInfo.WhereClause, rowValues)
+		if err != nil {
+			return fmt.Errorf("check option evaluation error: %w", err)
+		}
+
+		if !result {
+			return fmt.Errorf("CHECK OPTION violation: %s would not be visible through the view", operation)
+		}
+	}
+
+	return nil
+}
+
+// evaluateConditionWithValues evaluates a condition with a map of values.
+func (e *Executor) evaluateConditionWithValues(expr sql.Expression, values map[string]interface{}) (bool, error) {
+	// Evaluate the expression
+	result, err := e.evaluateExprWithValues(expr, values)
+	if err != nil {
+		return false, err
+	}
+
+	if result == nil {
+		return false, nil
+	}
+
+	switch v := result.(type) {
+	case bool:
+		return v, nil
+	case int64:
+		return v != 0, nil
+	case float64:
+		return v != 0, nil
+	default:
+		return false, fmt.Errorf("condition did not evaluate to boolean")
+	}
+}
+
+// evaluateExprWithValues evaluates an expression with a map of values.
+func (e *Executor) evaluateExprWithValues(expr sql.Expression, values map[string]interface{}) (interface{}, error) {
+	if expr == nil {
+		return nil, nil
+	}
+
+	switch ex := expr.(type) {
+	case *sql.ColumnRef:
+		colName := strings.ToLower(ex.Name)
+		if val, ok := values[colName]; ok {
+			return val, nil
+		}
+		return nil, fmt.Errorf("column %s not found in values", ex.Name)
+
+	case *sql.Literal:
+		switch ex.Type {
+		case sql.LiteralString:
+			if s, ok := ex.Value.(string); ok {
+				return s, nil
+			}
+			return fmt.Sprintf("%v", ex.Value), nil
+		case sql.LiteralNumber:
+			switch v := ex.Value.(type) {
+			case int64:
+				return v, nil
+			case float64:
+				return v, nil
+			case int:
+				return int64(v), nil
+			case string:
+				if i, err := strconv.ParseInt(v, 10, 64); err == nil {
+					return i, nil
+				}
+				if f, err := strconv.ParseFloat(v, 64); err == nil {
+					return f, nil
+				}
+			}
+			return ex.Value, nil
+		case sql.LiteralBool:
+			if b, ok := ex.Value.(bool); ok {
+				return b, nil
+			}
+			return false, nil
+		case sql.LiteralNull:
+			return nil, nil
+		}
+		return ex.Value, nil
+
+	case *sql.BinaryExpr:
+		left, err := e.evaluateExprWithValues(ex.Left, values)
+		if err != nil {
+			return nil, err
+		}
+		right, err := e.evaluateExprWithValues(ex.Right, values)
+		if err != nil {
+			return nil, err
+		}
+		return e.compareValues(left, ex.Op, right)
+
+	case *sql.UnaryExpr:
+		operand, err := e.evaluateExprWithValues(ex.Right, values)
+		if err != nil {
+			return nil, err
+		}
+		switch ex.Op {
+		case sql.OpNeg:
+			switch v := operand.(type) {
+			case int64:
+				return -v, nil
+			case float64:
+				return -v, nil
+			}
+		case sql.OpNot:
+			if b, ok := operand.(bool); ok {
+				return !b, nil
+			}
+		}
+		return operand, nil
+
+	case *sql.IsNullExpr:
+		val, err := e.evaluateExprWithValues(ex.Expr, values)
+		if err != nil {
+			return nil, err
+		}
+		if ex.Not {
+			return val != nil, nil
+		}
+		return val == nil, nil
+
+	case *sql.InExpr:
+		val, err := e.evaluateExprWithValues(ex.Expr, values)
+		if err != nil {
+			return nil, err
+		}
+		for _, listExpr := range ex.List {
+			listVal, err := e.evaluateExprWithValues(listExpr, values)
+			if err != nil {
+				return nil, err
+			}
+			if compareEqual(val, listVal) {
+				return true, nil
+			}
+		}
+		return false, nil
+
+	case *sql.ParenExpr:
+		return e.evaluateExprWithValues(ex.Expr, values)
+	}
+
+	return nil, fmt.Errorf("unsupported expression type for CHECK OPTION evaluation: %T", expr)
+}
+
 // executeCreateView executes a CREATE VIEW statement.
 func (e *Executor) executeCreateView(stmt *sql.CreateViewStmt) (*Result, error) {
 	// Check if table or view already exists
@@ -5687,7 +6148,7 @@ func (e *Executor) executeCreateView(stmt *sql.CreateViewStmt) (*Result, error) 
 	query := stmt.SelectStmt.String()
 
 	// Create the view
-	if err := e.engine.CreateView(stmt.ViewName, query, stmt.Columns); err != nil {
+	if err := e.engine.CreateView(stmt.ViewName, query, stmt.Columns, stmt.CheckOption); err != nil {
 		return nil, fmt.Errorf("create view error: %w", err)
 	}
 

@@ -300,11 +300,11 @@ func (e *Engine) ViewExists(name string) bool {
 }
 
 // CreateView creates a new view.
-func (e *Engine) CreateView(name, query string, columns []string) error {
+func (e *Engine) CreateView(name, query string, columns []string, checkOption string) error {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 
-	return e.catalog.CreateView(name, query, columns)
+	return e.catalog.CreateView(name, query, columns, checkOption)
 }
 
 // GetView returns a view by name.
