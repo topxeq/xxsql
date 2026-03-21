@@ -4452,6 +4452,36 @@ func (e *Executor) executeUpdateInternal(stmt *sql.UpdateStmt) (*Result, error) 
 		return nil, err
 	}
 
+	// Handle foreign key ON UPDATE cascade
+	// Find primary key column
+	pkColIdx := -1
+	pkColName := ""
+	for i, col := range tblInfo.Columns {
+		if col.PrimaryKey {
+			pkColIdx = i
+			pkColName = col.Name
+			break
+		}
+	}
+
+	// If updating primary key, handle cascade
+	if pkColIdx >= 0 && pkColName != "" {
+		if oldVal, hasOld := updates[pkColIdx]; hasOld {
+			// Get current rows to find old values
+			currentRows, err := tbl.Scan()
+			if err == nil {
+				for _, r := range currentRows {
+					if predicate(r) && pkColIdx < len(r.Values) {
+						// Handle FK cascade for this row's old value -> new value
+						if err := e.handleForeignKeyOnUpdate(tableName, r.Values[pkColIdx], oldVal, pkColName); err != nil {
+							return nil, err
+						}
+					}
+				}
+			}
+		}
+	}
+
 	// Execute update
 	affected, err := tbl.Update(predicate, updates)
 	if err != nil {
@@ -4735,6 +4765,38 @@ func (e *Executor) executeDeleteInternal(stmt *sql.DeleteStmt) (*Result, error) 
 					if predicate(r) {
 						rowIDsToDelete = append(rowIDsToDelete, uint64(r.ID))
 					}
+				}
+			}
+		}
+	}
+
+	// Collect rows to delete and handle foreign key cascade
+	rows, err := tbl.Scan()
+	if err != nil {
+		return nil, err
+	}
+
+	// Build column index map for FK reference columns
+	// Find primary key columns or use first column
+	pkColIdx := 0
+	pkColName := ""
+	for i, col := range tblInfo.Columns {
+		if col.PrimaryKey {
+			pkColIdx = i
+			pkColName = col.Name
+			break
+		}
+	}
+	if pkColName == "" && len(tblInfo.Columns) > 0 {
+		pkColName = tblInfo.Columns[0].Name
+	}
+
+	// Handle foreign key ON DELETE actions for each row
+	for _, r := range rows {
+		if predicate(r) {
+			if pkColIdx < len(r.Values) {
+				if err := e.handleForeignKeyOnDelete(tableName, r.Values[pkColIdx], pkColName); err != nil {
+					return nil, err
 				}
 			}
 		}
@@ -10807,6 +10869,186 @@ func (e *Executor) validateForeignKeys(tbl *table.Table, values []types.Value, i
 		if !found {
 			return fmt.Errorf("foreign key constraint fails: key '%s' not found in table '%s'",
 				fkValue.String(), fk.RefTable)
+		}
+	}
+
+	return nil
+}
+
+// getReferencingTables finds all tables that have foreign keys referencing the given table.
+func (e *Executor) getReferencingTables(tableName string) []struct {
+	table *table.Table
+	fk    *types.ForeignKeyInfo
+} {
+	var result []struct {
+		table *table.Table
+		fk    *types.ForeignKeyInfo
+	}
+
+	tables := e.engine.ListTables()
+	for _, tName := range tables {
+		tbl, err := e.engine.GetTable(tName)
+		if err != nil {
+			continue
+		}
+
+		for _, fk := range tbl.GetForeignKeys() {
+			if strings.EqualFold(fk.RefTable, tableName) {
+				result = append(result, struct {
+					table *table.Table
+					fk    *types.ForeignKeyInfo
+				}{tbl, fk})
+			}
+		}
+	}
+
+	return result
+}
+
+// handleForeignKeyOnDelete handles ON DELETE actions for foreign keys.
+func (e *Executor) handleForeignKeyOnDelete(tableName string, deletedValue types.Value, refColName string) error {
+	referencing := e.getReferencingTables(tableName)
+
+	for _, ref := range referencing {
+		fk := ref.fk
+		tbl := ref.table
+		tblInfo := tbl.GetInfo()
+
+		// Check if this FK references the specific column that was deleted
+		if len(fk.RefColumns) == 0 || !strings.EqualFold(fk.RefColumns[0], refColName) {
+			continue
+		}
+
+		// Get the FK column index in the child table
+		childColIdx := -1
+		for i, col := range tblInfo.Columns {
+			if strings.EqualFold(col.Name, fk.Columns[0]) {
+				childColIdx = i
+				break
+			}
+		}
+		if childColIdx < 0 {
+			continue
+		}
+
+		// NULL values don't need cascade handling
+		if deletedValue.Null {
+			continue
+		}
+
+		// Build predicate to find matching rows in child table
+		finalChildColIdx := childColIdx
+		predicate := func(r *row.Row) bool {
+			if finalChildColIdx >= len(r.Values) || r.Values[finalChildColIdx].Null {
+				return false
+			}
+			return r.Values[finalChildColIdx].Compare(deletedValue) == 0
+		}
+
+		switch strings.ToUpper(fk.OnDelete) {
+		case "CASCADE":
+			// Delete matching rows
+			_, err := tbl.Delete(predicate)
+			if err != nil {
+				return err
+			}
+		case "SET NULL":
+			// Set FK column to NULL
+			updates := map[int]types.Value{finalChildColIdx: types.NewNullValue()}
+			_, err := tbl.Update(predicate, updates)
+			if err != nil {
+				return err
+			}
+		case "RESTRICT", "NO ACTION", "":
+			// Check if there are any matching rows - if so, error
+			rows, err := tbl.Scan()
+			if err != nil {
+				return err
+			}
+			for _, r := range rows {
+				if predicate(r) {
+					return fmt.Errorf("foreign key constraint fails: cannot delete row from table '%s' because it is referenced by table '%s'",
+						tableName, tblInfo.Name)
+				}
+			}
+		}
+	}
+
+	return nil
+}
+
+// handleForeignKeyOnUpdate handles ON UPDATE actions for foreign keys.
+func (e *Executor) handleForeignKeyOnUpdate(tableName string, oldValue, newValue types.Value, refColName string) error {
+	// If value didn't change, nothing to do
+	if oldValue.Compare(newValue) == 0 {
+		return nil
+	}
+
+	referencing := e.getReferencingTables(tableName)
+
+	for _, ref := range referencing {
+		fk := ref.fk
+		tbl := ref.table
+		tblInfo := tbl.GetInfo()
+
+		// Check if this FK references the specific column that was updated
+		if len(fk.RefColumns) == 0 || !strings.EqualFold(fk.RefColumns[0], refColName) {
+			continue
+		}
+
+		// Get the FK column index in the child table
+		childColIdx := -1
+		for i, col := range tblInfo.Columns {
+			if strings.EqualFold(col.Name, fk.Columns[0]) {
+				childColIdx = i
+				break
+			}
+		}
+		if childColIdx < 0 {
+			continue
+		}
+
+		// NULL values don't need cascade handling
+		if oldValue.Null {
+			continue
+		}
+
+		// Build predicate to find matching rows in child table
+		finalChildColIdx := childColIdx
+		predicate := func(r *row.Row) bool {
+			if finalChildColIdx >= len(r.Values) || r.Values[finalChildColIdx].Null {
+				return false
+			}
+			return r.Values[finalChildColIdx].Compare(oldValue) == 0
+		}
+
+		switch strings.ToUpper(fk.OnUpdate) {
+		case "CASCADE":
+			// Update matching rows to new value
+			updates := map[int]types.Value{finalChildColIdx: newValue}
+			_, err := tbl.Update(predicate, updates)
+			if err != nil {
+				return err
+			}
+		case "SET NULL":
+			// Set FK column to NULL
+			updates := map[int]types.Value{finalChildColIdx: types.NewNullValue()}
+			_, err := tbl.Update(predicate, updates)
+			if err != nil {
+				return err
+			}
+		case "RESTRICT", "NO ACTION", "":
+			// Check if there are any matching rows - if so, error
+			rows, err := tbl.Scan()
+			if err != nil {
+				return err
+			}
+			for _, r := range rows {
+				if predicate(r) {
+					return fmt.Errorf("foreign key constraint fails: cannot update row from table '%s' because it is referenced by table '%s'",
+						tableName, tblInfo.Name)
+				}
+			}
 		}
 	}
 
