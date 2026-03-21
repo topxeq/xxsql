@@ -13,6 +13,7 @@ import (
 	"github.com/topxeq/xxsql/internal/auth"
 	"github.com/topxeq/xxsql/internal/backup"
 	"github.com/topxeq/xxsql/internal/executor"
+	"github.com/topxeq/xxsql/internal/xxscript"
 )
 
 // handleAPIStatus handles GET /api/status.
@@ -671,5 +672,66 @@ func (s *Server) handleAPIKeyDetail(w http.ResponseWriter, r *http.Request) {
 
 	default:
 		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+	}
+}
+
+// handleMicroservice handles /ms/<table>/<skey> requests.
+// It looks up the script from the specified table and executes it.
+func (s *Server) handleMicroservice(w http.ResponseWriter, r *http.Request) {
+	// Parse path: /ms/<table>/<skey>
+	path := strings.TrimPrefix(r.URL.Path, "/ms/")
+	parts := strings.Split(path, "/")
+
+	if len(parts) < 2 {
+		writeError(w, http.StatusBadRequest, "invalid path format: expected /ms/<table>/<skey>")
+		return
+	}
+
+	tableName := parts[0]
+	skey := parts[1]
+
+	// Query the script from the table
+	// Table must have SKEY (primary key) and SCRIPT columns
+	query := fmt.Sprintf("SELECT SCRIPT FROM %s WHERE SKEY = '%s'", tableName, skey)
+
+	exec := executor.NewExecutor(s.engine)
+	result, err := exec.Execute(query)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, fmt.Sprintf("query error: %v", err))
+		return
+	}
+
+	if len(result.Rows) == 0 {
+		writeError(w, http.StatusNotFound, fmt.Sprintf("script not found: %s/%s", tableName, skey))
+		return
+	}
+
+	// Get the script
+	var script string
+	if len(result.Rows[0]) > 0 {
+		script = fmt.Sprintf("%v", result.Rows[0][0])
+	}
+
+	if script == "" {
+		writeError(w, http.StatusNotFound, "empty script")
+		return
+	}
+
+	// Create execution context
+	ctx := xxscript.NewContext()
+	ctx.Executor = exec
+	ctx.Engine = s.engine
+	ctx.HTTPWriter = w
+	ctx.HTTPRequest = r
+	ctx.SetupBuiltins()
+
+	// Execute the script
+	_, err = xxscript.Run(script, ctx)
+	if err != nil {
+		// Return error as JSON if no content written yet
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusInternalServerError)
+		fmt.Fprintf(w, `{"error": %q}`, err.Error())
+		return
 	}
 }

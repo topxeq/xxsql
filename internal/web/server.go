@@ -17,6 +17,7 @@ import (
 	"github.com/topxeq/xxsql/internal/auth"
 	"github.com/topxeq/xxsql/internal/backup"
 	"github.com/topxeq/xxsql/internal/config"
+	"github.com/topxeq/xxsql/internal/executor"
 	"github.com/topxeq/xxsql/internal/storage"
 )
 
@@ -34,6 +35,7 @@ type Server struct {
 	templates     *template.Template
 	sessions      map[string]*Session
 	startTime     time.Time
+	executor      *executor.Executor
 }
 
 // Session represents a web session.
@@ -109,6 +111,9 @@ func (s *Server) Start() error {
 	mux.HandleFunc("/api/logout", s.handleAPILogout)
 	mux.HandleFunc("/api/keys", s.handleAPIKeys)
 	mux.HandleFunc("/api/keys/", s.handleAPIKeyDetail)
+
+	// Microservice routes (XxScript)
+	mux.HandleFunc("/ms/", s.handleMicroservice)
 
 	// Create server
 	addr := fmt.Sprintf("%s:%d", s.config.Network.Bind, s.config.Network.HTTPPort)
