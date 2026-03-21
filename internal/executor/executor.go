@@ -3352,11 +3352,38 @@ func (e *Executor) executeSelectFromCTE(stmt *sql.SelectStmt, cteResult *Result)
 				Type: "VARCHAR",
 			}
 			if expr.Alias != "" {
-				ci.Alias = expr.Alias
+				ci.Name = expr.Alias
 			}
 			result.Columns = append(result.Columns, ci)
+		case *sql.BinaryExpr:
+			// Binary expressions can have aliases
+			colName := fmt.Sprintf("expr_%d", len(result.Columns)+1)
+			if expr.Alias != "" {
+				colName = expr.Alias
+			}
+			result.Columns = append(result.Columns, ColumnInfo{
+				Name: colName,
+				Type: "VARCHAR",
+			})
+		case *sql.Literal:
+			// Literals can have aliases
+			colName := fmt.Sprintf("expr_%d", len(result.Columns)+1)
+			if expr.Alias != "" {
+				colName = expr.Alias
+			}
+			result.Columns = append(result.Columns, ColumnInfo{
+				Name: colName,
+				Type: "VARCHAR",
+			})
+		case *sql.FunctionCall:
+			// Function calls - use function name as column name
+			colName := expr.Name + "()"
+			result.Columns = append(result.Columns, ColumnInfo{
+				Name: colName,
+				Type: "VARCHAR",
+			})
 		default:
-			// Handle other expressions (literals, functions, etc.)
+			// Handle other expressions
 			ci := ColumnInfo{
 				Name: fmt.Sprintf("expr_%d", len(result.Columns)+1),
 				Type: "VARCHAR",
