@@ -12633,21 +12633,50 @@ func timestampDiff(unit string, t1, t2 time.Time) int64 {
 }
 
 // globToRegex converts a GLOB pattern to a regex pattern.
-// GLOB uses: * (any sequence), ? (any single char), [abc] (character set)
+// GLOB uses: * (any sequence), ? (any single char), [abc] (character set), [a-z] (range)
+// SQLite GLOB is case-sensitive and uses Unix-style wildcards.
 func globToRegex(pattern string) string {
 	var result strings.Builder
 	result.WriteString("^")
 
 	i := 0
-	for i < len(pattern) {
+	n := len(pattern)
+	for i < n {
 		c := pattern[i]
 		switch c {
 		case '*':
 			result.WriteString(".*")
 		case '?':
 			result.WriteString(".")
-		case '[', ']', '(', ')', '{', '}', '.', '+', '^', '$', '|', '\\':
-			// Escape regex special characters (except * and ? which we handle)
+		case '[':
+			// Handle character set [abc] or [a-z] or [!abc] or [^abc]
+			result.WriteByte('[')
+			i++
+			if i < n {
+				// Handle negation: [!abc] or [^abc]
+				if pattern[i] == '!' || pattern[i] == '^' {
+					result.WriteByte('^')
+					i++
+				}
+				// Copy everything until closing ]
+				for i < n && pattern[i] != ']' {
+					if pattern[i] == '\\' {
+						// Escape backslash in regex
+						result.WriteString("\\\\")
+					} else {
+						result.WriteByte(pattern[i])
+					}
+					i++
+				}
+				if i < n {
+					result.WriteByte(']')
+				}
+			}
+		case ']':
+			// Unmatched ] - escape it
+			result.WriteString("\\]")
+		case '(', ')', '{', '}', '.', '+', '^', '$', '|', '\\':
+			// Escape other regex special characters
 			result.WriteByte('\\')
 			result.WriteByte(c)
 		default:
