@@ -18,14 +18,19 @@ type Engine struct {
 	ftsMgr    *fts.FTSManager
 	dataDir   string
 	mu        sync.RWMutex
+
+	// Temporary tables (session-scoped, not persisted)
+	tempTables     map[string]*table.Table
+	tempTablesMu   sync.RWMutex
 }
 
 // NewEngine creates a new storage engine.
 func NewEngine(dataDir string) *Engine {
 	return &Engine{
-		catalog: catalog.NewCatalog(dataDir),
-		ftsMgr:  fts.NewFTSManager(dataDir),
-		dataDir: dataDir,
+		catalog:    catalog.NewCatalog(dataDir),
+		ftsMgr:     fts.NewFTSManager(dataDir),
+		dataDir:    dataDir,
+		tempTables: make(map[string]*table.Table),
 	}
 }
 
@@ -101,6 +106,15 @@ func (e *Engine) Insert(tableName string, values []types.Value) (row.RowID, erro
 
 // Scan scans all rows from a table.
 func (e *Engine) Scan(tableName string) ([]*row.Row, error) {
+	// Check temp tables first
+	e.tempTablesMu.RLock()
+	if tbl, exists := e.tempTables[tableName]; exists {
+		e.tempTablesMu.RUnlock()
+		return tbl.Scan()
+	}
+	e.tempTablesMu.RUnlock()
+
+	// Check regular tables
 	t, err := e.catalog.GetTable(tableName)
 	if err != nil {
 		return nil, err
@@ -120,6 +134,128 @@ func (e *Engine) RenameTable(oldName, newName string) error {
 	defer e.mu.Unlock()
 
 	return e.catalog.RenameTable(oldName, newName)
+}
+
+// CreateTempTable creates a temporary table.
+// Temp tables are session-scoped and not persisted to disk.
+// A temp table can shadow a regular table with the same name.
+func (e *Engine) CreateTempTable(name string, columns []*types.ColumnInfo) error {
+	e.tempTablesMu.Lock()
+	defer e.tempTablesMu.Unlock()
+
+	// Check if temp table already exists
+	if _, exists := e.tempTables[name]; exists {
+		return fmt.Errorf("temp table %s already exists", name)
+	}
+
+	// Create an in-memory table for temp data
+	tbl := table.NewTempTable(name, columns)
+	e.tempTables[name] = tbl
+
+	return nil
+}
+
+// DropTempTable drops a temporary table.
+func (e *Engine) DropTempTable(name string) error {
+	e.tempTablesMu.Lock()
+	defer e.tempTablesMu.Unlock()
+
+	if _, exists := e.tempTables[name]; !exists {
+		return fmt.Errorf("temp table %s does not exist", name)
+	}
+
+	delete(e.tempTables, name)
+	return nil
+}
+
+// TempTableExists checks if a temporary table exists.
+func (e *Engine) TempTableExists(name string) bool {
+	e.tempTablesMu.RLock()
+	defer e.tempTablesMu.RUnlock()
+
+	_, exists := e.tempTables[name]
+	return exists
+}
+
+// GetTempTable returns a temporary table by name.
+func (e *Engine) GetTempTable(name string) (*table.Table, error) {
+	e.tempTablesMu.RLock()
+	defer e.tempTablesMu.RUnlock()
+
+	tbl, exists := e.tempTables[name]
+	if !exists {
+		return nil, fmt.Errorf("temp table %s does not exist", name)
+	}
+	return tbl, nil
+}
+
+// GetTableOrTemp returns a table by name, checking both regular and temp tables.
+// Temp tables have priority over regular tables with the same name.
+func (e *Engine) GetTableOrTemp(name string) (*table.Table, bool, error) {
+	// Check temp tables first
+	e.tempTablesMu.RLock()
+	if tbl, exists := e.tempTables[name]; exists {
+		e.tempTablesMu.RUnlock()
+		return tbl, true, nil // isTemp = true
+	}
+	e.tempTablesMu.RUnlock()
+
+	// Check regular tables
+	tbl, err := e.catalog.GetTable(name)
+	if err != nil {
+		return nil, false, err
+	}
+	return tbl, false, nil // isTemp = false
+}
+
+// TableOrTempExists checks if a table exists (regular or temp).
+func (e *Engine) TableOrTempExists(name string) bool {
+	// Check temp tables first
+	e.tempTablesMu.RLock()
+	if _, exists := e.tempTables[name]; exists {
+		e.tempTablesMu.RUnlock()
+		return true
+	}
+	e.tempTablesMu.RUnlock()
+
+	// Check regular tables
+	return e.catalog.TableExists(name)
+}
+
+// DropTableOrTemp drops a table (regular or temp).
+func (e *Engine) DropTableOrTemp(name string) error {
+	// Check if it's a temp table
+	e.tempTablesMu.Lock()
+	if _, exists := e.tempTables[name]; exists {
+		delete(e.tempTables, name)
+		e.tempTablesMu.Unlock()
+		return nil
+	}
+	e.tempTablesMu.Unlock()
+
+	// Drop regular table
+	return e.catalog.DropTable(name)
+}
+
+// ListTempTables returns all temporary table names.
+func (e *Engine) ListTempTables() []string {
+	e.tempTablesMu.RLock()
+	defer e.tempTablesMu.RUnlock()
+
+	names := make([]string, 0, len(e.tempTables))
+	for name := range e.tempTables {
+		names = append(names, name)
+	}
+	return names
+}
+
+// ClearTempTables clears all temporary tables.
+// Called when session ends.
+func (e *Engine) ClearTempTables() {
+	e.tempTablesMu.Lock()
+	defer e.tempTablesMu.Unlock()
+
+	e.tempTables = make(map[string]*table.Table)
 }
 
 // CreateIndex creates an index on a table.

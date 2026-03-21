@@ -159,6 +159,49 @@ func OpenTable(dataDir, name string, columns []*types.ColumnInfo) (*Table, error
 	return t, nil
 }
 
+// NewTempTable creates a temporary in-memory table.
+// Temp tables are not persisted to disk and are cleared when the session ends.
+func NewTempTable(name string, columns []*types.ColumnInfo) *Table {
+	t := &Table{
+		info: &TableInfo{
+			Name:       name,
+			Columns:    columns,
+			CreatedAt:  time.Now(),
+			ModifiedAt: time.Now(),
+			NextRowID:  1,
+			NextPageID: 2, // Start from 2 since page 1 is root
+			RootPageID: 1, // Root page is page 1
+			State:      TableStateActive,
+		},
+		dataDir:   "", // No data dir for temp tables
+		pages:     make(map[page.PageID]*page.Page),
+		indexMgr:  btree.NewIndexManager(name, nil),
+		columnMap: make(map[string]int),
+		rowToPage: make(map[row.RowID]page.PageID),
+	}
+
+	// Build column map
+	for i, col := range columns {
+		t.columnMap[col.Name] = i
+	}
+
+	// Initialize in-memory sequence manager (no file)
+	t.seqMgr = sequence.NewManager("", nil)
+
+	// Create the initial root page for data
+	rootPage := page.NewPage(1, page.PageTypeData)
+	rootPage.SetLeaf(true)
+	t.pages[1] = rootPage
+
+	// Create primary key index if needed
+	t.createPrimaryKeyIndex()
+
+	// Create sequences for auto-increment columns
+	t.createAutoIncrementSequences()
+
+	return t
+}
+
 // createPrimaryKeyIndex creates a primary key index if the table has a primary key.
 func (t *Table) createPrimaryKeyIndex() {
 	// Check for primary key columns
@@ -250,7 +293,13 @@ func (t *Table) Close() error {
 }
 
 // Flush flushes all dirty pages to disk.
+// For temp tables, this is a no-op since they're in-memory only.
 func (t *Table) Flush() error {
+	// Temp tables don't persist
+	if t.dataFile == nil {
+		return nil
+	}
+
 	t.pageMu.Lock()
 	defer t.pageMu.Unlock()
 
@@ -318,6 +367,11 @@ func (t *Table) getPage(id page.PageID) (*page.Page, error) {
 		return p, nil
 	}
 	t.pageMu.RUnlock()
+
+	// For temp tables (no dataFile), return nil
+	if t.dataFile == nil {
+		return nil, fmt.Errorf("page %d not found", id)
+	}
 
 	// Load from disk
 	p, err := t.readPage(id)

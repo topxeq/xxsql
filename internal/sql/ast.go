@@ -359,6 +359,7 @@ func (s *DeleteStmt) String() string {
 // CreateTableStmt represents a CREATE TABLE statement.
 type CreateTableStmt struct {
 	IfNotExists bool
+	Temp        bool              // TEMP or TEMPORARY keyword
 	TableName   string
 	Columns     []*ColumnDef
 	Constraints []*TableConstraint
@@ -369,7 +370,11 @@ func (s *CreateTableStmt) node()      {}
 func (s *CreateTableStmt) statement() {}
 func (s *CreateTableStmt) String() string {
 	var sb strings.Builder
-	sb.WriteString("CREATE TABLE ")
+	sb.WriteString("CREATE ")
+	if s.Temp {
+		sb.WriteString("TEMP ")
+	}
+	sb.WriteString("TABLE ")
 	if s.IfNotExists {
 		sb.WriteString("IF NOT EXISTS ")
 	}

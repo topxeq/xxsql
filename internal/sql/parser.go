@@ -1088,6 +1088,21 @@ func (p *Parser) parseDelete() *DeleteStmt {
 func (p *Parser) parseCreate() Statement {
 	p.nextToken() // consume CREATE
 
+	// Check for TEMP/TEMPORARY keyword
+	if p.curTokenIs(TokTemp) {
+		p.nextToken()
+		if p.curTokenIs(TokTable) {
+			stmt := p.parseCreateTable()
+			if stmt != nil {
+				stmt.Temp = true
+			}
+			return stmt
+		}
+		// Other TEMP objects could be added here (TEMP VIEW, etc.)
+		p.error("expected TABLE after TEMP")
+		return nil
+	}
+
 	switch p.currTok.Type {
 	case TokTable:
 		return p.parseCreateTable()

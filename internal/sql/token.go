@@ -28,6 +28,7 @@ const (
 	TokModify
 	TokDatabase
 	TokSchema
+	TokTemp       // TEMP/TEMPORARY keyword
 
 	// Keywords - Bulk Import/Export
 	TokCopy
@@ -705,6 +706,8 @@ func (t TokenType) String() string {
 		return "BACKUP"
 	case TokRestore:
 		return "RESTORE"
+	case TokTemp:
+		return "TEMP"
 	default:
 		return "UNKNOWN"
 	}
@@ -739,6 +742,8 @@ var keywords = map[string]TokenType{
 	"MODIFY":       TokModify,
 	"DATABASE":     TokDatabase,
 	"SCHEMA":       TokSchema,
+	"TEMP":         TokTemp,
+	"TEMPORARY":    TokTemp,
 	"COPY":         TokCopy,
 	"LOAD":         TokLoad,
 	"DATA":         TokData,

@@ -418,7 +418,7 @@ func (e *Executor) executeSelect(stmt *sql.SelectStmt) (*Result, error) {
 	defer func() { e.currentTable = oldTable }()
 
 	// Get the table
-	tbl, err := e.engine.GetTable(tableName)
+	tbl, _, err := e.engine.GetTableOrTemp(tableName)
 	if err != nil {
 		return nil, fmt.Errorf("table %s does not exist", tableName)
 	}
@@ -4011,12 +4011,12 @@ func (e *Executor) executeInsertInternal(stmt *sql.InsertStmt) (*Result, error) 
 	}
 
 	// Check if table exists
-	if !e.engine.TableExists(tableName) {
+	if !e.engine.TableOrTempExists(tableName) {
 		return nil, fmt.Errorf("table %s does not exist", tableName)
 	}
 
 	// Get table info for column mapping
-	tbl, err := e.engine.GetTable(tableName)
+	tbl, _, err := e.engine.GetTableOrTemp(tableName)
 	if err != nil {
 		return nil, err
 	}
@@ -4196,8 +4196,8 @@ func (e *Executor) executeInsertInternal(stmt *sql.InsertStmt) (*Result, error) 
 			return nil, err
 		}
 
-		// Insert the row
-		rowID, err := e.engine.Insert(tableName, values)
+		// Insert the row (use tbl directly to support temp tables)
+		rowID, err := tbl.Insert(values)
 		if err != nil {
 			return nil, fmt.Errorf("insert error: %w", err)
 		}
@@ -4438,12 +4438,12 @@ func (e *Executor) executeUpdateInternal(stmt *sql.UpdateStmt) (*Result, error) 
 	}
 
 	// Check if table exists
-	if !e.engine.TableExists(tableName) {
+	if !e.engine.TableOrTempExists(tableName) {
 		return nil, fmt.Errorf("table %s does not exist", tableName)
 	}
 
 	// Get table info
-	tbl, err := e.engine.GetTable(tableName)
+	tbl, _, err := e.engine.GetTableOrTemp(tableName)
 	if err != nil {
 		return nil, err
 	}
@@ -4704,12 +4704,12 @@ func (e *Executor) executeDeleteInternal(stmt *sql.DeleteStmt) (*Result, error) 
 	}
 
 	// Check if table exists
-	if !e.engine.TableExists(tableName) {
+	if !e.engine.TableOrTempExists(tableName) {
 		return nil, fmt.Errorf("table %s does not exist", tableName)
 	}
 
 	// Get table
-	tbl, err := e.engine.GetTable(tableName)
+	tbl, _, err := e.engine.GetTableOrTemp(tableName)
 	if err != nil {
 		return nil, err
 	}
@@ -5359,12 +5359,22 @@ func (e *Executor) evaluateExprForRow(expr sql.Expression, r *row.Row, columns [
 
 // executeCreateTable executes a CREATE TABLE statement.
 func (e *Executor) executeCreateTable(stmt *sql.CreateTableStmt) (*Result, error) {
-	// Check if table already exists
-	if e.engine.TableExists(stmt.TableName) {
-		if stmt.IfNotExists {
-			return &Result{Message: "OK"}, nil
+	// For temp tables, check only temp table existence
+	if stmt.Temp {
+		if e.engine.TempTableExists(stmt.TableName) {
+			if stmt.IfNotExists {
+				return &Result{Message: "OK"}, nil
+			}
+			return nil, fmt.Errorf("temp table %s already exists", stmt.TableName)
 		}
-		return nil, fmt.Errorf("table %s already exists", stmt.TableName)
+	} else {
+		// Check if table already exists (both regular and temp)
+		if e.engine.TableOrTempExists(stmt.TableName) {
+			if stmt.IfNotExists {
+				return &Result{Message: "OK"}, nil
+			}
+			return nil, fmt.Errorf("table %s already exists", stmt.TableName)
+		}
 	}
 
 	// Convert column definitions
@@ -5458,12 +5468,18 @@ func (e *Executor) executeCreateTable(stmt *sql.CreateTableStmt) (*Result, error
 	}
 
 	// Create the table
-	if err := e.engine.CreateTable(stmt.TableName, columns); err != nil {
-		return nil, fmt.Errorf("create table error: %w", err)
+	if stmt.Temp {
+		if err := e.engine.CreateTempTable(stmt.TableName, columns); err != nil {
+			return nil, fmt.Errorf("create temp table error: %w", err)
+		}
+	} else {
+		if err := e.engine.CreateTable(stmt.TableName, columns); err != nil {
+			return nil, fmt.Errorf("create table error: %w", err)
+		}
 	}
 
 	// Get the table and add constraints
-	tbl, err := e.engine.GetTable(stmt.TableName)
+	tbl, _, err := e.engine.GetTableOrTemp(stmt.TableName)
 	if err != nil {
 		return nil, err
 	}
@@ -5496,15 +5512,15 @@ func (e *Executor) executeCreateTable(stmt *sql.CreateTableStmt) (*Result, error
 
 // executeDropTable executes a DROP TABLE statement.
 func (e *Executor) executeDropTable(stmt *sql.DropTableStmt) (*Result, error) {
-	// Check if table exists
-	if !e.engine.TableExists(stmt.TableName) {
+	// Check if table exists (both regular and temp)
+	if !e.engine.TableOrTempExists(stmt.TableName) {
 		if stmt.IfExists {
 			return &Result{Message: "OK"}, nil
 		}
 		return nil, fmt.Errorf("table %s does not exist", stmt.TableName)
 	}
 
-	if err := e.engine.DropTable(stmt.TableName); err != nil {
+	if err := e.engine.DropTableOrTemp(stmt.TableName); err != nil {
 		return nil, fmt.Errorf("drop table error: %w", err)
 	}
 
@@ -5514,12 +5530,12 @@ func (e *Executor) executeDropTable(stmt *sql.DropTableStmt) (*Result, error) {
 // executeCreateIndex executes a CREATE INDEX statement.
 func (e *Executor) executeCreateIndex(stmt *sql.CreateIndexStmt) (*Result, error) {
 	// Check if table exists
-	if !e.engine.TableExists(stmt.TableName) {
+	if !e.engine.TableOrTempExists(stmt.TableName) {
 		return nil, fmt.Errorf("table %s does not exist", stmt.TableName)
 	}
 
 	// Get the table
-	tbl, err := e.engine.GetTable(stmt.TableName)
+	tbl, _, err := e.engine.GetTableOrTemp(stmt.TableName)
 	if err != nil {
 		return nil, err
 	}
@@ -5540,12 +5556,12 @@ func (e *Executor) executeDropIndex(stmt *sql.DropIndexStmt) (*Result, error) {
 	}
 
 	// Check if table exists
-	if !e.engine.TableExists(stmt.TableName) {
+	if !e.engine.TableOrTempExists(stmt.TableName) {
 		return nil, fmt.Errorf("table %s does not exist", stmt.TableName)
 	}
 
 	// Get the table
-	tbl, err := e.engine.GetTable(stmt.TableName)
+	tbl, _, err := e.engine.GetTableOrTemp(stmt.TableName)
 	if err != nil {
 		return nil, err
 	}
@@ -5563,7 +5579,7 @@ func (e *Executor) executeCreateFTS(stmt *sql.CreateFTSStmt) (*Result, error) {
 	tableName := strings.ToLower(stmt.TableName)
 
 	// Check if table exists
-	if !e.engine.TableExists(tableName) {
+	if !e.engine.TableOrTempExists(tableName) {
 		return nil, fmt.Errorf("table '%s' does not exist", stmt.TableName)
 	}
 
@@ -5594,7 +5610,7 @@ func (e *Executor) executeCreateFTS(stmt *sql.CreateFTSStmt) (*Result, error) {
 		}
 
 		// Index existing data in the table
-		tbl, err := e.engine.GetTable(tableName)
+		tbl, _, err := e.engine.GetTableOrTemp(tableName)
 		if err != nil {
 			return nil, err
 		}
@@ -5653,7 +5669,7 @@ func (e *Executor) GetFTSManager() *fts.FTSManager {
 // executeCreateView executes a CREATE VIEW statement.
 func (e *Executor) executeCreateView(stmt *sql.CreateViewStmt) (*Result, error) {
 	// Check if table or view already exists
-	if e.engine.TableExists(stmt.ViewName) {
+	if e.engine.TableOrTempExists(stmt.ViewName) {
 		return nil, fmt.Errorf("table '%s' already exists", stmt.ViewName)
 	}
 	if e.engine.ViewExists(stmt.ViewName) {
@@ -5762,8 +5778,8 @@ func (e *Executor) generateQueryPlan(s sql.Statement) [][]interface{} {
 		detail := "UPDATE TABLE " + stmt.Table
 
 		// Add table info if exists
-		if e.engine.TableExists(stmt.Table) {
-			if tbl, err := e.engine.GetTable(stmt.Table); err == nil {
+		if e.engine.TableOrTempExists(stmt.Table) {
+			if tbl, _, err := e.engine.GetTableOrTemp(stmt.Table); err == nil {
 				info := tbl.GetInfo()
 				detail += fmt.Sprintf(" (~%d rows)", info.RowCount)
 			}
@@ -5802,8 +5818,8 @@ func (e *Executor) generateQueryPlan(s sql.Statement) [][]interface{} {
 		detail := "DELETE FROM " + stmt.Table
 
 		// Add table info if exists
-		if e.engine.TableExists(stmt.Table) {
-			if tbl, err := e.engine.GetTable(stmt.Table); err == nil {
+		if e.engine.TableOrTempExists(stmt.Table) {
+			if tbl, _, err := e.engine.GetTableOrTemp(stmt.Table); err == nil {
 				info := tbl.GetInfo()
 				detail += fmt.Sprintf(" (~%d rows)", info.RowCount)
 			}
@@ -5949,9 +5965,9 @@ func (e *Executor) generateSelectPlan(stmt *sql.SelectStmt, id *int, parent int)
 	if cteResult, ok := e.cteResults[strings.ToLower(tableName)]; ok {
 		*id++
 		rows = append(rows, []interface{}{*id, parent, 0, fmt.Sprintf("SCAN CTE %s (~%d rows)", tableName, cteResult.RowCount)})
-	} else if e.engine.TableExists(tableName) {
+	} else if e.engine.TableOrTempExists(tableName) {
 		// Regular table scan
-		tbl, err := e.engine.GetTable(tableName)
+		tbl, _, err := e.engine.GetTableOrTemp(tableName)
 		if err == nil {
 			info := tbl.GetInfo()
 
@@ -5999,8 +6015,8 @@ func (e *Executor) generateSelectPlan(stmt *sql.SelectStmt, id *int, parent int)
 			joinTable := join.Table.Name
 
 			// Get table info
-			if e.engine.TableExists(joinTable) {
-				if tbl, err := e.engine.GetTable(joinTable); err == nil {
+			if e.engine.TableOrTempExists(joinTable) {
+				if tbl, _, err := e.engine.GetTableOrTemp(joinTable); err == nil {
 					info := tbl.GetInfo()
 					*id++
 					rows = append(rows, []interface{}{*id, parent, 0, fmt.Sprintf("%s %s (~%d rows)", joinType, joinTable, info.RowCount)})
@@ -6088,7 +6104,7 @@ func (e *Executor) generateSelectPlan(stmt *sql.SelectStmt, id *int, parent int)
 // findIndexForWhere tries to find an index that can be used for the WHERE clause
 func (e *Executor) findIndexForWhere(tableName string, where sql.Expression) string {
 	// Get the table
-	tbl, err := e.engine.GetTable(tableName)
+	tbl, _, err := e.engine.GetTableOrTemp(tableName)
 	if err != nil || tbl == nil {
 		return ""
 	}
@@ -6187,12 +6203,12 @@ func hasAggregateFunctions(columns []sql.Expression) bool {
 // executeAlterTable executes an ALTER TABLE statement.
 func (e *Executor) executeAlterTable(stmt *sql.AlterTableStmt) (*Result, error) {
 	// Check if table exists
-	if !e.engine.TableExists(stmt.TableName) {
+	if !e.engine.TableOrTempExists(stmt.TableName) {
 		return nil, fmt.Errorf("table %s does not exist", stmt.TableName)
 	}
 
 	// Get the table
-	tbl, err := e.engine.GetTable(stmt.TableName)
+	tbl, _, err := e.engine.GetTableOrTemp(stmt.TableName)
 	if err != nil {
 		return nil, err
 	}
@@ -6242,7 +6258,7 @@ func (e *Executor) executeAlterTable(stmt *sql.AlterTableStmt) (*Result, error) 
 
 // executeAddColumn adds a column to a table.
 func (e *Executor) executeAddColumn(tableName string, action *sql.AddColumnAction) error {
-	tbl, err := e.engine.GetTable(tableName)
+	tbl, _, err := e.engine.GetTableOrTemp(tableName)
 	if err != nil {
 		return err
 	}
@@ -6277,7 +6293,7 @@ func (e *Executor) executeAddColumn(tableName string, action *sql.AddColumnActio
 
 // executeDropColumn drops a column from a table.
 func (e *Executor) executeDropColumn(tableName string, action *sql.DropColumnAction) error {
-	tbl, err := e.engine.GetTable(tableName)
+	tbl, _, err := e.engine.GetTableOrTemp(tableName)
 	if err != nil {
 		return err
 	}
@@ -6286,7 +6302,7 @@ func (e *Executor) executeDropColumn(tableName string, action *sql.DropColumnAct
 
 // executeModifyColumn modifies a column in a table.
 func (e *Executor) executeModifyColumn(tableName string, action *sql.ModifyColumnAction) error {
-	tbl, err := e.engine.GetTable(tableName)
+	tbl, _, err := e.engine.GetTableOrTemp(tableName)
 	if err != nil {
 		return err
 	}
@@ -6341,7 +6357,7 @@ func (e *Executor) executeShow(stmt *sql.ShowStmt) (*Result, error) {
 		if stmt.From == "" {
 			return nil, fmt.Errorf("table name required for SHOW COLUMNS")
 		}
-		tbl, err := e.engine.GetTable(stmt.From)
+		tbl, _, err := e.engine.GetTableOrTemp(stmt.From)
 		if err != nil {
 			return nil, fmt.Errorf("table %s does not exist", stmt.From)
 		}
@@ -6390,7 +6406,7 @@ func (e *Executor) executeShow(stmt *sql.ShowStmt) (*Result, error) {
 // executeDescribe executes a DESCRIBE/DESC statement.
 func (e *Executor) executeDescribe(stmt *sql.DescribeStmt) (*Result, error) {
 	// Check if table exists
-	tbl, err := e.engine.GetTable(stmt.TableName)
+	tbl, _, err := e.engine.GetTableOrTemp(stmt.TableName)
 	if err != nil {
 		return nil, fmt.Errorf("table %s does not exist", stmt.TableName)
 	}
@@ -6443,7 +6459,7 @@ func (e *Executor) executeDescribe(stmt *sql.DescribeStmt) (*Result, error) {
 // executeShowCreateTable executes a SHOW CREATE TABLE statement.
 func (e *Executor) executeShowCreateTable(stmt *sql.ShowCreateTableStmt) (*Result, error) {
 	// Check if table exists
-	tbl, err := e.engine.GetTable(stmt.TableName)
+	tbl, _, err := e.engine.GetTableOrTemp(stmt.TableName)
 	if err != nil {
 		return nil, fmt.Errorf("table %s does not exist", stmt.TableName)
 	}
@@ -6542,7 +6558,7 @@ func (e *Executor) executeShowCreateTable(stmt *sql.ShowCreateTableStmt) (*Resul
 
 // executeAddConstraint adds a constraint to a table.
 func (e *Executor) executeAddConstraint(tableName string, action *sql.AddConstraintAction) error {
-	tbl, err := e.engine.GetTable(tableName)
+	tbl, _, err := e.engine.GetTableOrTemp(tableName)
 	if err != nil {
 		return err
 	}
@@ -6603,7 +6619,7 @@ func (e *Executor) executeAddConstraint(tableName string, action *sql.AddConstra
 
 // executeDropConstraint drops a constraint from a table.
 func (e *Executor) executeDropConstraint(tableName string, action *sql.DropConstraintAction) error {
-	tbl, err := e.engine.GetTable(tableName)
+	tbl, _, err := e.engine.GetTableOrTemp(tableName)
 	if err != nil {
 		return err
 	}
@@ -7147,7 +7163,7 @@ func (e *Executor) executeCreateTrigger(stmt *sql.CreateTriggerStmt) (*Result, e
 	}
 
 	// Check if table exists
-	if !e.engine.TableExists(stmt.TableName) {
+	if !e.engine.TableOrTempExists(stmt.TableName) {
 		return nil, fmt.Errorf("table %s does not exist", stmt.TableName)
 	}
 
@@ -7241,12 +7257,12 @@ func (e *Executor) fireTriggers(tableName string, timing, event int, rowData map
 // executeTruncate executes a TRUNCATE TABLE statement.
 func (e *Executor) executeTruncate(stmt *sql.TruncateTableStmt) (*Result, error) {
 	// Check if table exists
-	if !e.engine.TableExists(stmt.TableName) {
+	if !e.engine.TableOrTempExists(stmt.TableName) {
 		return nil, fmt.Errorf("table %s does not exist", stmt.TableName)
 	}
 
 	// Drop and recreate the table (simple implementation)
-	tbl, err := e.engine.GetTable(stmt.TableName)
+	tbl, _, err := e.engine.GetTableOrTemp(stmt.TableName)
 	if err != nil {
 		return nil, err
 	}
@@ -11963,11 +11979,11 @@ func (e *Executor) validateForeignKeys(tbl *table.Table, values []types.Value, i
 
 	for _, fk := range fks {
 		// Check if referenced table exists
-		if !e.engine.TableExists(fk.RefTable) {
+		if !e.engine.TableOrTempExists(fk.RefTable) {
 			return fmt.Errorf("foreign key constraint fails: referenced table '%s' does not exist", fk.RefTable)
 		}
 
-		refTbl, err := e.engine.GetTable(fk.RefTable)
+		refTbl, _, err := e.engine.GetTableOrTemp(fk.RefTable)
 		if err != nil {
 			return err
 		}
@@ -12044,7 +12060,7 @@ func (e *Executor) getReferencingTables(tableName string) []struct {
 
 	tables := e.engine.ListTables()
 	for _, tName := range tables {
-		tbl, err := e.engine.GetTable(tName)
+		tbl, _, err := e.engine.GetTableOrTemp(tName)
 		if err != nil {
 			continue
 		}
@@ -13327,7 +13343,7 @@ func (e *Executor) executeCopyFrom(stmt *sql.CopyStmt) (*Result, error) {
 	defer file.Close()
 
 	// Get table schema
-	table, err := e.engine.GetTable(stmt.TableName)
+	table, _, err := e.engine.GetTableOrTemp(stmt.TableName)
 	if err != nil {
 		return nil, fmt.Errorf("table '%s' not found", stmt.TableName)
 	}
@@ -13381,7 +13397,7 @@ func (e *Executor) executeCopyFrom(stmt *sql.CopyStmt) (*Result, error) {
 		}
 
 		// Insert row
-		_, err = e.engine.Insert(stmt.TableName, values)
+		_, err = table.Insert(values)
 		if err != nil {
 			return nil, fmt.Errorf("failed to insert row %d: %w", rowCount+1, err)
 		}
@@ -13480,7 +13496,7 @@ func (e *Executor) executeLoadData(stmt *sql.LoadDataStmt) (*Result, error) {
 	defer file.Close()
 
 	// Get table schema
-	table, err := e.engine.GetTable(stmt.TableName)
+	table, _, err := e.engine.GetTableOrTemp(stmt.TableName)
 	if err != nil {
 		return nil, fmt.Errorf("table '%s' not found", stmt.TableName)
 	}
@@ -13497,7 +13513,7 @@ func (e *Executor) executeLoadData(stmt *sql.LoadDataStmt) (*Result, error) {
 			return nil, fmt.Errorf("failed to read file: %w", err)
 		}
 		lines := strings.Split(string(content), stmt.LinesTerminated)
-		return e.processLoadDataLines(lines, stmt, columns)
+		return e.processLoadDataLines(lines, stmt, columns, table)
 	}
 
 	// Process line by line
@@ -13506,11 +13522,11 @@ func (e *Executor) executeLoadData(stmt *sql.LoadDataStmt) (*Result, error) {
 		lines = append(lines, scanner.Text())
 	}
 
-	return e.processLoadDataLines(lines, stmt, columns)
+	return e.processLoadDataLines(lines, stmt, columns, table)
 }
 
 // processLoadDataLines processes lines from a LOAD DATA file
-func (e *Executor) processLoadDataLines(lines []string, stmt *sql.LoadDataStmt, columns []*types.ColumnInfo) (*Result, error) {
+func (e *Executor) processLoadDataLines(lines []string, stmt *sql.LoadDataStmt, columns []*types.ColumnInfo, table *table.Table) (*Result, error) {
 	// Get target columns
 	targetColumns := columns
 	if len(stmt.ColumnList) > 0 {
@@ -13585,7 +13601,7 @@ func (e *Executor) processLoadDataLines(lines []string, stmt *sql.LoadDataStmt, 
 		}
 
 		// Insert row
-		_, err := e.engine.Insert(stmt.TableName, values)
+		_, err := table.Insert(values)
 		if err != nil {
 			return nil, fmt.Errorf("failed to insert row %d: %w", i+1, err)
 		}
