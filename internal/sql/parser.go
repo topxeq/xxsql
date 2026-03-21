@@ -3648,7 +3648,7 @@ func (p *Parser) parseVacuum() *VacuumStmt {
 }
 
 // parsePragma parses a PRAGMA statement.
-// Syntax: PRAGMA name [= value]
+// Syntax: PRAGMA name [= value] or PRAGMA name(argument)
 func (p *Parser) parsePragma() *PragmaStmt {
 	p.nextToken() // consume PRAGMA
 
@@ -3662,6 +3662,22 @@ func (p *Parser) parsePragma() *PragmaStmt {
 		Name: p.currTok.Value,
 	}
 	p.nextToken()
+
+	// Check for (argument) - function-style pragma
+	if p.curTokenIs(TokLParen) {
+		p.nextToken()
+		if !p.curTokenIs(TokIdent) {
+			p.error("expected pragma argument")
+			return nil
+		}
+		stmt.Argument = p.currTok.Value
+		p.nextToken()
+		if !p.curTokenIs(TokRParen) {
+			p.error("expected ')' after pragma argument")
+			return nil
+		}
+		p.nextToken()
+	}
 
 	// Check for = value
 	if p.curTokenIs(TokEq) {

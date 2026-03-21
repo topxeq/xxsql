@@ -1947,15 +1947,22 @@ func (s *VacuumStmt) String() string {
 }
 
 // PragmaStmt represents a PRAGMA statement.
-// Syntax: PRAGMA name [= value]
+// Syntax: PRAGMA name [= value] or PRAGMA name(argument)
 type PragmaStmt struct {
-	Name  string      // pragma name
-	Value interface{} // optional value (can be string, int, bool, or nil for query)
+	Name     string      // pragma name
+	Value    interface{} // optional value (can be string, int, bool, or nil for query)
+	Argument string      // optional argument for function-style pragmas like table_info(table)
 }
 
 func (s *PragmaStmt) node()      {}
 func (s *PragmaStmt) statement() {}
 func (s *PragmaStmt) String() string {
+	if s.Argument != "" {
+		if s.Value != nil {
+			return fmt.Sprintf("PRAGMA %s(%s) = %v", s.Name, s.Argument, s.Value)
+		}
+		return fmt.Sprintf("PRAGMA %s(%s)", s.Name, s.Argument)
+	}
 	if s.Value == nil {
 		return "PRAGMA " + s.Name
 	}

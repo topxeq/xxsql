@@ -337,3 +337,268 @@ func TestPragmaGetPragmaValue(t *testing.T) {
 		t.Errorf("Expected 12345, got %v", val)
 	}
 }
+
+func TestPragmaTableInfo(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "xxsql-pragma-tableinfo-test-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	engine := storage.NewEngine(tmpDir)
+	if err := engine.Open(); err != nil {
+		t.Fatalf("Failed to open engine: %v", err)
+	}
+	defer engine.Close()
+
+	exec := NewExecutor(engine)
+
+	// Create a table
+	_, err = exec.Execute("CREATE TABLE test_pragma (id INT PRIMARY KEY, name VARCHAR NOT NULL, email VARCHAR DEFAULT 'test@example.com')")
+	if err != nil {
+		t.Fatalf("CREATE TABLE failed: %v", err)
+	}
+
+	// Query table_info
+	result, err := exec.Execute("PRAGMA table_info(test_pragma)")
+	if err != nil {
+		t.Fatalf("PRAGMA table_info failed: %v", err)
+	}
+
+	if len(result.Rows) != 3 {
+		t.Errorf("Expected 3 rows, got %d", len(result.Rows))
+	}
+
+	// Check first column (id)
+	if result.Rows[0][1] != "id" {
+		t.Errorf("Expected column name 'id', got %v", result.Rows[0][1])
+	}
+	if result.Rows[0][5] != 1 { // pk = 1
+		t.Errorf("Expected pk=1 for id column, got %v", result.Rows[0][5])
+	}
+
+	// Check second column (name)
+	if result.Rows[1][1] != "name" {
+		t.Errorf("Expected column name 'name', got %v", result.Rows[1][1])
+	}
+	if result.Rows[1][3] != 1 { // notnull = 1
+		t.Errorf("Expected notnull=1 for name column, got %v", result.Rows[1][3])
+	}
+
+	// Check third column (email)
+	if result.Rows[2][1] != "email" {
+		t.Errorf("Expected column name 'email', got %v", result.Rows[2][1])
+	}
+	if result.Rows[2][4] == nil {
+		t.Error("Expected default value for email column")
+	}
+
+	t.Logf("table_info results:")
+	for _, row := range result.Rows {
+		t.Logf("  %v", row)
+	}
+}
+
+func TestPragmaIndexList(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "xxsql-pragma-indexlist-test-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	engine := storage.NewEngine(tmpDir)
+	if err := engine.Open(); err != nil {
+		t.Fatalf("Failed to open engine: %v", err)
+	}
+	defer engine.Close()
+
+	exec := NewExecutor(engine)
+
+	// Create a table with primary key
+	_, err = exec.Execute("CREATE TABLE test_idx (id INT PRIMARY KEY, name VARCHAR)")
+	if err != nil {
+		t.Fatalf("CREATE TABLE failed: %v", err)
+	}
+
+	// Create an index
+	_, err = exec.Execute("CREATE INDEX idx_name ON test_idx (name)")
+	if err != nil {
+		t.Fatalf("CREATE INDEX failed: %v", err)
+	}
+
+	// Query index_list
+	result, err := exec.Execute("PRAGMA index_list(test_idx)")
+	if err != nil {
+		t.Fatalf("PRAGMA index_list failed: %v", err)
+	}
+
+	// Should have PRIMARY and idx_name
+	if len(result.Rows) < 1 {
+		t.Errorf("Expected at least 1 index, got %d", len(result.Rows))
+	}
+
+	t.Logf("index_list results:")
+	for _, row := range result.Rows {
+		t.Logf("  %v", row)
+	}
+
+	// Find idx_name in results
+	found := false
+	for _, row := range result.Rows {
+		if row[1] == "idx_name" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Error("Expected idx_name in index_list")
+	}
+}
+
+func TestPragmaDatabaseList(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "xxsql-pragma-dblist-test-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	engine := storage.NewEngine(tmpDir)
+	if err := engine.Open(); err != nil {
+		t.Fatalf("Failed to open engine: %v", err)
+	}
+	defer engine.Close()
+
+	exec := NewExecutor(engine)
+
+	// Query database_list
+	result, err := exec.Execute("PRAGMA database_list")
+	if err != nil {
+		t.Fatalf("PRAGMA database_list failed: %v", err)
+	}
+
+	if len(result.Rows) != 1 {
+		t.Errorf("Expected 1 database, got %d", len(result.Rows))
+	}
+
+	if result.Rows[0][1] != "main" {
+		t.Errorf("Expected database name 'main', got %v", result.Rows[0][1])
+	}
+
+	t.Logf("database_list results:")
+	for _, row := range result.Rows {
+		t.Logf("  %v", row)
+	}
+}
+
+func TestPragmaIntegrityCheck(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "xxsql-pragma-integrity-test-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	engine := storage.NewEngine(tmpDir)
+	if err := engine.Open(); err != nil {
+		t.Fatalf("Failed to open engine: %v", err)
+	}
+	defer engine.Close()
+
+	exec := NewExecutor(engine)
+
+	// Create a table
+	_, err = exec.Execute("CREATE TABLE test_integrity (id INT PRIMARY KEY, name VARCHAR)")
+	if err != nil {
+		t.Fatalf("CREATE TABLE failed: %v", err)
+	}
+
+	// Insert some data
+	_, err = exec.Execute("INSERT INTO test_integrity VALUES (1, 'test')")
+	if err != nil {
+		t.Fatalf("INSERT failed: %v", err)
+	}
+
+	// Run integrity check
+	result, err := exec.Execute("PRAGMA integrity_check")
+	if err != nil {
+		t.Fatalf("PRAGMA integrity_check failed: %v", err)
+	}
+
+	if len(result.Rows) != 1 {
+		t.Errorf("Expected 1 row, got %d", len(result.Rows))
+	}
+
+	if result.Rows[0][0] != "ok" {
+		t.Errorf("Expected 'ok', got %v", result.Rows[0][0])
+	}
+
+	t.Logf("integrity_check result: %v", result.Rows[0])
+}
+
+func TestPragmaCompileOptions(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "xxsql-pragma-options-test-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	engine := storage.NewEngine(tmpDir)
+	if err := engine.Open(); err != nil {
+		t.Fatalf("Failed to open engine: %v", err)
+	}
+	defer engine.Close()
+
+	exec := NewExecutor(engine)
+
+	// Query compile_options
+	result, err := exec.Execute("PRAGMA compile_options")
+	if err != nil {
+		t.Fatalf("PRAGMA compile_options failed: %v", err)
+	}
+
+	if len(result.Rows) == 0 {
+		t.Error("Expected at least one compile option")
+	}
+
+	t.Logf("compile_options:")
+	for _, row := range result.Rows {
+		t.Logf("  %v", row)
+	}
+}
+
+func TestPragmaPageCount(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "xxsql-pragma-pagecount-test-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	engine := storage.NewEngine(tmpDir)
+	if err := engine.Open(); err != nil {
+		t.Fatalf("Failed to open engine: %v", err)
+	}
+	defer engine.Close()
+
+	exec := NewExecutor(engine)
+
+	// Create a table
+	_, err = exec.Execute("CREATE TABLE test_pages (id INT PRIMARY KEY, data VARCHAR)")
+	if err != nil {
+		t.Fatalf("CREATE TABLE failed: %v", err)
+	}
+
+	// Query page_count
+	result, err := exec.Execute("PRAGMA page_count")
+	if err != nil {
+		t.Fatalf("PRAGMA page_count failed: %v", err)
+	}
+
+	t.Logf("page_count result: %v", result.Rows[0])
+
+	// Query page_size
+	result, err = exec.Execute("PRAGMA page_size")
+	if err != nil {
+		t.Fatalf("PRAGMA page_size failed: %v", err)
+	}
+
+	t.Logf("page_size result: %v", result.Rows[0])
+}

@@ -19,6 +19,7 @@ import (
 	"github.com/topxeq/xxsql/internal/backup"
 	"github.com/topxeq/xxsql/internal/sql"
 	"github.com/topxeq/xxsql/internal/storage"
+	"github.com/topxeq/xxsql/internal/storage/btree"
 	"github.com/topxeq/xxsql/internal/storage/catalog"
 	"github.com/topxeq/xxsql/internal/storage/fts"
 	"github.com/topxeq/xxsql/internal/storage/row"
@@ -7361,6 +7362,27 @@ func (e *Executor) executePragma(stmt *sql.PragmaStmt) (*Result, error) {
 		e.pragmaSettings["ignore_check_constraints"] = false
 	}
 
+	// Handle function-style pragmas with argument
+	if stmt.Argument != "" {
+		return e.executePragmaWithArg(name, stmt.Argument, stmt.Value)
+	}
+
+	// Handle function-style pragmas without argument (e.g., database_list, integrity_check)
+	switch name {
+	case "database_list":
+		return e.pragmaDatabaseList()
+	case "compile_options":
+		return e.pragmaCompileOptions()
+	case "integrity_check":
+		return e.pragmaIntegrityCheck("")
+	case "quick_check":
+		return e.pragmaQuickCheck("")
+	case "page_count":
+		return e.pragmaPageCount("")
+	case "page_size":
+		return e.pragmaPageSize("")
+	}
+
 	// If value is provided, set the pragma
 	if stmt.Value != nil {
 		return e.setPragma(name, stmt.Value)
@@ -7508,6 +7530,410 @@ func (e *Executor) GetPragmaValue(name string) interface{} {
 		return nil
 	}
 	return e.pragmaSettings[strings.ToLower(name)]
+}
+
+// executePragmaWithArg executes a function-style PRAGMA with an argument.
+// Examples: PRAGMA table_info(users), PRAGMA index_list(users)
+func (e *Executor) executePragmaWithArg(name, arg string, value interface{}) (*Result, error) {
+	switch name {
+	case "table_info":
+		return e.pragmaTableInfo(arg)
+	case "index_list":
+		return e.pragmaIndexList(arg)
+	case "index_info":
+		return e.pragmaIndexInfo(arg)
+	case "foreign_key_list":
+		return e.pragmaForeignKeyList(arg)
+	case "database_list":
+		return e.pragmaDatabaseList()
+	case "compile_options":
+		return e.pragmaCompileOptions()
+	case "integrity_check":
+		return e.pragmaIntegrityCheck(arg)
+	case "quick_check":
+		return e.pragmaQuickCheck(arg)
+	case "page_count":
+		return e.pragmaPageCount(arg)
+	case "page_size":
+		return e.pragmaPageSize(arg)
+	default:
+		return nil, fmt.Errorf("unknown pragma function: %s", name)
+	}
+}
+
+// pragmaTableInfo returns information about columns in a table.
+// Output: cid, name, type, notnull, dflt_value, pk
+func (e *Executor) pragmaTableInfo(tableName string) (*Result, error) {
+	table, err := e.engine.GetTable(tableName)
+	if err != nil {
+		return nil, fmt.Errorf("table '%s' does not exist", tableName)
+	}
+
+	info := table.GetInfo()
+	rows := make([][]interface{}, 0, len(info.Columns))
+
+	for i, col := range info.Columns {
+		pk := 0
+		if col.PrimaryKey {
+			// Find position in primary key
+			for j, pkCol := range info.PrimaryKey {
+				if pkCol == col.Name {
+					pk = j + 1
+					break
+				}
+			}
+		}
+
+		dfltValue := interface{}(nil)
+		if !col.Default.Null {
+			dfltValue = col.Default.String()
+		}
+
+		notNull := 0
+		if !col.Nullable {
+			notNull = 1
+		}
+
+		rows = append(rows, []interface{}{
+			i,              // cid
+			col.Name,       // name
+			col.Type,       // type
+			notNull,        // notnull (1 = NOT NULL, 0 = nullable)
+			dfltValue,      // dflt_value
+			pk,             // pk (0 = not PK, >0 = position in PK)
+		})
+	}
+
+	return &Result{
+		Columns: []ColumnInfo{
+			{Name: "cid", Type: "INT"},
+			{Name: "name", Type: "TEXT"},
+			{Name: "type", Type: "TEXT"},
+			{Name: "notnull", Type: "INT"},
+			{Name: "dflt_value", Type: "TEXT"},
+			{Name: "pk", Type: "INT"},
+		},
+		Rows: rows,
+	}, nil
+}
+
+// pragmaIndexList returns list of indexes for a table.
+// Output: seq, name, unique, origin, partial
+func (e *Executor) pragmaIndexList(tableName string) (*Result, error) {
+	table, err := e.engine.GetTable(tableName)
+	if err != nil {
+		return nil, fmt.Errorf("table '%s' does not exist", tableName)
+	}
+
+	indexMgr := table.GetIndexManager()
+	if indexMgr == nil {
+		return &Result{
+			Columns: []ColumnInfo{
+				{Name: "seq", Type: "INT"},
+				{Name: "name", Type: "TEXT"},
+				{Name: "unique", Type: "INT"},
+				{Name: "origin", Type: "TEXT"},
+				{Name: "partial", Type: "INT"},
+			},
+			Rows: [][]interface{}{},
+		}, nil
+	}
+
+	rows := make([][]interface{}, 0)
+	seq := 0
+
+	// Add primary key index first
+	if indexMgr.HasPrimary() {
+		rows = append(rows, []interface{}{
+			seq,    // seq
+			"PRIMARY", // name
+			1,      // unique
+			"pk",   // origin (pk = primary key)
+			0,      // partial (0 = not partial index)
+		})
+		seq++
+	}
+
+	// Add other indexes
+	for _, idxName := range indexMgr.ListIndexes() {
+		idx, err := indexMgr.GetIndex(idxName)
+		if err != nil {
+			continue
+		}
+		unique := 0
+		if idx.Info.Type == btree.IndexTypeUnique {
+			unique = 1
+		}
+		rows = append(rows, []interface{}{
+			seq,       // seq
+			idxName,   // name
+			unique,    // unique
+			"c",       // origin (c = CREATE INDEX)
+			0,         // partial (0 = not partial index)
+		})
+		seq++
+	}
+
+	return &Result{
+		Columns: []ColumnInfo{
+			{Name: "seq", Type: "INT"},
+			{Name: "name", Type: "TEXT"},
+			{Name: "unique", Type: "INT"},
+			{Name: "origin", Type: "TEXT"},
+			{Name: "partial", Type: "INT"},
+		},
+		Rows: rows,
+	}, nil
+}
+
+// pragmaIndexInfo returns information about columns in an index.
+// Output: seqno, cid, name
+func (e *Executor) pragmaIndexInfo(indexName string) (*Result, error) {
+	// Find the index across all tables
+	tables := e.engine.ListTables()
+
+	for _, tableName := range tables {
+		table, err := e.engine.GetTable(tableName)
+		if err != nil {
+			continue
+		}
+
+		info := table.GetInfo()
+		indexMgr := table.GetIndexManager()
+		if indexMgr == nil {
+			continue
+		}
+
+		// Check if it's the primary key index
+		if strings.ToUpper(indexName) == "PRIMARY" && indexMgr.HasPrimary() {
+			pk := indexMgr.GetPrimary()
+			if pk != nil {
+				rows := make([][]interface{}, 0, len(pk.Info.Columns))
+				for i, colName := range pk.Info.Columns {
+					// Find column id
+					cid := -1
+					for j, col := range info.Columns {
+						if col.Name == colName {
+							cid = j
+							break
+						}
+					}
+					rows = append(rows, []interface{}{
+						i,       // seqno
+						cid,     // cid
+						colName, // name
+					})
+				}
+				return &Result{
+					Columns: []ColumnInfo{
+						{Name: "seqno", Type: "INT"},
+						{Name: "cid", Type: "INT"},
+						{Name: "name", Type: "TEXT"},
+					},
+					Rows: rows,
+				}, nil
+			}
+		}
+
+		// Check other indexes
+		idx, err := indexMgr.GetIndex(indexName)
+		if err == nil && idx != nil {
+			rows := make([][]interface{}, 0, len(idx.Info.Columns))
+			for i, colName := range idx.Info.Columns {
+				// Find column id
+				cid := -1
+				for j, col := range info.Columns {
+					if col.Name == colName {
+						cid = j
+						break
+					}
+				}
+				rows = append(rows, []interface{}{
+					i,       // seqno
+					cid,     // cid
+					colName, // name
+				})
+			}
+			return &Result{
+				Columns: []ColumnInfo{
+					{Name: "seqno", Type: "INT"},
+					{Name: "cid", Type: "INT"},
+					{Name: "name", Type: "TEXT"},
+				},
+				Rows: rows,
+			}, nil
+		}
+	}
+
+	return nil, fmt.Errorf("index '%s' does not exist", indexName)
+}
+
+// pragmaForeignKeyList returns list of foreign keys for a table.
+// Output: id, seq, table, from, to, on_update, on_delete, match
+func (e *Executor) pragmaForeignKeyList(tableName string) (*Result, error) {
+	table, err := e.engine.GetTable(tableName)
+	if err != nil {
+		return nil, fmt.Errorf("table '%s' does not exist", tableName)
+	}
+
+	info := table.GetInfo()
+	rows := make([][]interface{}, 0)
+
+	fkID := 0
+	for _, fk := range info.ForeignKeys {
+		for i, fromCol := range fk.Columns {
+			toCol := ""
+			if i < len(fk.RefColumns) {
+				toCol = fk.RefColumns[i]
+			}
+			rows = append(rows, []interface{}{
+				fkID,        // id
+				i,           // seq
+				fk.RefTable, // table
+				fromCol,     // from
+				toCol,       // to
+				fk.OnUpdate, // on_update
+				fk.OnDelete, // on_delete
+				"NONE",      // match
+			})
+		}
+		fkID++
+	}
+
+	return &Result{
+		Columns: []ColumnInfo{
+			{Name: "id", Type: "INT"},
+			{Name: "seq", Type: "INT"},
+			{Name: "table", Type: "TEXT"},
+			{Name: "from", Type: "TEXT"},
+			{Name: "to", Type: "TEXT"},
+			{Name: "on_update", Type: "TEXT"},
+			{Name: "on_delete", Type: "TEXT"},
+			{Name: "match", Type: "TEXT"},
+		},
+		Rows: rows,
+	}, nil
+}
+
+// pragmaDatabaseList returns list of databases.
+// Output: seq, name, file
+func (e *Executor) pragmaDatabaseList() (*Result, error) {
+	return &Result{
+		Columns: []ColumnInfo{
+			{Name: "seq", Type: "INT"},
+			{Name: "name", Type: "TEXT"},
+			{Name: "file", Type: "TEXT"},
+		},
+		Rows: [][]interface{}{
+			{0, "main", e.engine.GetDataDir()},
+		},
+	}, nil
+}
+
+// pragmaCompileOptions returns compile-time options.
+func (e *Executor) pragmaCompileOptions() (*Result, error) {
+	options := []string{
+		"ENABLE_FTS",
+		"ENABLE_JSON",
+		"ENABLE_WINDOW_FUNCTIONS",
+		"ENABLE_GENERATED_COLUMNS",
+		"ENABLE_UPSERT",
+		"ENABLE_RETURNING",
+	}
+	rows := make([][]interface{}, 0, len(options))
+	for i, opt := range options {
+		rows = append(rows, []interface{}{i, opt})
+	}
+	return &Result{
+		Columns: []ColumnInfo{
+			{Name: "seq", Type: "INT"},
+			{Name: "name", Type: "TEXT"},
+		},
+		Rows: rows,
+	}, nil
+}
+
+// pragmaIntegrityCheck performs database integrity check.
+func (e *Executor) pragmaIntegrityCheck(tableName string) (*Result, error) {
+	// Simple integrity check - verify all tables can be read
+	tables := e.engine.ListTables()
+
+	errors := make([]string, 0)
+
+	for _, tbl := range tables {
+		table, err := e.engine.GetTable(tbl)
+		if err != nil {
+			errors = append(errors, fmt.Sprintf("table %s: %v", tbl, err))
+			continue
+		}
+
+		// Try to scan all rows
+		_, err = table.Scan()
+		if err != nil {
+			errors = append(errors, fmt.Sprintf("scan %s: %v", tbl, err))
+		}
+	}
+
+	if len(errors) == 0 {
+		return &Result{
+			Columns: []ColumnInfo{{Name: "integrity_check", Type: "TEXT"}},
+			Rows:    [][]interface{}{{"ok"}},
+		}, nil
+	}
+
+	rows := make([][]interface{}, 0, len(errors))
+	for _, e := range errors {
+		rows = append(rows, []interface{}{e})
+	}
+	return &Result{
+		Columns: []ColumnInfo{{Name: "integrity_check", Type: "TEXT"}},
+		Rows:    rows,
+	}, nil
+}
+
+// pragmaQuickCheck performs quick integrity check.
+func (e *Executor) pragmaQuickCheck(tableName string) (*Result, error) {
+	// Quick check is similar to integrity_check but faster
+	return e.pragmaIntegrityCheck(tableName)
+}
+
+// pragmaPageCount returns the number of pages in the database.
+func (e *Executor) pragmaPageCount(tableName string) (*Result, error) {
+	// Calculate total pages across all tables
+	tables := e.engine.ListTables()
+
+	totalPages := 0
+	for _, tbl := range tables {
+		table, err := e.engine.GetTable(tbl)
+		if err != nil {
+			continue
+		}
+		info := table.GetInfo()
+		totalPages += int(info.NextPageID - 1)
+	}
+
+	return &Result{
+		Columns: []ColumnInfo{{Name: "page_count", Type: "INT"}},
+		Rows:    [][]interface{}{{totalPages}},
+	}, nil
+}
+
+// pragmaPageSize returns the page size.
+func (e *Executor) pragmaPageSize(tableName string) (*Result, error) {
+	// Return default page size (4096 is common)
+	pageSize := 4096
+	return &Result{
+		Columns: []ColumnInfo{{Name: "page_size", Type: "INT"}},
+		Rows:    [][]interface{}{{pageSize}},
+	}, nil
+}
+
+// boolToInt converts bool to int (true=1, false=0)
+func boolToInt(b bool) int {
+	if b {
+		return 1
+	}
+	return 0
 }
 
 // toInt64 converts various types to int64.
