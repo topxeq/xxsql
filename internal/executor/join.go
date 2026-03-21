@@ -460,7 +460,21 @@ func toFloat64(v interface{}) (float64, bool) {
 	switch val := v.(type) {
 	case int:
 		return float64(val), true
+	case int8:
+		return float64(val), true
+	case int16:
+		return float64(val), true
+	case int32:
+		return float64(val), true
 	case int64:
+		return float64(val), true
+	case uint:
+		return float64(val), true
+	case uint8:
+		return float64(val), true
+	case uint16:
+		return float64(val), true
+	case uint32:
 		return float64(val), true
 	case uint64:
 		return float64(val), true
@@ -468,9 +482,18 @@ func toFloat64(v interface{}) (float64, bool) {
 		return float64(val), true
 	case float64:
 		return val, true
-	default:
-		return 0, false
+	case types.Value:
+		if val.Null {
+			return 0, false
+		}
+		switch val.Type {
+		case types.TypeInt, types.TypeSeq:
+			return float64(val.AsInt()), true
+		case types.TypeFloat:
+			return val.AsFloat(), true
+		}
 	}
+	return 0, false
 }
 
 // ============================================================================

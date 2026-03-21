@@ -646,6 +646,20 @@ func (s *TruncateTableStmt) String() string {
 	return fmt.Sprintf("TRUNCATE TABLE %s", s.TableName)
 }
 
+// AnalyzeStmt represents an ANALYZE TABLE statement.
+type AnalyzeStmt struct {
+	TableName string // Empty means analyze all tables
+}
+
+func (s *AnalyzeStmt) node()      {}
+func (s *AnalyzeStmt) statement() {}
+func (s *AnalyzeStmt) String() string {
+	if s.TableName == "" {
+		return "ANALYZE"
+	}
+	return fmt.Sprintf("ANALYZE TABLE %s", s.TableName)
+}
+
 // UseStmt represents a USE DATABASE statement.
 type UseStmt struct {
 	Database string

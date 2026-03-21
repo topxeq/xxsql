@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/topxeq/xxsql/internal/backup"
+	"github.com/topxeq/xxsql/internal/optimizer"
 	"github.com/topxeq/xxsql/internal/sql"
 	"github.com/topxeq/xxsql/internal/storage"
 	"github.com/topxeq/xxsql/internal/storage/btree"
@@ -103,6 +104,7 @@ type Executor struct {
 	lastRowCount  int64                  // Number of rows affected by last operation
 	ftsManager    *fts.FTSManager        // Full-text search manager
 	pragmaSettings map[string]interface{} // PRAGMA settings
+	optimizer     *optimizer.Optimizer   // Query optimizer
 
 	// Transaction state
 	inTransaction bool
@@ -318,6 +320,8 @@ func (e *Executor) ExecuteWithPerms(sqlStr string, checker PermissionChecker) (*
 		return e.executeVacuum(s)
 	case *sql.PragmaStmt:
 		return e.executePragma(s)
+	case *sql.AnalyzeStmt:
+		return e.executeAnalyze(s)
 	case *sql.CreateFunctionStmt:
 		return e.executeCreateFunction(s)
 	case *sql.DropFunctionStmt:
@@ -434,10 +438,23 @@ func (e *Executor) executeSelect(stmt *sql.SelectStmt) (*Result, error) {
 		columnOrder[i] = col
 	}
 
-	// Scan all rows
-	rows, err := e.engine.Scan(tableName)
-	if err != nil {
-		return nil, fmt.Errorf("scan error: %w", err)
+	// Try to use index scan if possible
+	var rows []*row.Row
+	var usedIndex bool
+	if stmt.Where != nil {
+		rows, usedIndex, err = e.tryIndexScan(tableName, stmt.Where, tbl)
+		if err != nil {
+			// Index scan failed, fall back to table scan
+			usedIndex = false
+		}
+	}
+
+	// Fall back to full table scan if index wasn't used
+	if !usedIndex {
+		rows, err = e.engine.Scan(tableName)
+		if err != nil {
+			return nil, fmt.Errorf("scan error: %w", err)
+		}
 	}
 
 	// Determine result columns
@@ -6640,6 +6657,247 @@ func (e *Executor) extractColumnsFromExpr(expr sql.Expression) []string {
 	return cols
 }
 
+// IndexCondition represents a condition that can use an index.
+type IndexCondition struct {
+	ColumnName  string
+	Op          sql.BinaryOp
+	Value       interface{}
+	IsRange     bool  // true for <, <=, >, >=
+	IsEquality  bool  // true for =
+}
+
+// extractIndexConditions extracts conditions from a WHERE clause that can use an index.
+// Returns conditions that match the given index columns (prefix match).
+func (e *Executor) extractIndexConditions(where sql.Expression, indexColumns []string) []IndexCondition {
+	if where == nil || len(indexColumns) == 0 {
+		return nil
+	}
+
+	var conditions []IndexCondition
+
+	// Recursively extract conditions
+	e.extractConditionsRecursive(where, indexColumns, &conditions)
+
+	return conditions
+}
+
+// extractConditionsRecursive recursively extracts index conditions from an expression.
+func (e *Executor) extractConditionsRecursive(expr sql.Expression, indexColumns []string, conditions *[]IndexCondition) {
+	switch ex := expr.(type) {
+	case *sql.BinaryExpr:
+		// Check if this is an AND - recursively process both sides
+		if ex.Op == sql.OpAnd {
+			e.extractConditionsRecursive(ex.Left, indexColumns, conditions)
+			e.extractConditionsRecursive(ex.Right, indexColumns, conditions)
+			return
+		}
+
+		// Check for comparison operators
+		if ex.Op == sql.OpEq || ex.Op == sql.OpLt || ex.Op == sql.OpLe ||
+			ex.Op == sql.OpGt || ex.Op == sql.OpGe {
+			// Check if left side is a column reference that matches the first index column
+			if colRef, ok := ex.Left.(*sql.ColumnRef); ok {
+				colName := strings.ToLower(colRef.Name)
+				// Check if this column is the first index column (for index usage)
+				if len(indexColumns) > 0 && strings.ToLower(indexColumns[0]) == colName {
+					// Extract the value from the right side
+					value := e.extractLiteralValue(ex.Right)
+					if value != nil {
+						*conditions = append(*conditions, IndexCondition{
+							ColumnName:  colName,
+							Op:          ex.Op,
+							Value:       value,
+							IsRange:     ex.Op != sql.OpEq,
+							IsEquality:  ex.Op == sql.OpEq,
+						})
+					}
+				}
+			}
+		}
+
+	case *sql.ParenExpr:
+		e.extractConditionsRecursive(ex.Expr, indexColumns, conditions)
+	}
+}
+
+// extractLiteralValue extracts a literal value from an expression.
+func (e *Executor) extractLiteralValue(expr sql.Expression) interface{} {
+	switch ex := expr.(type) {
+	case *sql.Literal:
+		return ex.Value
+	case *sql.ColumnRef:
+		// Could be a parameter reference
+		if ex.Table == "" && ex.Name == "" {
+			return nil
+		}
+		return nil
+	default:
+		return nil
+	}
+}
+
+// shouldUseIndex decides whether to use an index based on cost estimation.
+// Returns true if index scan is cheaper than table scan.
+func (e *Executor) shouldUseIndex(tableName, indexName string, conditions []IndexCondition, tableRowCount int) bool {
+	if len(conditions) == 0 {
+		return false // No usable conditions
+	}
+
+	// Get selectivity estimate
+	selectivity := e.engine.EstimateSelectivity(tableName, indexName)
+
+	// If we have an equality condition on the first index column, use the index
+	for _, cond := range conditions {
+		if cond.IsEquality {
+			return true
+		}
+	}
+
+	// For range conditions, use index if estimated rows < 30% of table
+	if selectivity > 0 && tableRowCount > 0 {
+		ratio := float64(selectivity) / float64(tableRowCount)
+		if ratio < 0.3 {
+			return true
+		}
+	}
+
+	// If table is small (< 100 rows), table scan is fine
+	if tableRowCount < 100 {
+		return false
+	}
+
+	// Default: use index for unique/primary keys
+	return selectivity == 1
+}
+
+// executeIndexScan performs an index scan and returns matching rows.
+func (e *Executor) executeIndexScan(tableName, indexName string, conditions []IndexCondition, tbl *table.Table) ([]*row.Row, error) {
+	if len(conditions) == 0 {
+		return nil, fmt.Errorf("no conditions for index scan")
+	}
+
+	// Convert condition value to types.Value
+	cond := conditions[0]
+	var value types.Value
+	switch v := cond.Value.(type) {
+	case int:
+		value = types.NewIntValue(int64(v))
+	case int64:
+		value = types.NewIntValue(v)
+	case float64:
+		value = types.NewFloatValue(v)
+	case string:
+		value = types.NewStringValue(v, types.TypeVarchar)
+	case bool:
+		value = types.NewBoolValue(v)
+	default:
+		// Try as string
+		value = types.NewStringValue(fmt.Sprintf("%v", v), types.TypeVarchar)
+	}
+
+	// Determine the operator string for IndexConditionScan
+	var opStr string
+	switch cond.Op {
+	case sql.OpEq:
+		opStr = "="
+	case sql.OpLt:
+		opStr = "<"
+	case sql.OpLe:
+		opStr = "<="
+	case sql.OpGt:
+		opStr = ">"
+	case sql.OpGe:
+		opStr = ">="
+	default:
+		opStr = "="
+	}
+
+	// Use IndexConditionScan for all condition types
+	rowIDs, err := tbl.IndexConditionScan(indexName, opStr, value)
+	if err != nil {
+		return nil, err
+	}
+
+	if len(rowIDs) == 0 {
+		return []*row.Row{}, nil
+	}
+
+	// Fetch rows by IDs
+	rowsMap, err := tbl.GetRowsByRowIDs(rowIDs)
+	if err != nil {
+		return nil, err
+	}
+
+	// Convert map to slice
+	rows := make([]*row.Row, 0, len(rowsMap))
+	for _, r := range rowsMap {
+		rows = append(rows, r)
+	}
+
+	return rows, nil
+}
+
+// tryIndexScan attempts to use an index for the query.
+// Returns the rows if index scan was used, or nil if no suitable index found.
+func (e *Executor) tryIndexScan(tableName string, where sql.Expression, tbl *table.Table) ([]*row.Row, bool, error) {
+	if where == nil {
+		return nil, false, nil
+	}
+
+	tblInfo := tbl.GetInfo()
+	tableRowCount := int(tblInfo.RowCount)
+
+	// Extract columns from WHERE clause
+	whereCols := e.extractColumnsFromExpr(where)
+	if len(whereCols) == 0 {
+		return nil, false, nil
+	}
+
+	// Find the best index for these columns
+	indexName, hasIndex, matchCount := tbl.GetIndexForColumns(whereCols)
+	if !hasIndex || matchCount == 0 {
+		return nil, false, nil
+	}
+
+	// Get index columns
+	var indexColumns []string
+	if indexName == "PRIMARY" {
+		indexColumns = tblInfo.PrimaryKey
+	} else {
+		idxMgr := tbl.GetIndexManager()
+		if idxMgr != nil {
+			idx, err := idxMgr.GetIndex(indexName)
+			if err != nil || idx == nil {
+				return nil, false, nil
+			}
+			indexColumns = idx.Info.Columns
+		}
+	}
+
+	if len(indexColumns) == 0 {
+		return nil, false, nil
+	}
+
+	// Extract conditions that can use this index
+	conditions := e.extractIndexConditions(where, indexColumns)
+	if len(conditions) == 0 {
+		return nil, false, nil
+	}
+
+	// Decide whether to use index
+	if !e.shouldUseIndex(tableName, indexName, conditions, tableRowCount) {
+		return nil, false, nil
+	}
+
+	// Perform index scan
+	rows, err := e.executeIndexScan(tableName, indexName, conditions, tbl)
+	if err != nil {
+		return nil, false, err
+	}
+
+	return rows, true, nil
+}
+
 // hasAggregateFunctions checks if the columns contain aggregate functions
 func hasAggregateFunctions(columns []sql.Expression) bool {
 	aggregateFuncs := map[string]bool{
@@ -7987,6 +8245,116 @@ func toBool(v interface{}) (bool, bool) {
 	default:
 		return false, false
 	}
+}
+
+// executeAnalyze executes an ANALYZE statement.
+// ANALYZE [TABLE table_name] - collects statistics for query optimization.
+func (e *Executor) executeAnalyze(stmt *sql.AnalyzeStmt) (*Result, error) {
+	result := &Result{
+		Columns: []ColumnInfo{
+			{Name: "table", Type: "VARCHAR"},
+			{Name: "rows_analyzed", Type: "INT"},
+		},
+		Rows: make([][]interface{}, 0),
+	}
+
+	if stmt.TableName != "" {
+		// Analyze a specific table
+		count, err := e.analyzeTable(stmt.TableName)
+		if err != nil {
+			return nil, err
+		}
+		result.Rows = append(result.Rows, []interface{}{stmt.TableName, count})
+	} else {
+		// Analyze all tables
+		tables := e.engine.ListTables()
+		for _, tableName := range tables {
+			count, err := e.analyzeTable(tableName)
+			if err != nil {
+				// Log error but continue with other tables
+				continue
+			}
+			result.Rows = append(result.Rows, []interface{}{tableName, count})
+		}
+	}
+
+	result.RowCount = len(result.Rows)
+	return result, nil
+}
+
+// analyzeTable analyzes a single table and returns the number of rows analyzed.
+func (e *Executor) analyzeTable(tableName string) (int, error) {
+	tbl, err := e.engine.GetTable(tableName)
+	if err != nil {
+		return 0, fmt.Errorf("table '%s' does not exist", tableName)
+	}
+
+	// Scan all rows to collect statistics
+	rows, err := e.engine.Scan(tableName)
+	if err != nil {
+		return 0, err
+	}
+
+	info := tbl.GetInfo()
+	analyzer := NewAnalyzeTable()
+
+	// Analyze each row
+	for _, r := range rows {
+		analyzer.AddRow(getColumnNames(info.Columns), r.Values)
+	}
+
+	// Finalize statistics
+	stats := analyzer.Finalize()
+
+	// Analyze indexes
+	idxMgr := tbl.GetIndexManager()
+	if idxMgr != nil {
+		// Primary key
+		if pk := idxMgr.GetPrimary(); pk != nil {
+			height := pk.Tree.Height()
+			count := pk.Tree.Count()
+			analyzer.SetIndexStatistics("PRIMARY", pk.Info.Columns, uint64(count), height, true)
+		}
+
+		// Secondary indexes
+		for _, idxName := range idxMgr.ListIndexes() {
+			idx, err := idxMgr.GetIndex(idxName)
+			if err != nil {
+				continue
+			}
+			height := idx.Tree.Height()
+			count := idx.Tree.Count()
+			analyzer.SetIndexStatistics(idxName, idx.Info.Columns, uint64(count), height, false)
+		}
+	}
+
+	// Store statistics in the optimizer
+	if e.optimizer == nil {
+		e.optimizer = NewOptimizer()
+	}
+	e.optimizer.UpdateStatistics(strings.ToLower(tableName), stats)
+
+	return len(rows), nil
+}
+
+// NewAnalyzeTable creates a new table analyzer.
+// This is a helper that wraps the optimizer's AnalyzeTable.
+func NewAnalyzeTable() *optimizer.AnalyzeTable {
+	return optimizer.NewAnalyzeTable()
+}
+
+// NewOptimizer creates a new query optimizer.
+func NewOptimizer() *optimizer.Optimizer {
+	return optimizer.NewOptimizer()
+}
+
+// getColumnNames extracts column names from column info.
+func getColumnNames(columns []*types.ColumnInfo) []string {
+	names := make([]string, len(columns))
+	for i, col := range columns {
+		names[i] = col.Name
+	}
+	return names
 }
 
 // executeCreateFunction executes a CREATE FUNCTION statement.
@@ -12413,6 +12781,26 @@ func (e *Executor) compareValuesWithCollation(left interface{}, op sql.BinaryOp,
 			case sql.OpGe:
 				return e.bytesCompare(leftBytes, rightBytes) >= 0, nil
 			}
+		}
+	}
+
+	// Try numeric comparison first
+	leftFloat, leftIsFloat := toFloat64(left)
+	rightFloat, rightIsFloat := toFloat64(right)
+	if leftIsFloat && rightIsFloat {
+		switch op {
+		case sql.OpEq:
+			return leftFloat == rightFloat, nil
+		case sql.OpNe:
+			return leftFloat != rightFloat, nil
+		case sql.OpLt:
+			return leftFloat < rightFloat, nil
+		case sql.OpLe:
+			return leftFloat <= rightFloat, nil
+		case sql.OpGt:
+			return leftFloat > rightFloat, nil
+		case sql.OpGe:
+			return leftFloat >= rightFloat, nil
 		}
 	}
 

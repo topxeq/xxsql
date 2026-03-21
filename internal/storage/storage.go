@@ -123,6 +123,68 @@ func (e *Engine) Scan(tableName string) ([]*row.Row, error) {
 	return t.Scan()
 }
 
+// GetRowsByRowIDs fetches rows by their row IDs.
+func (e *Engine) GetRowsByRowIDs(tableName string, rowIDs []row.RowID) (map[row.RowID]*row.Row, error) {
+	// Check temp tables first
+	e.tempTablesMu.RLock()
+	if tbl, exists := e.tempTables[tableName]; exists {
+		e.tempTablesMu.RUnlock()
+		return tbl.GetRowsByRowIDs(rowIDs)
+	}
+	e.tempTablesMu.RUnlock()
+
+	t, err := e.catalog.GetTable(tableName)
+	if err != nil {
+		return nil, err
+	}
+	return t.GetRowsByRowIDs(rowIDs)
+}
+
+// IndexRangeScan performs an index range scan.
+func (e *Engine) IndexRangeScan(tableName, indexName string, startValue, endValue types.Value, includeStart, includeEnd bool) ([]row.RowID, error) {
+	t, err := e.catalog.GetTable(tableName)
+	if err != nil {
+		return nil, err
+	}
+	return t.IndexRangeScan(indexName, startValue, endValue, includeStart, includeEnd)
+}
+
+// IndexPointLookup performs an index point lookup.
+func (e *Engine) IndexPointLookup(tableName, indexName string, value types.Value) ([]row.RowID, error) {
+	t, err := e.catalog.GetTable(tableName)
+	if err != nil {
+		return nil, err
+	}
+	return t.IndexPointLookup(indexName, value)
+}
+
+// GetIndexForColumn returns the best index for a column.
+func (e *Engine) GetIndexForColumn(tableName, columnName string) (string, bool) {
+	t, err := e.catalog.GetTable(tableName)
+	if err != nil {
+		return "", false
+	}
+	return t.GetIndexForColumn(columnName)
+}
+
+// GetIndexForColumns returns the best index for multiple columns.
+func (e *Engine) GetIndexForColumns(tableName string, columns []string) (string, bool, int) {
+	t, err := e.catalog.GetTable(tableName)
+	if err != nil {
+		return "", false, 0
+	}
+	return t.GetIndexForColumns(columns)
+}
+
+// EstimateSelectivity estimates the selectivity of an index scan.
+func (e *Engine) EstimateSelectivity(tableName, indexName string) int {
+	t, err := e.catalog.GetTable(tableName)
+	if err != nil {
+		return 0
+	}
+	return t.EstimateSelectivity(indexName)
+}
+
 // Flush flushes all data to disk.
 func (e *Engine) Flush() error {
 	return e.catalog.Flush()

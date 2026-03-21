@@ -277,7 +277,7 @@ func TestIndexInsertDelete(t *testing.T) {
 	}
 
 	// Delete
-	err = idx.Delete(types.NewIntValue(5))
+	err = idx.Delete(types.NewIntValue(5), row.RowID(5))
 	if err != nil {
 		t.Fatalf("Failed to delete: %v", err)
 	}
@@ -512,7 +512,7 @@ func TestIndexManager_DeleteFromIndexes(t *testing.T) {
 	im.InsertIntoIndexes(values, row.RowID(1), columnMap)
 
 	// Delete
-	err := im.DeleteFromIndexes(values, columnMap)
+	err := im.DeleteFromIndexes(values, row.RowID(1), columnMap)
 	if err != nil {
 		t.Errorf("DeleteFromIndexes error: %v", err)
 	}
@@ -986,7 +986,7 @@ func TestIndex_DeleteNonExistent(t *testing.T) {
 	idx, _ := btree.NewIndexManager("test_table", nil).CreateIndex("pk", []string{"id"}, btree.IndexTypePrimary, types.TypeInt)
 
 	// Delete non-existent key
-	err := idx.Delete(types.NewIntValue(999))
+	err := idx.Delete(types.NewIntValue(999), row.RowID(999))
 	if err == nil {
 		t.Error("Expected error when deleting non-existent key")
 	}

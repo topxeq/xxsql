@@ -69,32 +69,50 @@ func (idx *Index) Insert(key types.Value, rowID row.RowID) error {
 	value := make([]byte, 8)
 	binary.LittleEndian.PutUint64(value, uint64(rowID))
 
-	return idx.Tree.Insert(Key{Value: key}, value)
+	// Include rowID in key for non-unique indexes to make each entry unique
+	return idx.Tree.Insert(Key{Value: key, RowID: uint64(rowID)}, value)
 }
 
-// Search finds a row ID by key.
+// Search finds a row ID by key. For non-unique indexes, returns the first match.
 func (idx *Index) Search(key types.Value) (row.RowID, bool) {
 	idx.mu.RLock()
 	defer idx.mu.RUnlock()
 
-	value, found := idx.Tree.Search(Key{Value: key})
-	if !found {
-		return 0, false
+	// Search by value only (ignore RowID in comparison)
+	entries := idx.Tree.Scan()
+	for _, e := range entries {
+		if e.Key.Value.Compare(key) == 0 {
+			if len(e.Value) >= 8 {
+				return row.RowID(binary.LittleEndian.Uint64(e.Value)), true
+			}
+		}
 	}
-
-	if len(value) < 8 {
-		return 0, false
-	}
-
-	return row.RowID(binary.LittleEndian.Uint64(value)), true
+	return 0, false
 }
 
-// Delete removes a key from the index.
-func (idx *Index) Delete(key types.Value) error {
+// SearchAll finds all row IDs with the given key value (for non-unique indexes).
+func (idx *Index) SearchAll(key types.Value) []row.RowID {
+	idx.mu.RLock()
+	defer idx.mu.RUnlock()
+
+	var result []row.RowID
+	entries := idx.Tree.Scan()
+	for _, e := range entries {
+		if e.Key.Value.Compare(key) == 0 {
+			if len(e.Value) >= 8 {
+				result = append(result, row.RowID(binary.LittleEndian.Uint64(e.Value)))
+			}
+		}
+	}
+	return result
+}
+
+// Delete removes a key with a specific row ID from the index.
+func (idx *Index) Delete(key types.Value, rowID row.RowID) error {
 	idx.mu.Lock()
 	defer idx.mu.Unlock()
 
-	return idx.Tree.Delete(Key{Value: key})
+	return idx.Tree.Delete(Key{Value: key, RowID: uint64(rowID)})
 }
 
 // Range returns row IDs for keys in the given range.
@@ -102,11 +120,18 @@ func (idx *Index) Range(start, end types.Value) []row.RowID {
 	idx.mu.RLock()
 	defer idx.mu.RUnlock()
 
-	entries := idx.Tree.Range(Key{Value: start}, Key{Value: end})
-	result := make([]row.RowID, len(entries))
-	for i, e := range entries {
-		if len(e.Value) >= 8 {
-			result[i] = row.RowID(binary.LittleEndian.Uint64(e.Value))
+	// Scan all and filter by value (ignore RowID in comparison)
+	entries := idx.Tree.Scan()
+	var result []row.RowID
+
+	for _, e := range entries {
+		cmpStart := e.Key.Value.Compare(start)
+		cmpEnd := e.Key.Value.Compare(end)
+
+		if cmpStart >= 0 && cmpEnd <= 0 {
+			if len(e.Value) >= 8 {
+				result = append(result, row.RowID(binary.LittleEndian.Uint64(e.Value)))
+			}
 		}
 	}
 	return result
@@ -125,6 +150,52 @@ func (idx *Index) Scan() []row.RowID {
 		}
 	}
 	return result
+}
+
+// ScanLessThan returns row IDs for keys less than value.
+func (idx *Index) ScanLessThan(value types.Value, includeEqual bool) []row.RowID {
+	idx.mu.RLock()
+	defer idx.mu.RUnlock()
+
+	// Get all entries
+	entries := idx.Tree.Scan()
+	var result []row.RowID
+
+	for _, e := range entries {
+		cmp := compareValues(e.Key.Value, value)
+		if cmp < 0 || (includeEqual && cmp == 0) {
+			if len(e.Value) >= 8 {
+				result = append(result, row.RowID(binary.LittleEndian.Uint64(e.Value)))
+			}
+		}
+	}
+	return result
+}
+
+// ScanGreaterThan returns row IDs for keys greater than value.
+func (idx *Index) ScanGreaterThan(value types.Value, includeEqual bool) []row.RowID {
+	idx.mu.RLock()
+	defer idx.mu.RUnlock()
+
+	// Get all entries
+	entries := idx.Tree.Scan()
+	var result []row.RowID
+
+	for _, e := range entries {
+		cmp := compareValues(e.Key.Value, value)
+		if cmp > 0 || (includeEqual && cmp == 0) {
+			if len(e.Value) >= 8 {
+				result = append(result, row.RowID(binary.LittleEndian.Uint64(e.Value)))
+			}
+		}
+	}
+	return result
+}
+
+// compareValues compares two types.Value values.
+// Returns -1 if a < b, 0 if a == b, 1 if a > b.
+func compareValues(a, b types.Value) int {
+	return a.Compare(b)
 }
 
 // Count returns the number of entries in the index.
@@ -253,6 +324,20 @@ func (m *IndexManager) InsertIntoIndexes(values []types.Value, rowID row.RowID, 
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
+	// Insert into primary key index first
+	if m.primary != nil && len(m.primary.Info.Columns) > 0 {
+		colIdx, ok := columnMap[m.primary.Info.Columns[0]]
+		if ok && colIdx < len(values) {
+			key := values[colIdx]
+			if !key.Null {
+				if err := m.primary.Insert(key, rowID); err != nil {
+					return err
+				}
+			}
+		}
+	}
+
+	// Insert into other indexes
 	for _, idx := range m.indexes {
 		// Get key value from row
 		if len(idx.Info.Columns) == 0 {
@@ -274,10 +359,22 @@ func (m *IndexManager) InsertIntoIndexes(values []types.Value, rowID row.RowID, 
 }
 
 // DeleteFromIndexes deletes a row from all indexes.
-func (m *IndexManager) DeleteFromIndexes(values []types.Value, columnMap map[string]int) error {
+func (m *IndexManager) DeleteFromIndexes(values []types.Value, rowID row.RowID, columnMap map[string]int) error {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
+	// Delete from primary key index first
+	if m.primary != nil && len(m.primary.Info.Columns) > 0 {
+		colIdx, ok := columnMap[m.primary.Info.Columns[0]]
+		if ok && colIdx < len(values) {
+			key := values[colIdx]
+			if !key.Null {
+				m.primary.Delete(key, rowID)
+			}
+		}
+	}
+
+	// Delete from other indexes
 	for _, idx := range m.indexes {
 		if len(idx.Info.Columns) == 0 {
 			continue
@@ -289,7 +386,7 @@ func (m *IndexManager) DeleteFromIndexes(values []types.Value, columnMap map[str
 		}
 
 		key := values[colIdx]
-		if err := idx.Delete(key); err != nil {
+		if err := idx.Delete(key, rowID); err != nil {
 			return err
 		}
 	}

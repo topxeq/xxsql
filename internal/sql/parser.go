@@ -231,6 +231,8 @@ func (p *Parser) parseStatement() Statement {
 		return p.parseVacuum()
 	case TokPragma:
 		return p.parsePragma()
+	case TokAnalyze:
+		return p.parseAnalyze()
 	case TokExplain:
 		return p.parseExplain()
 	case TokBegin:
@@ -3741,6 +3743,27 @@ func (p *Parser) parsePragma() *PragmaStmt {
 			p.error("expected pragma value")
 			return nil
 		}
+	}
+
+	return stmt
+}
+
+// parseAnalyze parses an ANALYZE statement.
+// Syntax: ANALYZE [TABLE table_name]
+func (p *Parser) parseAnalyze() *AnalyzeStmt {
+	p.nextToken() // consume ANALYZE
+
+	stmt := &AnalyzeStmt{}
+
+	// Check for optional TABLE keyword
+	if p.curTokenIs(TokTable) {
+		p.nextToken() // consume TABLE
+	}
+
+	// Get optional table name
+	if p.curTokenIs(TokIdent) {
+		stmt.TableName = p.currTok.Value
+		p.nextToken()
 	}
 
 	return stmt

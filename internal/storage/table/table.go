@@ -696,6 +696,357 @@ func (t *Table) FindByKey(key types.Value) (*row.Row, error) {
 	return nil, fmt.Errorf("row not found")
 }
 
+// GetRowsByRowIDs fetches rows by their row IDs.
+// Returns a map of rowID to Row for efficient lookup.
+func (t *Table) GetRowsByRowIDs(rowIDs []row.RowID) (map[row.RowID]*row.Row, error) {
+	t.mu.RLock()
+	defer t.mu.RUnlock()
+
+	if t.info.State != TableStateActive {
+		return nil, fmt.Errorf("table is not active")
+	}
+
+	result := make(map[row.RowID]*row.Row, len(rowIDs))
+	if len(rowIDs) == 0 {
+		return result, nil
+	}
+
+	// Build a set of rowIDs we need to find
+	needRows := make(map[row.RowID]bool, len(rowIDs))
+	for _, id := range rowIDs {
+		needRows[id] = true
+	}
+
+	// Build page -> rowIDs mapping
+	pageToRows := make(map[page.PageID][]row.RowID)
+	t.rowPageMu.RLock()
+	for _, id := range rowIDs {
+		if pgID, ok := t.rowToPage[id]; ok {
+			pageToRows[pgID] = append(pageToRows[pgID], id)
+		}
+	}
+	t.rowPageMu.RUnlock()
+
+	// Fetch rows from pages
+	for pgID, pgRowIDs := range pageToRows {
+		// Create a set of row IDs we need from this page
+		needFromPage := make(map[row.RowID]bool, len(pgRowIDs))
+		for _, id := range pgRowIDs {
+			needFromPage[id] = true
+		}
+
+		p, err := t.getPage(pgID)
+		if err != nil {
+			continue
+		}
+
+		rowCount := p.RowCount()
+		for i := 0; i < rowCount; i++ {
+			rowData, err := p.GetRow(i)
+			if err != nil {
+				continue
+			}
+			r, err := row.DeserializeRow(rowData, t.info.Columns)
+			if err != nil {
+				continue
+			}
+			if needFromPage[r.ID] {
+				result[r.ID] = r
+				delete(needFromPage, r.ID)
+				if len(needFromPage) == 0 {
+					break // All rows found from this page
+				}
+			}
+		}
+	}
+
+	// If we didn't find all rows via the mapping, scan all pages
+	if len(result) < len(needRows) {
+		for pageID := page.PageID(1); pageID < t.info.NextPageID; pageID++ {
+			// Skip pages we already processed
+			if _, processed := pageToRows[pageID]; processed {
+				continue
+			}
+
+			p, err := t.getPage(pageID)
+			if err != nil {
+				continue
+			}
+
+			rowCount := p.RowCount()
+			for i := 0; i < rowCount; i++ {
+				rowData, err := p.GetRow(i)
+				if err != nil {
+					continue
+				}
+				r, err := row.DeserializeRow(rowData, t.info.Columns)
+				if err != nil {
+					continue
+				}
+				if needRows[r.ID] && result[r.ID] == nil {
+					result[r.ID] = r
+					if len(result) == len(needRows) {
+						return result, nil
+					}
+				}
+			}
+		}
+	}
+
+	return result, nil
+}
+
+// IndexScanResult represents the result of an index scan operation.
+type IndexScanResult struct {
+	IndexName string
+	RowCount  int
+}
+
+// IndexRangeScan scans rows using an index for a range of values.
+// Returns row IDs that match the range condition.
+func (t *Table) IndexRangeScan(indexName string, startValue, endValue types.Value, includeStart, includeEnd bool) ([]row.RowID, error) {
+	t.mu.RLock()
+	defer t.mu.RUnlock()
+
+	if t.info.State != TableStateActive {
+		return nil, fmt.Errorf("table is not active")
+	}
+
+	var idx *btree.Index
+	if indexName == "PRIMARY" || indexName == "primary" {
+		idx = t.indexMgr.GetPrimary()
+	} else {
+		var err error
+		idx, err = t.indexMgr.GetIndex(indexName)
+		if err != nil {
+			return nil, fmt.Errorf("index %s not found", indexName)
+		}
+	}
+
+	if idx == nil {
+		return nil, fmt.Errorf("index %s not found", indexName)
+	}
+
+	// Handle different scan types
+	if startValue.Null && endValue.Null {
+		// Full index scan
+		return idx.Scan(), nil
+	}
+
+	// Range scan
+	// For now, we'll use the Range method and filter by inclusion
+	rowIDs := idx.Range(startValue, endValue)
+	return rowIDs, nil
+}
+
+// IndexPointLookup looks up rows by an exact value in an index.
+func (t *Table) IndexPointLookup(indexName string, value types.Value) ([]row.RowID, error) {
+	t.mu.RLock()
+	defer t.mu.RUnlock()
+
+	if t.info.State != TableStateActive {
+		return nil, fmt.Errorf("table is not active")
+	}
+
+	var idx *btree.Index
+	if indexName == "PRIMARY" || indexName == "primary" {
+		idx = t.indexMgr.GetPrimary()
+	} else {
+		var err error
+		idx, err = t.indexMgr.GetIndex(indexName)
+		if err != nil {
+			return nil, fmt.Errorf("index %s not found", indexName)
+		}
+	}
+
+	if idx == nil {
+		return nil, fmt.Errorf("index %s not found", indexName)
+	}
+
+	// Point lookup
+	rowID, found := idx.Search(value)
+	if !found {
+		return []row.RowID{}, nil
+	}
+	return []row.RowID{rowID}, nil
+}
+
+// IndexConditionScan scans an index based on a comparison condition.
+// op can be "=", "<", "<=", ">", ">="
+func (t *Table) IndexConditionScan(indexName string, op string, value types.Value) ([]row.RowID, error) {
+	t.mu.RLock()
+	defer t.mu.RUnlock()
+
+	if t.info.State != TableStateActive {
+		return nil, fmt.Errorf("table is not active")
+	}
+
+	var idx *btree.Index
+	if indexName == "PRIMARY" || indexName == "primary" {
+		idx = t.indexMgr.GetPrimary()
+	} else {
+		var err error
+		idx, err = t.indexMgr.GetIndex(indexName)
+		if err != nil {
+			return nil, fmt.Errorf("index %s not found", indexName)
+		}
+	}
+
+	if idx == nil {
+		return nil, fmt.Errorf("index %s not found", indexName)
+	}
+
+	switch op {
+	case "=":
+		// Use SearchAll to handle non-unique indexes
+		rowIDs := idx.SearchAll(value)
+		if len(rowIDs) == 0 {
+			return []row.RowID{}, nil
+		}
+		return rowIDs, nil
+
+	case "<":
+		return idx.ScanLessThan(value, false), nil
+	case "<=":
+		return idx.ScanLessThan(value, true), nil
+	case ">":
+		return idx.ScanGreaterThan(value, false), nil
+	case ">=":
+		return idx.ScanGreaterThan(value, true), nil
+
+	default:
+		// Unknown operator, fall back to full scan
+		return idx.Scan(), nil
+	}
+}
+
+// GetIndexForColumn returns the best index for a given column.
+// Returns the index name and whether it's usable.
+func (t *Table) GetIndexForColumn(columnName string) (string, bool) {
+	t.mu.RLock()
+	defer t.mu.RUnlock()
+
+	// Check primary key first
+	if t.indexMgr.HasPrimary() {
+		pk := t.indexMgr.GetPrimary()
+		if pk != nil && len(pk.Info.Columns) == 1 && pk.Info.Columns[0] == columnName {
+			return "PRIMARY", true
+		}
+	}
+
+	// Check other indexes
+	for _, idxName := range t.indexMgr.ListIndexes() {
+		idx, err := t.indexMgr.GetIndex(idxName)
+		if err != nil {
+			continue
+		}
+		if len(idx.Info.Columns) >= 1 && idx.Info.Columns[0] == columnName {
+			return idxName, true
+		}
+	}
+
+	return "", false
+}
+
+// GetIndexForColumns returns the best index for the given columns (for composite index support).
+// The columns should be in the order they appear in the WHERE clause.
+func (t *Table) GetIndexForColumns(columns []string) (string, bool, int) {
+	t.mu.RLock()
+	defer t.mu.RUnlock()
+
+	if len(columns) == 0 {
+		return "", false, 0
+	}
+
+	// Check primary key first
+	if t.indexMgr.HasPrimary() {
+		pk := t.indexMgr.GetPrimary()
+		if pk != nil {
+			matchCount := countPrefixMatch(pk.Info.Columns, columns)
+			if matchCount > 0 {
+				return "PRIMARY", true, matchCount
+			}
+		}
+	}
+
+	// Check other indexes, find the one with most matching prefix columns
+	bestIndex := ""
+	bestMatch := 0
+	for _, idxName := range t.indexMgr.ListIndexes() {
+		idx, err := t.indexMgr.GetIndex(idxName)
+		if err != nil {
+			continue
+		}
+		matchCount := countPrefixMatch(idx.Info.Columns, columns)
+		if matchCount > bestMatch {
+			bestIndex = idxName
+			bestMatch = matchCount
+		}
+	}
+
+	if bestMatch > 0 {
+		return bestIndex, true, bestMatch
+	}
+
+	return "", false, 0
+}
+
+// countPrefixMatch counts how many columns in the index match the prefix of the given columns.
+func countPrefixMatch(indexCols, queryCols []string) int {
+	match := 0
+	for i := 0; i < len(indexCols) && i < len(queryCols); i++ {
+		if indexCols[i] == queryCols[i] {
+			match++
+		} else {
+			break
+		}
+	}
+	return match
+}
+
+// EstimateSelectivity estimates the selectivity of an index scan.
+// Returns an estimated number of rows that would be scanned.
+func (t *Table) EstimateSelectivity(indexName string) int {
+	t.mu.RLock()
+	defer t.mu.RUnlock()
+
+	totalRows := int(t.info.RowCount)
+	if totalRows == 0 {
+		return 0
+	}
+
+	var idx *btree.Index
+	if indexName == "PRIMARY" || indexName == "primary" {
+		idx = t.indexMgr.GetPrimary()
+	} else {
+		idx, _ = t.indexMgr.GetIndex(indexName)
+	}
+
+	if idx == nil {
+		return totalRows // Fallback to full scan
+	}
+
+	// For point lookup, selectivity is 1
+	// For range scan, estimate based on index type
+	indexRows := idx.Count()
+	if indexRows == 0 {
+		return 1 // Assume at least 1 row if index exists
+	}
+
+	// Simple heuristic: for unique index, assume point lookup (1 row)
+	// For non-unique, estimate based on cardinality
+	if idx.Info.Type == btree.IndexTypeUnique || idx.Info.Type == btree.IndexTypePrimary {
+		return 1
+	}
+
+	// Estimate average rows per distinct value
+	avgRowsPerValue := totalRows / indexRows
+	if avgRowsPerValue < 1 {
+		avgRowsPerValue = 1
+	}
+	return avgRowsPerValue
+}
+
 // CreateIndex creates a new index on the table.
 func (t *Table) CreateIndex(name string, columns []string, unique bool) error {
 	t.mu.Lock()
@@ -720,9 +1071,44 @@ func (t *Table) CreateIndex(name string, columns []string, unique bool) error {
 		idxType = btree.IndexTypeUnique
 	}
 
-	_, err := t.indexMgr.CreateIndex(name, columns, idxType, keyType)
+	idx, err := t.indexMgr.CreateIndex(name, columns, idxType, keyType)
 	if err != nil {
 		return err
+	}
+
+	// Populate index with existing data
+	// We already hold the lock, so scan pages directly
+	for pageID := page.PageID(1); pageID < t.info.NextPageID; pageID++ {
+		p, err := t.getPage(pageID)
+		if err != nil {
+			continue
+		}
+
+		rowCount := p.RowCount()
+		for i := 0; i < rowCount; i++ {
+			rowData, err := p.GetRow(i)
+			if err != nil {
+				continue
+			}
+
+			r, err := row.DeserializeRow(rowData, t.info.Columns)
+			if err != nil {
+				continue
+			}
+
+			// Get key value
+			if len(columns) > 0 {
+				colIdx, ok := t.columnMap[columns[0]]
+				if ok && colIdx < len(r.Values) {
+					key := r.Values[colIdx]
+					if !key.Null {
+						if err := idx.Insert(key, r.ID); err != nil {
+							return fmt.Errorf("failed to populate index: %w", err)
+						}
+					}
+				}
+			}
+		}
 	}
 
 	// Add to metadata

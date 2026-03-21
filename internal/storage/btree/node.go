@@ -23,11 +23,22 @@ const (
 // Key represents an index key.
 type Key struct {
 	Value types.Value
+	RowID uint64 // For non-unique indexes, this makes the key unique
 }
 
 // Compare compares two keys.
 func (k Key) Compare(other Key) int {
-	return k.Value.Compare(other.Value)
+	cmp := k.Value.Compare(other.Value)
+	if cmp != 0 {
+		return cmp
+	}
+	// If values are equal, compare by row ID to support non-unique indexes
+	if k.RowID < other.RowID {
+		return -1
+	} else if k.RowID > other.RowID {
+		return 1
+	}
+	return 0
 }
 
 // Entry represents a key-value entry in a leaf node.

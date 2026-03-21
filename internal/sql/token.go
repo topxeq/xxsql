@@ -181,6 +181,7 @@ const (
 	TokTruncate
 	TokVacuum
 	TokPragma
+	TokAnalyze
 	TokUser
 	TokPassword
 	TokIdentified
@@ -570,6 +571,8 @@ func (t TokenType) String() string {
 		return "VACUUM"
 	case TokPragma:
 		return "PRAGMA"
+	case TokAnalyze:
+		return "ANALYZE"
 	case TokModify:
 		return "MODIFY"
 	case TokGrant:
@@ -881,6 +884,7 @@ var keywords = map[string]TokenType{
 	"TRUNCATE":     TokTruncate,
 	"VACUUM":       TokVacuum,
 	"PRAGMA":       TokPragma,
+	"ANALYZE":      TokAnalyze,
 	"USER":         TokUser,
 	"PASSWORD":     TokPassword,
 	"IDENTIFIED":   TokIdentified,
