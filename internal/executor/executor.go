@@ -135,23 +135,8 @@ type AuthManager interface {
 func NewExecutor(engine *storage.Engine) *Executor {
 	var ftsMgr *fts.FTSManager
 	if engine != nil {
-		ftsMgr = fts.NewFTSManager(engine.GetDataDir())
-
-		// Load existing FTS indexes from catalog
-		catalog := engine.GetCatalog()
-		if catalog != nil {
-			for _, ftsInfo := range catalog.ListFTSIndexes() {
-				info, err := catalog.GetFTSIndex(ftsInfo)
-				if err != nil {
-					continue
-				}
-				// Create the FTS index in memory
-				ftsMgr.CreateIndex(info.Name, info.TableName, info.Columns, info.Tokenizer)
-			}
-		}
-
-		// Try to load persisted FTS data
-		ftsMgr.LoadAll()
+		// Use the engine's shared FTS manager
+		ftsMgr = engine.GetFTSManager()
 	}
 	return &Executor{
 		engine:        engine,
@@ -4090,7 +4075,7 @@ func (e *Executor) executeInsertInternal(stmt *sql.InsertStmt) (*Result, error) 
 			if len(ftsIndexes) > 0 {
 				valuesMap := make(map[string]interface{})
 				for i, col := range tblInfo.Columns {
-					valuesMap[col.Name] = e.valueToInterface(values[i])
+					valuesMap[strings.ToLower(col.Name)] = e.valueToInterface(values[i])
 				}
 				for _, ftsInfo := range ftsIndexes {
 					if idx, err := e.ftsManager.GetIndex(ftsInfo.Name); err == nil {
@@ -4460,7 +4445,7 @@ func (e *Executor) executeUpdateInternal(stmt *sql.UpdateStmt) (*Result, error) 
 					if predicate(r) {
 						valuesMap := make(map[string]interface{})
 						for i, col := range tblInfo.Columns {
-							valuesMap[col.Name] = e.valueToInterface(r.Values[i])
+							valuesMap[strings.ToLower(col.Name)] = e.valueToInterface(r.Values[i])
 						}
 						for _, ftsInfo := range ftsIndexes {
 							if idx, err := e.ftsManager.GetIndex(ftsInfo.Name); err == nil {
@@ -5030,21 +5015,29 @@ func (e *Executor) evaluateWhereForRow(expr sql.Expression, r *row.Row, columns 
 	case *sql.MatchExpr:
 		// For FTS matching, check if the row ID matches FTS results
 		if e.ftsManager == nil {
+			fmt.Printf("FTS: ftsManager is nil\n")
 			return false, nil
 		}
 
 		// Get FTS indexes for the table
 		ftsIndexes := e.engine.GetCatalog().GetFTSIndexesForTable(ex.Table)
+		fmt.Printf("FTS: table='%s', found %d indexes for table\n", ex.Table, len(ftsIndexes))
 		if len(ftsIndexes) == 0 {
+			// Try listing all FTS indexes for debugging
+			allIndexes := e.engine.GetCatalog().ListFTSIndexes()
+			fmt.Printf("FTS: all available indexes: %v\n", allIndexes)
 			return false, nil
 		}
 
 		// Search using the first matching index
 		for _, ftsInfo := range ftsIndexes {
+			fmt.Printf("FTS: searching index %s for query '%s'\n", ftsInfo.Name, ex.Query)
 			results, err := e.ftsManager.Search(ftsInfo.Name, ex.Query)
 			if err != nil {
+				fmt.Printf("FTS: search error: %v\n", err)
 				continue
 			}
+			fmt.Printf("FTS: found %d results\n", len(results))
 			// Check if this row's ID is in the results
 			rowID := uint64(r.ID)
 			for _, result := range results {

@@ -6,6 +6,7 @@ import (
 	"sync"
 
 	"github.com/topxeq/xxsql/internal/storage/catalog"
+	"github.com/topxeq/xxsql/internal/storage/fts"
 	"github.com/topxeq/xxsql/internal/storage/row"
 	"github.com/topxeq/xxsql/internal/storage/table"
 	"github.com/topxeq/xxsql/internal/storage/types"
@@ -13,26 +14,47 @@ import (
 
 // Engine represents the storage engine.
 type Engine struct {
-	catalog *catalog.Catalog
-	dataDir string
-	mu      sync.RWMutex
+	catalog   *catalog.Catalog
+	ftsMgr    *fts.FTSManager
+	dataDir   string
+	mu        sync.RWMutex
 }
 
 // NewEngine creates a new storage engine.
 func NewEngine(dataDir string) *Engine {
 	return &Engine{
 		catalog: catalog.NewCatalog(dataDir),
+		ftsMgr:  fts.NewFTSManager(dataDir),
 		dataDir: dataDir,
 	}
 }
 
 // Open opens the storage engine.
 func (e *Engine) Open() error {
-	return e.catalog.Open()
+	if err := e.catalog.Open(); err != nil {
+		return err
+	}
+
+	// Load existing FTS indexes from catalog
+	for _, ftsInfo := range e.catalog.ListFTSIndexes() {
+		info, err := e.catalog.GetFTSIndex(ftsInfo)
+		if err != nil {
+			continue
+		}
+		// Create the FTS index in memory
+		e.ftsMgr.CreateIndex(info.Name, info.TableName, info.Columns, info.Tokenizer)
+	}
+
+	// Load persisted FTS data
+	e.ftsMgr.LoadAll()
+
+	return nil
 }
 
 // Close closes the storage engine.
 func (e *Engine) Close() error {
+	// Save FTS data before closing
+	e.ftsMgr.SaveAll()
 	return e.catalog.Close()
 }
 
@@ -129,6 +151,11 @@ func (e *Engine) DropIndex(tableName, indexName string) error {
 // GetCatalog returns the catalog.
 func (e *Engine) GetCatalog() *catalog.Catalog {
 	return e.catalog
+}
+
+// GetFTSManager returns the FTS manager.
+func (e *Engine) GetFTSManager() *fts.FTSManager {
+	return e.ftsMgr
 }
 
 // ViewExists checks if a view exists.
