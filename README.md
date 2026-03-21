@@ -120,7 +120,7 @@ The following comparison highlights key differences between XxSql and SQLite acr
 | **EXPLAIN** | Yes | Yes (query plan) |
 | **GLOB** | Yes | Yes (Unix-style pattern matching) |
 | **Stored Procedures** | No | No |
-| **User-Defined Functions** | C/Rust/Python extensions | SQL-based UDFs |
+| **User-Defined Functions** | C/Rust/Python extensions | XxScript-based UDFs (full scripting) |
 
 ### Data Types
 
@@ -235,7 +235,7 @@ The following comparison highlights key differences between XxSql and SQLite acr
 
 | Feature | SQLite | XxSql |
 |---------|--------|-------|
-| **User-Defined Functions** | C/Rust extensions | SQL-based UDFs |
+| **User-Defined Functions** | C/Rust/Python extensions | XxScript-based UDFs |
 | **Custom Aggregates** | C extensions | No |
 | **Virtual Tables** | Yes | No |
 | **Loadable Extensions** | Yes | No |
@@ -338,24 +338,23 @@ The following comparison highlights key differences between XxSql and SQLite acr
 
 Download from [GitHub Releases](https://github.com/topxeq/xxsql/releases):
 
-**Latest Release: v0.0.4**
+**Latest Release: v0.0.6**
 
 | Platform | Architecture | Download |
 |----------|-------------|----------|
-| Linux | amd64 | [xxsql-v0.0.4-linux-amd64.tar.gz](https://github.com/topxeq/xxsql/releases/download/v0.0.4/xxsql-v0.0.4-linux-amd64.tar.gz) |
-| Linux | arm64 | [xxsql-v0.0.4-linux-arm64.tar.gz](https://github.com/topxeq/xxsql/releases/download/v0.0.4/xxsql-v0.0.4-linux-arm64.tar.gz) |
-| macOS | amd64 (Intel) | [xxsql-v0.0.4-darwin-amd64.tar.gz](https://github.com/topxeq/xxsql/releases/download/v0.0.4/xxsql-v0.0.4-darwin-amd64.tar.gz) |
-| macOS | arm64 (Apple Silicon) | [xxsql-v0.0.4-darwin-arm64.tar.gz](https://github.com/topxeq/xxsql/releases/download/v0.0.4/xxsql-v0.0.4-darwin-arm64.tar.gz) |
-| Windows | amd64 | [xxsql-v0.0.4-windows-amd64.zip](https://github.com/topxeq/xxsql/releases/download/v0.0.4/xxsql-v0.0.4-windows-amd64.zip) |
+| Linux | amd64 | [xxsqls-linux-amd64](https://github.com/topxeq/xxsql/releases/download/v0.0.6/xxsqls-linux-amd64) |
+| Linux | arm64 | [xxsqls-linux-arm64](https://github.com/topxeq/xxsql/releases/download/v0.0.6/xxsqls-linux-arm64) |
+| macOS | amd64 (Intel) | [xxsqls-darwin-amd64](https://github.com/topxeq/xxsql/releases/download/v0.0.6/xxsqls-darwin-amd64) |
+| macOS | arm64 (Apple Silicon) | [xxsqls-darwin-arm64](https://github.com/topxeq/xxsql/releases/download/v0.0.6/xxsqls-darwin-arm64) |
+| Windows | amd64 | [xxsqls-windows-amd64.exe](https://github.com/topxeq/xxsql/releases/download/v0.0.6/xxsqls-windows-amd64.exe) |
 
 ```bash
 # Linux/macOS example
-tar -xzf xxsql-v0.0.4-linux-amd64.tar.gz
-./xxsqls -data-dir ./data
+chmod +x xxsqls-linux-amd64
+./xxsqls-linux-amd64 -data-dir ./data
 
 # Windows example (PowerShell)
-Expand-Archive xxsql-v0.0.4-windows-amd64.zip
-.\xxsqls.exe -data-dir .\data
+.\xxsqls-windows-amd64.exe -data-dir .\data
 ```
 
 ### Build from Source
@@ -1903,7 +1902,48 @@ See [docs/TESTING.md](docs/TESTING.md) for testing guidelines.
 
 ## Roadmap
 
-### v0.0.4 (Current Release) ✅
+### v0.0.6 (Current Release) ✅
+
+**New Features:**
+- **XxScript-based User-Defined Functions** - Full scripting language for UDFs
+  - Dollar-quoted string syntax (PostgreSQL style): `AS $$ script $$`
+  - SCRIPT keyword syntax: `SCRIPT 'script'`
+  - Full XxScript language support (variables, loops, conditionals, functions)
+  - Execute SQL queries inside functions using `db_query()` and `db_exec()`
+  - Backward compatible with old-style SQL UDFs
+  ```sql
+  -- XxScript UDF with dollar-quoted string
+  CREATE FUNCTION add_nums(x, y) RETURNS INT AS $$
+      return x + y
+  $$;
+
+  -- XxScript UDF with SCRIPT keyword
+  CREATE FUNCTION double(x) RETURNS INT SCRIPT 'return x * 2';
+
+  -- Complex UDF with conditionals
+  CREATE FUNCTION abs_val(x) RETURNS INT AS $$
+      if x < 0 { return -x }
+      return x
+  $$;
+
+  -- UDF with SQL query
+  CREATE FUNCTION get_user_count() RETURNS INT AS $$
+      var result = db_query("SELECT COUNT(*) as cnt FROM users")
+      return result[0].cnt
+  $$;
+  ```
+
+- **Bug Fixes**:
+  - Fixed LIKE operator for VARCHAR comparisons in microservice queries
+  - Fixed CREATE OR REPLACE FUNCTION parsing for script-based functions
+
+### v0.0.5 ✅
+
+- Initial XxScript microservices support
+- Web-based microservice management
+- REST API for microservice endpoints
+
+### v0.0.4 ✅
 
 **New Features:**
 - **BLOB Type Support** - Full binary large object support with hex notation
@@ -1926,41 +1966,11 @@ See [docs/TESTING.md](docs/TESTING.md) for testing guidelines.
   - `CONCAT(str1, str2, ...)` - String concatenation
   - `SUBSTRING(str, start, len)` - Substring extraction
 
-- **User-Defined Functions (UDF)**:
+- **SQL-based User-Defined Functions** (now superseded by XxScript UDFs):
   - Create SQL functions with `CREATE FUNCTION`
   - Support for IF expressions, LET variables, and BEGIN/END blocks
   - Default parameter values
   - Automatic persistence to disk
-  ```sql
-  -- Simple UDF
-  CREATE FUNCTION double(x INT) RETURNS INT RETURN x * 2;
-
-  -- UDF with IF expression
-  CREATE FUNCTION abs_val(x INT) RETURNS INT
-      RETURN IF x < 0 THEN -x ELSE x END;
-
-  -- UDF with LET and BEGIN/END block
-  CREATE FUNCTION complex_calc(x INT, y INT) RETURNS INT
-  BEGIN
-      LET a = x * 2;
-      LET b = y + 1;
-      RETURN a + b;
-  END;
-
-  -- UDF with default parameter
-  CREATE FUNCTION greet(name VARCHAR DEFAULT 'World') RETURNS VARCHAR
-      RETURN CONCAT('Hello, ', name);
-
-  -- Use in queries
-  SELECT double(5);        -- Returns 10
-  SELECT abs_val(-5);      -- Returns 5
-  SELECT complex_calc(3, 4);  -- Returns 11
-  SELECT greet();          -- Returns 'Hello, World'
-  SELECT greet('Alice');   -- Returns 'Hello, Alice'
-
-  -- Drop a UDF
-  DROP FUNCTION double;
-  ```
 
 - **SQL Syntax Improvements**:
   - `IS NULL` / `IS NOT NULL` expressions

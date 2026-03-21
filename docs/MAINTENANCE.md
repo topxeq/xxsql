@@ -38,44 +38,37 @@ Download pre-built binaries from [GitHub Releases](https://github.com/topxeq/xxs
 
 ```bash
 # Download (adjust version and architecture as needed)
-wget https://github.com/topxeq/xxsql/releases/download/v0.0.4/xxsql-v0.0.4-linux-amd64.tar.gz
-
-# Extract
-tar -xzf xxsql-v0.0.4-linux-amd64.tar.gz
+wget https://github.com/topxeq/xxsql/releases/download/v0.0.6/xxsqls-linux-amd64
 
 # Move to system path
-sudo mv xxsqls xxsqlc /usr/local/bin/
+sudo mv xxsqls-linux-amd64 /usr/local/bin/xxsqls
 
 # Make executable
-chmod +x /usr/local/bin/xxsqls /usr/local/bin/xxsqlc
+chmod +x /usr/local/bin/xxsqls
 ```
 
 #### macOS
 
 ```bash
 # Apple Silicon (M1/M2)
-wget https://github.com/topxeq/xxsql/releases/download/v0.0.4/xxsql-v0.0.4-darwin-arm64.tar.gz
-tar -xzf xxsql-v0.0.4-darwin-arm64.tar.gz
+wget https://github.com/topxeq/xxsql/releases/download/v0.0.6/xxsqls-darwin-arm64
+chmod +x xxsqls-darwin-arm64
+sudo mv xxsqls-darwin-arm64 /usr/local/bin/xxsqls
 
 # Intel Mac
-wget https://github.com/topxeq/xxsql/releases/download/v0.0.4/xxsql-v0.0.4-darwin-amd64.tar.gz
-tar -xzf xxsql-v0.0.4-darwin-amd64.tar.gz
-
-# Move to system path
-sudo mv xxsqls xxsqlc /usr/local/bin/
+wget https://github.com/topxeq/xxsql/releases/download/v0.0.6/xxsqls-darwin-amd64
+chmod +x xxsqls-darwin-amd64
+sudo mv xxsqls-darwin-amd64 /usr/local/bin/xxsqls
 ```
 
 #### Windows
 
 ```powershell
 # Download
-Invoke-WebRequest -Uri "https://github.com/topxeq/xxsql/releases/download/v0.0.4/xxsql-v0.0.4-windows-amd64.zip" -OutFile "xxsql.zip"
-
-# Extract
-Expand-Archive xxsql.zip
+Invoke-WebRequest -Uri "https://github.com/topxeq/xxsql/releases/download/v0.0.6/xxsqls-windows-amd64.exe" -OutFile "xxsqls.exe"
 
 # Move to a directory in PATH
-Move-Item xxsql\*.exe C:\Windows\
+Move-Item xxsqls.exe C:\Windows\
 ```
 
 ### Build from Source
@@ -355,11 +348,10 @@ Options:
 3. **Install new version:**
    ```bash
    # Download new version
-   wget https://github.com/topxeq/xxsql/releases/download/v0.0.5/xxsql-v0.0.5-linux-amd64.tar.gz
-   tar -xzf xxsql-v0.0.5-linux-amd64.tar.gz
+   wget https://github.com/topxeq/xxsql/releases/download/v0.0.6/xxsqls-linux-amd64
 
    # Replace binary
-   sudo mv xxsqls /usr/local/bin/xxsqls
+   sudo mv xxsqls-linux-amd64 /usr/local/bin/xxsqls
    sudo chmod +x /usr/local/bin/xxsqls
    ```
 

@@ -2,6 +2,37 @@
 
 XxScript is a procedural scripting language optimized for database operations in XxSql. It provides tight integration with the database and HTTP request/response handling for building microservices.
 
+## Usage
+
+XxScript can be used in two ways:
+
+1. **Microservices** - Create HTTP endpoints that execute XxScript code
+2. **User-Defined Functions (UDF)** - Create SQL functions with full scripting capabilities
+
+### User-Defined Functions
+
+XxScript can be used to create powerful SQL functions:
+
+```sql
+-- Simple UDF
+CREATE FUNCTION add_nums(x, y) RETURNS INT AS $$
+    return x + y
+$$;
+
+-- UDF with SQL query
+CREATE FUNCTION get_user_count() RETURNS INT AS $$
+    var result = db_query("SELECT COUNT(*) as cnt FROM users")
+    return result[0].cnt
+$$;
+
+-- Use in SQL queries
+SELECT add_nums(3, 4);           -- Returns 7
+SELECT get_user_count();         -- Returns user count
+SELECT name, add_nums(id, 10) FROM users;
+```
+
+See the [User-Defined Functions](#user-defined-functions-1) section below for more details.
+
 ## Table of Contents
 
 1. [Basic Syntax](#basic-syntax)
@@ -599,3 +630,103 @@ GET /ms/api/users?id=1  → filtered results
 3. **Return Proper Status Codes**: Use appropriate HTTP status codes
 4. **Keep Scripts Simple**: Complex logic should be in your application layer
 5. **Use Parameterized Queries**: Be careful of SQL injection with dynamic queries
+
+## User-Defined Functions
+
+XxScript can be used to create SQL User-Defined Functions (UDFs) with full scripting capabilities.
+
+### Creating UDFs
+
+**Dollar-quoted syntax (PostgreSQL style):**
+```sql
+CREATE FUNCTION func_name(param1, param2) RETURNS type AS $$
+    -- XxScript code
+    return value
+$$;
+```
+
+**SCRIPT keyword syntax:**
+```sql
+CREATE FUNCTION func_name(param) RETURNS type SCRIPT 'return expression';
+```
+
+### UDF Examples
+
+**Arithmetic function:**
+```sql
+CREATE FUNCTION add_nums(x, y) RETURNS INT AS $$
+    return x + y
+$$;
+
+SELECT add_nums(3, 4);  -- Returns 7
+```
+
+**Conditional logic:**
+```sql
+CREATE FUNCTION abs_val(x) RETURNS INT AS $$
+    if x < 0 {
+        return -x
+    }
+    return x
+$$;
+
+SELECT abs_val(-5);  -- Returns 5
+SELECT abs_val(10);  -- Returns 10
+```
+
+**Loop example:**
+```sql
+CREATE FUNCTION factorial(n) RETURNS INT AS $$
+    if n <= 1 {
+        return 1
+    }
+    var result = 1
+    for (var i = 2; i <= n; i = i + 1) {
+        result = result * i
+    }
+    return result
+$$;
+
+SELECT factorial(5);  -- Returns 120
+```
+
+**With SQL queries:**
+```sql
+CREATE FUNCTION get_user_name(user_id) RETURNS VARCHAR AS $$
+    var result = db_query("SELECT name FROM users WHERE id = " + string(user_id))
+    if (len(result) > 0) {
+        return result[0].name
+    }
+    return null
+$$;
+
+SELECT get_user_name(1);  -- Returns user name
+```
+
+**Helper functions within UDF:**
+```sql
+CREATE FUNCTION calculate(a, b, c) RETURNS INT AS $$
+    func helper(x) {
+        return x * 2
+    }
+    return helper(a) + helper(b) + c
+$$;
+
+SELECT calculate(1, 2, 3);  -- Returns 9 (2 + 4 + 3)
+```
+
+### Differences from Microservices
+
+| Feature | Microservice | UDF |
+|---------|--------------|-----|
+| HTTP access | `http` object available | No `http` object |
+| SQL access | `db.query()`, `db.exec()` | `db_query()`, `db_exec()` |
+| Return value | `http.json()` or `http.write()` | `return` statement |
+| Usage | HTTP endpoint | SQL expression |
+
+### Dropping UDFs
+
+```sql
+DROP FUNCTION func_name;
+DROP FUNCTION IF EXISTS func_name;
+```

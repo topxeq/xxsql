@@ -1105,6 +1105,10 @@ DROP TRIGGER trigger_name;
 
 ## User-Defined Functions
 
+XxSql supports two types of user-defined functions:
+
+### 1. SQL-based UDFs (Legacy)
+
 ```sql
 -- Simple function
 CREATE FUNCTION func_name(params) RETURNS type
@@ -1131,6 +1135,123 @@ DROP FUNCTION func_name;
 CREATE FUNCTION double(x INT) RETURNS INT RETURN x * 2;
 CREATE FUNCTION greet(name VARCHAR DEFAULT 'World') RETURNS VARCHAR
     RETURN CONCAT('Hello, ', name);
+```
+
+### 2. XxScript-based UDFs (Recommended)
+
+XxScript-based UDFs provide full scripting capabilities including variables, loops, conditionals, and SQL queries.
+
+#### Syntax
+
+**Dollar-quoted string (PostgreSQL style):**
+```sql
+CREATE FUNCTION func_name(params) RETURNS type AS $$
+    -- XxScript code
+    return value
+$$;
+```
+
+**SCRIPT keyword:**
+```sql
+CREATE FUNCTION func_name(params) RETURNS type SCRIPT 'return expression';
+```
+
+#### Examples
+
+**Simple arithmetic:**
+```sql
+CREATE FUNCTION add_nums(x, y) RETURNS INT AS $$
+    return x + y
+$$;
+
+SELECT add_nums(3, 4);  -- Returns 7
+```
+
+**With conditionals:**
+```sql
+CREATE FUNCTION abs_val(x) RETURNS INT AS $$
+    if x < 0 {
+        return -x
+    }
+    return x
+$$;
+
+SELECT abs_val(-5);  -- Returns 5
+```
+
+**With loops:**
+```sql
+CREATE FUNCTION sum_to_n(n) RETURNS INT AS $$
+    var total = 0
+    for (var i = 1; i <= n; i = i + 1) {
+        total = total + i
+    }
+    return total
+$$;
+
+SELECT sum_to_n(10);  -- Returns 55
+```
+
+**With SQL queries:**
+```sql
+CREATE FUNCTION get_user_count() RETURNS INT AS $$
+    var result = db_query("SELECT COUNT(*) as cnt FROM users")
+    if (len(result) > 0) {
+        return result[0].cnt
+    }
+    return 0
+$$;
+
+CREATE FUNCTION get_user_name(user_id) RETURNS VARCHAR AS $$
+    var result = db_query("SELECT name FROM users WHERE id = " + string(user_id))
+    if (len(result) > 0) {
+        return result[0].name
+    }
+    return null
+$$;
+```
+
+**String manipulation:**
+```sql
+CREATE FUNCTION greet(name) RETURNS VARCHAR AS $$
+    return "Hello, " + name + "!"
+$$;
+
+SELECT greet('World');  -- Returns 'Hello, World!'
+```
+
+**With OR REPLACE:**
+```sql
+CREATE OR REPLACE FUNCTION add_nums(x, y) RETURNS INT AS $$
+    return x + y
+$$;
+```
+
+#### XxScript Features in UDFs
+
+| Feature | Description | Example |
+|---------|-------------|---------|
+| Variables | `var name = value` | `var x = 10` |
+| Conditionals | `if/else` | `if (x > 0) { ... } else { ... }` |
+| Loops | `for`, `while` | `for (var i = 0; i < n; i = i + 1) { ... }` |
+| Functions | `func name(params) { ... }` | `func helper(x) { return x * 2 }` |
+| SQL Queries | `db_query(sql)`, `db_exec(sql)` | `db_query("SELECT * FROM users")` |
+| Error Handling | `try/catch`, `throw` | `try { ... } catch (e) { ... }` |
+
+#### Built-in Functions Available in UDFs
+
+- **String**: `len()`, `upper()`, `lower()`, `trim()`, `split()`, `join()`, `substr()`, `replace()`, `contains()`, `indexOf()`
+- **Math**: `abs()`, `min()`, `max()`, `floor()`, `ceil()`, `round()`, `sqrt()`, `pow()`
+- **Type**: `int()`, `float()`, `string()`, `typeof()`
+- **Array**: `len()`, `push()`, `pop()`, `slice()`, `range()`
+- **JSON**: `json()`, `jsonParse()`
+- **Database**: `db_query(sql)`, `db_exec(sql)`, `db_query_row(sql)`
+
+#### Drop Function
+
+```sql
+DROP FUNCTION func_name;
+DROP FUNCTION IF EXISTS func_name;
 ```
 
 ---
