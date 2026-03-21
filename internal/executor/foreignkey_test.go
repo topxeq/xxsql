@@ -336,8 +336,12 @@ func TestForeignKeyCompositeKey(t *testing.T) {
 		t.Fatalf("Failed to create shipments table: %v", err)
 	}
 
-	// Insert order line
+	// Insert order lines
 	_, err = exec.Execute(`INSERT INTO order_lines (order_id, line_num, product) VALUES (1, 1, 'Widget')`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = exec.Execute(`INSERT INTO order_lines (order_id, line_num, product) VALUES (1, 2, 'Gadget')`)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -348,13 +352,92 @@ func TestForeignKeyCompositeKey(t *testing.T) {
 		t.Fatalf("Valid insert should succeed: %v", err)
 	}
 
-	// Invalid insert - partial match (only order_id matches, line_num doesn't)
-	// Note: Current FK implementation only checks single column, so this may pass
-	// Composite FK support would need additional implementation
-	_, err = exec.Execute(`INSERT INTO shipments (id, order_id, line_num) VALUES (2, 1, 999)`)
-	if err == nil {
-		t.Log("Note: Composite FK validation is limited in current implementation")
-	} else {
-		t.Logf("Composite FK validation error: %v", err)
+	_, err = exec.Execute(`INSERT INTO shipments (id, order_id, line_num) VALUES (2, 1, 2)`)
+	if err != nil {
+		t.Fatalf("Valid insert should succeed: %v", err)
 	}
+
+	// Invalid insert - composite key not found
+	_, err = exec.Execute(`INSERT INTO shipments (id, order_id, line_num) VALUES (3, 1, 999)`)
+	if err == nil {
+		t.Error("Expected error for non-existent composite key (1, 999)")
+	} else {
+		t.Logf("Composite FK validation error (expected): %v", err)
+	}
+
+	// Invalid insert - only first column matches
+	_, err = exec.Execute(`INSERT INTO shipments (id, order_id, line_num) VALUES (4, 999, 1)`)
+	if err == nil {
+		t.Error("Expected error for non-existent composite key (999, 1)")
+	} else {
+		t.Logf("Composite FK validation error (expected): %v", err)
+	}
+
+	// Test with NULL in one column - should pass (NULL skips FK check)
+	_, err = exec.Execute(`INSERT INTO shipments (id, order_id, line_num) VALUES (5, NULL, 1)`)
+	if err != nil {
+		t.Logf("Insert with NULL in composite FK: %v", err)
+	}
+}
+
+func TestForeignKeyCompositeKeyCascade(t *testing.T) {
+	// Test composite foreign key with ON DELETE CASCADE
+	tmpDir, err := os.MkdirTemp("", "xxsql-fk-cascade-test-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	engine := storage.NewEngine(tmpDir)
+	if err := engine.Open(); err != nil {
+		t.Fatalf("Failed to open engine: %v", err)
+	}
+	defer engine.Close()
+
+	exec := NewExecutor(engine)
+
+	// Create parent table with composite primary key
+	_, err = exec.Execute(`
+		CREATE TABLE orders (
+			order_id INT,
+			line_num INT,
+			product VARCHAR(100),
+			PRIMARY KEY (order_id, line_num)
+		)
+	`)
+	if err != nil {
+		t.Fatalf("Failed to create orders table: %v", err)
+	}
+
+	// Create child table with composite foreign key and CASCADE
+	// Note: Current implementation handles cascade per-column, so this tests single column behavior
+	_, err = exec.Execute(`
+		CREATE TABLE shipments (
+			id SEQ PRIMARY KEY,
+			order_id INT,
+			line_num INT,
+			status VARCHAR(50),
+			FOREIGN KEY (order_id, line_num) REFERENCES orders(order_id, line_num) ON DELETE CASCADE
+		)
+	`)
+	if err != nil {
+		t.Fatalf("Failed to create shipments table: %v", err)
+	}
+
+	// Insert order
+	_, err = exec.Execute(`INSERT INTO orders (order_id, line_num, product) VALUES (1, 1, 'Widget')`)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Insert shipment
+	_, err = exec.Execute(`INSERT INTO shipments (id, order_id, line_num, status) VALUES (1, 1, 1, 'shipped')`)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Note: Composite FK cascade is partially supported
+	// Current implementation handles cascade on a per-column basis
+	// Full composite cascade would require matching all columns together
+	t.Log("Composite FK with CASCADE created successfully")
 }

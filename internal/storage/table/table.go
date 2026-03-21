@@ -203,24 +203,32 @@ func NewTempTable(name string, columns []*types.ColumnInfo) *Table {
 }
 
 // createPrimaryKeyIndex creates a primary key index if the table has a primary key.
+// For composite primary keys, we don't create a btree index (not supported yet),
+// but we still track the primary key columns in info.PrimaryKey.
 func (t *Table) createPrimaryKeyIndex() {
-	// Check for primary key columns
+	// Collect all primary key columns
+	pkColumns := make([]string, 0)
 	for _, col := range t.info.Columns {
 		if col.PrimaryKey {
-			// Create primary key index
-			t.indexMgr.CreateIndex("PRIMARY", []string{col.Name}, btree.IndexTypePrimary, col.Type)
-			// Add to primary key list if not already there
-			found := false
-			for _, pk := range t.info.PrimaryKey {
-				if pk == col.Name {
-					found = true
-					break
-				}
+			pkColumns = append(pkColumns, col.Name)
+		}
+	}
+
+	if len(pkColumns) == 0 {
+		return
+	}
+
+	// Store all primary key columns
+	t.info.PrimaryKey = pkColumns
+
+	// Only create btree index for single-column primary keys
+	// Composite key indexes would require a different implementation
+	if len(pkColumns) == 1 {
+		for _, col := range t.info.Columns {
+			if col.PrimaryKey {
+				t.indexMgr.CreateIndex("PRIMARY", []string{col.Name}, btree.IndexTypePrimary, col.Type)
+				break
 			}
-			if !found {
-				t.info.PrimaryKey = append(t.info.PrimaryKey, col.Name)
-			}
-			return // Only one primary key for now
 		}
 	}
 }
@@ -422,14 +430,75 @@ func (t *Table) Insert(values []types.Value) (row.RowID, error) {
 		}
 	}
 
-	// Check primary key uniqueness
-	if t.indexMgr.HasPrimary() && len(t.info.PrimaryKey) > 0 {
-		pkCol := t.info.PrimaryKey[0]
-		pkIdx, ok := t.columnMap[pkCol]
-		if ok && pkIdx < len(values) {
-			pkValue := values[pkIdx]
-			if _, found := t.indexMgr.GetPrimary().Search(pkValue); found {
-				return row.InvalidRowID, fmt.Errorf("duplicate key value: %v", pkValue)
+	// Check primary key uniqueness (support composite keys)
+	if len(t.info.PrimaryKey) > 0 {
+		// Build list of primary key column indices and values
+		pkIndices := make([]int, 0, len(t.info.PrimaryKey))
+		pkValues := make([]types.Value, 0, len(t.info.PrimaryKey))
+		validPK := true
+
+		for _, pkCol := range t.info.PrimaryKey {
+			pkIdx, ok := t.columnMap[pkCol]
+			if !ok || pkIdx >= len(values) {
+				validPK = false
+				break
+			}
+			pkIndices = append(pkIndices, pkIdx)
+			pkValues = append(pkValues, values[pkIdx])
+		}
+
+		if validPK {
+			// For single-column primary key, use the index if available
+			// For composite keys, always scan to check all columns together
+			if len(pkIndices) == 1 && t.indexMgr.HasPrimary() {
+				if _, found := t.indexMgr.GetPrimary().Search(pkValues[0]); found {
+					return row.InvalidRowID, fmt.Errorf("duplicate key value: %v", pkValues[0])
+				}
+			} else {
+				// For composite keys, scan pages directly (we already hold the lock)
+				// Don't call Scan() as it would try to acquire a read lock -> deadlock
+				for pageID := page.PageID(1); pageID < t.info.NextPageID; pageID++ {
+					p, err := t.getPage(pageID)
+					if err != nil {
+						continue
+					}
+
+					rowCount := p.RowCount()
+					for i := 0; i < rowCount; i++ {
+						rowData, err := p.GetRow(i)
+						if err != nil {
+							continue
+						}
+
+						r, err := row.DeserializeRow(rowData, t.info.Columns)
+						if err != nil {
+							continue
+						}
+
+						match := true
+						for _, pkIdx := range pkIndices {
+							if pkIdx >= len(r.Values) || pkIdx >= len(values) {
+								match = false
+								break
+							}
+							if r.Values[pkIdx].Compare(values[pkIdx]) != 0 {
+								match = false
+								break
+							}
+						}
+						if match {
+							// Build key string for error message
+							keyStr := ""
+							for i, v := range pkValues {
+								if i > 0 {
+									keyStr += ", "
+								}
+								keyStr += v.String()
+							}
+							return row.InvalidRowID, fmt.Errorf("duplicate key value: (%s)", keyStr)
+						}
+					}
+				}
 			}
 		}
 	}
@@ -1192,16 +1261,32 @@ func (t *Table) SetPrimaryKey(colName string) error {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 
+	found := false
 	for i, col := range t.info.Columns {
 		if strings.EqualFold(col.Name, colName) {
 			t.info.Columns[i].PrimaryKey = true
 			t.info.Columns[i].Nullable = false
+			found = true
+			break
+		}
+	}
+
+	if !found {
+		return fmt.Errorf("column %s not found", colName)
+	}
+
+	// Add to primary key list if not already there
+	for _, pk := range t.info.PrimaryKey {
+		if strings.EqualFold(pk, colName) {
+			// Already in the list
 			t.info.ModifiedAt = time.Now()
 			return t.saveMeta()
 		}
 	}
 
-	return fmt.Errorf("column %s not found", colName)
+	t.info.PrimaryKey = append(t.info.PrimaryKey, colName)
+	t.info.ModifiedAt = time.Now()
+	return t.saveMeta()
 }
 
 // AddUniqueConstraint adds a UNIQUE constraint to a column.

@@ -12449,42 +12449,55 @@ func (e *Executor) validateForeignKeys(tbl *table.Table, values []types.Value, i
 			return err
 		}
 
-		// Get the value for the FK column
+		// Get the values for all FK columns
 		if len(fk.Columns) == 0 {
 			continue
 		}
 
-		colIdx, ok := colMap[strings.ToLower(fk.Columns[0])]
-		if !ok {
-			continue
-		}
+		// Build list of column indices and values for composite FK
+		fkColIndices := make([]int, len(fk.Columns))
+		fkValues := make([]types.Value, len(fk.Columns))
+		allNull := true
 
-		if colIdx >= len(values) {
-			continue
-		}
-
-		fkValue := values[colIdx]
-
-		// NULL values don't need FK validation
-		if fkValue.Null {
-			continue
-		}
-
-		// Check if referenced value exists
-		refColIdx := -1
-		refCols := refTbl.Columns()
-		for i, c := range refCols {
-			if strings.EqualFold(c.Name, fk.RefColumns[0]) {
-				refColIdx = i
-				break
+		for i, colName := range fk.Columns {
+			colIdx, ok := colMap[strings.ToLower(colName)]
+			if !ok {
+				return fmt.Errorf("foreign key constraint fails: column '%s' not found", colName)
+			}
+			fkColIndices[i] = colIdx
+			if colIdx < len(values) {
+				fkValues[i] = values[colIdx]
+				if !values[colIdx].Null {
+					allNull = false
+				}
+			} else {
+				fkValues[i] = types.Value{Null: true}
 			}
 		}
 
-		if refColIdx < 0 {
-			return fmt.Errorf("foreign key constraint fails: referenced column '%s' not found", fk.RefColumns[0])
+		// If all FK values are NULL, skip validation (SQL standard behavior)
+		if allNull {
+			continue
 		}
 
-		// Search for the referenced value
+		// Build list of referenced column indices
+		refColIndices := make([]int, len(fk.RefColumns))
+		refCols := refTbl.Columns()
+		for i, refColName := range fk.RefColumns {
+			found := false
+			for j, c := range refCols {
+				if strings.EqualFold(c.Name, refColName) {
+					refColIndices[i] = j
+					found = true
+					break
+				}
+			}
+			if !found {
+				return fmt.Errorf("foreign key constraint fails: referenced column '%s' not found", refColName)
+			}
+		}
+
+		// Search for the referenced values (composite key match)
 		rows, err := refTbl.Scan()
 		if err != nil {
 			return err
@@ -12492,17 +12505,48 @@ func (e *Executor) validateForeignKeys(tbl *table.Table, values []types.Value, i
 
 		found := false
 		for _, r := range rows {
-			if refColIdx < len(r.Values) {
-				if !r.Values[refColIdx].Null && r.Values[refColIdx].Compare(fkValue) == 0 {
-					found = true
+			match := true
+			for i := 0; i < len(fkValues); i++ {
+				if fkValues[i].Null {
+					// NULL in FK column means no match needed for this component
+					// But we already checked allNull above, so at least one is non-null
+					match = false
 					break
 				}
+				if refColIndices[i] >= len(r.Values) {
+					match = false
+					break
+				}
+				if r.Values[refColIndices[i]].Null {
+					match = false
+					break
+				}
+				if r.Values[refColIndices[i]].Compare(fkValues[i]) != 0 {
+					match = false
+					break
+				}
+			}
+			if match {
+				found = true
+				break
 			}
 		}
 
 		if !found {
-			return fmt.Errorf("foreign key constraint fails: key '%s' not found in table '%s'",
-				fkValue.String(), fk.RefTable)
+			// Build key string for error message
+			keyStr := ""
+			for i, v := range fkValues {
+				if i > 0 {
+					keyStr += ", "
+				}
+				if v.Null {
+					keyStr += "NULL"
+				} else {
+					keyStr += v.String()
+				}
+			}
+			return fmt.Errorf("foreign key constraint fails: key (%s) not found in table '%s'",
+				keyStr, fk.RefTable)
 		}
 	}
 
