@@ -247,8 +247,8 @@ func (s *Server) authMiddleware(next http.Handler) http.Handler {
 			return
 		}
 
-		// For API routes, check either session or API key
-		if strings.HasPrefix(r.URL.Path, "/api/") {
+		// For API routes and microservice routes, check session or API key
+		if strings.HasPrefix(r.URL.Path, "/api/") || strings.HasPrefix(r.URL.Path, "/ms/") {
 			// First, try session authentication
 			session := s.getSession(r)
 			if session != nil {
