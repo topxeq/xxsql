@@ -5611,52 +5611,24 @@ func (e *Executor) generateQueryPlan(s sql.Statement) [][]interface{} {
 
 	switch stmt := s.(type) {
 	case *sql.SelectStmt:
-		id++
-		rows = append(rows, []interface{}{id, 0, 0, "SCAN TABLE " + getTableNameFromSelect(stmt)})
-
-		// Check for WHERE clause
-		if stmt.Where != nil {
-			id++
-			rows = append(rows, []interface{}{id, 1, 0, "FILTER"})
-		}
-
-		// Check for JOIN
-		if stmt.From != nil && len(stmt.From.Joins) > 0 {
-			for _, join := range stmt.From.Joins {
-				id++
-				joinType := "INNER JOIN"
-				if join.Type == sql.JoinLeft {
-					joinType = "LEFT JOIN"
-				} else if join.Type == sql.JoinRight {
-					joinType = "RIGHT JOIN"
-				} else if join.Type == sql.JoinCross {
-					joinType = "CROSS JOIN"
-				}
-				rows = append(rows, []interface{}{id, 0, 0, joinType + " TABLE " + join.Table.Name})
-			}
-		}
-
-		// Check for GROUP BY
-		if len(stmt.GroupBy) > 0 {
-			id++
-			rows = append(rows, []interface{}{id, 0, 0, "GROUP BY"})
-		}
-
-		// Check for ORDER BY
-		if len(stmt.OrderBy) > 0 {
-			id++
-			rows = append(rows, []interface{}{id, 0, 0, "ORDER BY"})
-		}
-
-		// Check for LIMIT
-		if stmt.Limit != nil {
-			id++
-			rows = append(rows, []interface{}{id, 0, 0, "LIMIT"})
-		}
+		rows = e.generateSelectPlan(stmt, &id, 0)
 
 	case *sql.InsertStmt:
 		id++
-		rows = append(rows, []interface{}{id, 0, 0, "INSERT INTO " + stmt.Table})
+		detail := "INSERT INTO " + stmt.Table
+		rows = append(rows, []interface{}{id, 0, 0, detail})
+
+		// Show values being inserted
+		if len(stmt.Values) > 0 {
+			id++
+			rows = append(rows, []interface{}{id, 1, 0, fmt.Sprintf("VALUES (%d rows)", len(stmt.Values))})
+		}
+
+		// Check for column list
+		if len(stmt.Columns) > 0 {
+			id++
+			rows = append(rows, []interface{}{id, 1, 0, fmt.Sprintf("COLUMNS: %s", strings.Join(stmt.Columns, ", "))})
+		}
 
 		// Check for UPSERT
 		if stmt.OnConflict != nil {
@@ -5668,25 +5640,96 @@ func (e *Executor) generateQueryPlan(s sql.Statement) [][]interface{} {
 			}
 		}
 
+		// Check for RETURNING
+		if stmt.Returning != nil {
+			id++
+			rows = append(rows, []interface{}{id, 1, 0, "RETURNING"})
+		}
+
 	case *sql.UpdateStmt:
 		id++
-		rows = append(rows, []interface{}{id, 0, 0, "UPDATE TABLE " + stmt.Table})
+		detail := "UPDATE TABLE " + stmt.Table
+
+		// Add table info if exists
+		if e.engine.TableExists(stmt.Table) {
+			if tbl, err := e.engine.GetTable(stmt.Table); err == nil {
+				info := tbl.GetInfo()
+				detail += fmt.Sprintf(" (~%d rows)", info.RowCount)
+			}
+		}
+		rows = append(rows, []interface{}{id, 0, 0, detail})
+
+		// Show columns being updated
+		if len(stmt.Assignments) > 0 {
+			var cols []string
+			for _, a := range stmt.Assignments {
+				cols = append(cols, a.Column)
+			}
+			id++
+			rows = append(rows, []interface{}{id, 1, 0, fmt.Sprintf("SET: %s", strings.Join(cols, ", "))})
+		}
+
+		// Check for WHERE
 		if stmt.Where != nil {
 			id++
-			rows = append(rows, []interface{}{id, 1, 0, "FILTER"})
+			whereDetail := "FILTER"
+			// Check if index can be used
+			if idxName := e.findIndexForWhere(stmt.Table, stmt.Where); idxName != "" {
+				whereDetail += fmt.Sprintf(" (USING INDEX %s)", idxName)
+			}
+			rows = append(rows, []interface{}{id, 1, 0, whereDetail})
+		}
+
+		// Check for RETURNING
+		if stmt.Returning != nil {
+			id++
+			rows = append(rows, []interface{}{id, 1, 0, "RETURNING"})
 		}
 
 	case *sql.DeleteStmt:
 		id++
-		rows = append(rows, []interface{}{id, 0, 0, "DELETE FROM " + stmt.Table})
+		detail := "DELETE FROM " + stmt.Table
+
+		// Add table info if exists
+		if e.engine.TableExists(stmt.Table) {
+			if tbl, err := e.engine.GetTable(stmt.Table); err == nil {
+				info := tbl.GetInfo()
+				detail += fmt.Sprintf(" (~%d rows)", info.RowCount)
+			}
+		}
+		rows = append(rows, []interface{}{id, 0, 0, detail})
+
+		// Check for WHERE
 		if stmt.Where != nil {
 			id++
-			rows = append(rows, []interface{}{id, 1, 0, "FILTER"})
+			whereDetail := "FILTER"
+			// Check if index can be used
+			if idxName := e.findIndexForWhere(stmt.Table, stmt.Where); idxName != "" {
+				whereDetail += fmt.Sprintf(" (USING INDEX %s)", idxName)
+			}
+			rows = append(rows, []interface{}{id, 1, 0, whereDetail})
+		}
+
+		// Check for RETURNING
+		if stmt.Returning != nil {
+			id++
+			rows = append(rows, []interface{}{id, 1, 0, "RETURNING"})
 		}
 
 	case *sql.CreateTableStmt:
 		id++
-		rows = append(rows, []interface{}{id, 0, 0, "CREATE TABLE " + stmt.TableName})
+		detail := "CREATE TABLE " + stmt.TableName
+		rows = append(rows, []interface{}{id, 0, 0, detail})
+
+		// Show column count
+		id++
+		rows = append(rows, []interface{}{id, 1, 0, fmt.Sprintf("COLUMNS: %d", len(stmt.Columns))})
+
+		// Show constraints
+		if len(stmt.Constraints) > 0 {
+			id++
+			rows = append(rows, []interface{}{id, 1, 0, fmt.Sprintf("CONSTRAINTS: %d", len(stmt.Constraints))})
+		}
 
 	case *sql.DropTableStmt:
 		id++
@@ -5700,6 +5743,58 @@ func (e *Executor) generateQueryPlan(s sql.Statement) [][]interface{} {
 		id++
 		rows = append(rows, []interface{}{id, 0, 0, "DROP INDEX " + stmt.IndexName})
 
+	case *sql.CreateIndexStmt:
+		id++
+		detail := "CREATE INDEX " + stmt.IndexName + " ON " + stmt.TableName
+		rows = append(rows, []interface{}{id, 0, 0, detail})
+
+		// Show columns
+		if len(stmt.Columns) > 0 {
+			id++
+			rows = append(rows, []interface{}{id, 1, 0, fmt.Sprintf("COLUMNS: %s", strings.Join(stmt.Columns, ", "))})
+		}
+
+	case *sql.WithStmt:
+		// Handle CTE
+		id++
+		rows = append(rows, []interface{}{id, 0, 0, "WITH CLAUSE"})
+
+		// Show CTE names
+		for _, cte := range stmt.CTEs {
+			id++
+			cteDetail := fmt.Sprintf("CTE %s", cte.Name)
+			if cte.Recursive {
+				cteDetail += " (RECURSIVE)"
+			}
+			rows = append(rows, []interface{}{id, 1, 0, cteDetail})
+		}
+
+		// Show main query
+		id++
+		rows = append(rows, []interface{}{id, 0, 0, "MAIN QUERY"})
+
+	case *sql.UnionStmt:
+		id++
+		rows = append(rows, []interface{}{id, 0, 0, "UNION"})
+
+		// Show left side
+		id++
+		rows = append(rows, []interface{}{id, 1, 0, "LEFT QUERY"})
+		leftRows := e.generateQueryPlan(stmt.Left)
+		for _, r := range leftRows {
+			r[1] = r[1].(int) + id // Adjust parent
+			rows = append(rows, r)
+		}
+
+		// Show right side
+		id++
+		rows = append(rows, []interface{}{id, 1, 0, "RIGHT QUERY"})
+		rightRows := e.generateQueryPlan(stmt.Right)
+		for _, r := range rightRows {
+			r[1] = r[1].(int) + id // Adjust parent
+			rows = append(rows, r)
+		}
+
 	default:
 		id++
 		rows = append(rows, []interface{}{id, 0, 0, "EXECUTE " + s.String()})
@@ -5708,12 +5803,274 @@ func (e *Executor) generateQueryPlan(s sql.Statement) [][]interface{} {
 	return rows
 }
 
-// getTableNameFromSelect extracts the main table name from a SELECT statement
-func getTableNameFromSelect(stmt *sql.SelectStmt) string {
-	if stmt.From != nil && stmt.From.Table != nil {
-		return stmt.From.Table.Name
+// generateSelectPlan generates a query plan for SELECT statement
+func (e *Executor) generateSelectPlan(stmt *sql.SelectStmt, id *int, parent int) [][]interface{} {
+	var rows [][]interface{}
+
+	// Check if FROM clause exists
+	if stmt.From == nil || stmt.From.Table == nil {
+		*id++
+		rows = append(rows, []interface{}{*id, parent, 0, "SCAN (no table)"})
+		return rows
 	}
-	return "unknown"
+
+	tableName := stmt.From.Table.Name
+
+	// Check for derived table (subquery in FROM)
+	if stmt.From.Table.Subquery != nil {
+		*id++
+		alias := stmt.From.Table.Alias
+		if alias == "" {
+			alias = "derived_table"
+		}
+		rows = append(rows, []interface{}{*id, parent, 0, fmt.Sprintf("DERIVED TABLE %s", alias)})
+
+		// Add subquery plan
+		subRows := e.generateQueryPlan(stmt.From.Table.Subquery.Select)
+		for _, r := range subRows {
+			r[1] = r[1].(int) + *id
+			rows = append(rows, r)
+		}
+		return rows
+	}
+
+	// Check for CTE reference
+	if cteResult, ok := e.cteResults[strings.ToLower(tableName)]; ok {
+		*id++
+		rows = append(rows, []interface{}{*id, parent, 0, fmt.Sprintf("SCAN CTE %s (~%d rows)", tableName, cteResult.RowCount)})
+	} else if e.engine.TableExists(tableName) {
+		// Regular table scan
+		tbl, err := e.engine.GetTable(tableName)
+		if err == nil {
+			info := tbl.GetInfo()
+
+			// Check if we can use an index
+			scanType := "FULL TABLE SCAN"
+			var usedIndex string
+
+			if stmt.Where != nil {
+				if idx := e.findIndexForWhere(tableName, stmt.Where); idx != "" {
+					scanType = "INDEX SCAN"
+					usedIndex = idx
+				}
+			}
+
+			*id++
+			detail := fmt.Sprintf("%s %s (~%d rows)", scanType, tableName, info.RowCount)
+			if usedIndex != "" {
+				detail += fmt.Sprintf(" USING INDEX %s", usedIndex)
+			}
+			rows = append(rows, []interface{}{*id, parent, 0, detail})
+		} else {
+			*id++
+			rows = append(rows, []interface{}{*id, parent, 0, "SCAN TABLE " + tableName})
+		}
+	} else {
+		*id++
+		rows = append(rows, []interface{}{*id, parent, 0, "SCAN TABLE " + tableName + " (not found)"})
+	}
+
+	// Check for JOINs
+	if stmt.From != nil && len(stmt.From.Joins) > 0 {
+		for _, join := range stmt.From.Joins {
+			*id++
+			joinType := "INNER JOIN"
+			if join.Type == sql.JoinLeft {
+				joinType = "LEFT JOIN"
+			} else if join.Type == sql.JoinRight {
+				joinType = "RIGHT JOIN"
+			} else if join.Type == sql.JoinCross {
+				joinType = "CROSS JOIN"
+			} else if join.Type == sql.JoinFull {
+				joinType = "FULL OUTER JOIN"
+			}
+
+			joinTable := join.Table.Name
+
+			// Get table info
+			if e.engine.TableExists(joinTable) {
+				if tbl, err := e.engine.GetTable(joinTable); err == nil {
+					info := tbl.GetInfo()
+					*id++
+					rows = append(rows, []interface{}{*id, parent, 0, fmt.Sprintf("%s %s (~%d rows)", joinType, joinTable, info.RowCount)})
+				}
+			} else {
+				*id++
+				rows = append(rows, []interface{}{*id, parent, 0, joinType + " TABLE " + joinTable})
+			}
+
+			// Check for join condition
+			if join.On != nil {
+				*id++
+				rows = append(rows, []interface{}{*id, *id - 1, 0, "JOIN CONDITION"})
+			}
+		}
+	}
+
+	// Check for WHERE clause
+	if stmt.Where != nil {
+		*id++
+		whereDetail := "FILTER (WHERE)"
+		rows = append(rows, []interface{}{*id, parent, 0, whereDetail})
+	}
+
+	// Check for GROUP BY
+	if len(stmt.GroupBy) > 0 {
+		*id++
+		groupCols := make([]string, len(stmt.GroupBy))
+		for i, g := range stmt.GroupBy {
+			if colRef, ok := g.(*sql.ColumnRef); ok {
+				groupCols[i] = colRef.Name
+			} else {
+				groupCols[i] = g.String()
+			}
+		}
+		rows = append(rows, []interface{}{*id, parent, 0, fmt.Sprintf("GROUP BY (%s)", strings.Join(groupCols, ", "))})
+	}
+
+	// Check for HAVING
+	if stmt.Having != nil {
+		*id++
+		rows = append(rows, []interface{}{*id, parent, 0, "FILTER (HAVING)"})
+	}
+
+	// Check for aggregate functions
+	if hasAggregateFunctions(stmt.Columns) {
+		*id++
+		rows = append(rows, []interface{}{*id, parent, 0, "AGGREGATE"})
+	}
+
+	// Check for DISTINCT
+	if stmt.Distinct {
+		*id++
+		rows = append(rows, []interface{}{*id, parent, 0, "DISTINCT"})
+	}
+
+	// Check for ORDER BY
+	if len(stmt.OrderBy) > 0 {
+		*id++
+		orderCols := make([]string, len(stmt.OrderBy))
+		for i, o := range stmt.OrderBy {
+			if colRef, ok := o.Expr.(*sql.ColumnRef); ok {
+				orderCols[i] = colRef.Name
+				if !o.Ascending {
+					orderCols[i] += " DESC"
+				}
+			}
+		}
+		rows = append(rows, []interface{}{*id, parent, 0, fmt.Sprintf("ORDER BY (%s)", strings.Join(orderCols, ", "))})
+	}
+
+	// Check for LIMIT
+	if stmt.Limit != nil {
+		*id++
+		detail := fmt.Sprintf("LIMIT %d", *stmt.Limit)
+		if stmt.Offset != nil {
+			detail += fmt.Sprintf(" OFFSET %d", *stmt.Offset)
+		}
+		rows = append(rows, []interface{}{*id, parent, 0, detail})
+	}
+
+	return rows
+}
+
+// findIndexForWhere tries to find an index that can be used for the WHERE clause
+func (e *Executor) findIndexForWhere(tableName string, where sql.Expression) string {
+	// Get the table
+	tbl, err := e.engine.GetTable(tableName)
+	if err != nil || tbl == nil {
+		return ""
+	}
+
+	// Get index manager
+	idxMgr := tbl.GetIndexManager()
+	if idxMgr == nil {
+		return ""
+	}
+
+	// Extract column references from WHERE clause
+	whereCols := e.extractColumnsFromExpr(where)
+	if len(whereCols) == 0 {
+		return ""
+	}
+
+	// Get all indexes and try to find one that matches
+	indexNames := idxMgr.ListIndexes()
+	for _, name := range indexNames {
+		idx, err := idxMgr.GetIndex(name)
+		if err != nil || idx == nil || idx.Info == nil {
+			continue
+		}
+		for _, idxCol := range idx.Info.Columns {
+			for _, whereCol := range whereCols {
+				if strings.EqualFold(idxCol, whereCol) {
+					return name
+				}
+			}
+		}
+	}
+
+	// Check primary key
+	primary := idxMgr.GetPrimary()
+	if primary != nil && primary.Info != nil {
+		for _, idxCol := range primary.Info.Columns {
+			for _, whereCol := range whereCols {
+				if strings.EqualFold(idxCol, whereCol) {
+					return "PRIMARY"
+				}
+			}
+		}
+	}
+
+	return ""
+}
+
+// extractColumnsFromExpr extracts column names from an expression
+func (e *Executor) extractColumnsFromExpr(expr sql.Expression) []string {
+	var cols []string
+
+	switch ex := expr.(type) {
+	case *sql.ColumnRef:
+		cols = append(cols, ex.Name)
+	case *sql.BinaryExpr:
+		cols = append(cols, e.extractColumnsFromExpr(ex.Left)...)
+		cols = append(cols, e.extractColumnsFromExpr(ex.Right)...)
+	case *sql.UnaryExpr:
+		cols = append(cols, e.extractColumnsFromExpr(ex.Right)...)
+	case *sql.ParenExpr:
+		cols = append(cols, e.extractColumnsFromExpr(ex.Expr)...)
+	case *sql.FunctionCall:
+		for _, arg := range ex.Args {
+			cols = append(cols, e.extractColumnsFromExpr(arg)...)
+		}
+	case *sql.InExpr:
+		cols = append(cols, e.extractColumnsFromExpr(ex.Expr)...)
+	}
+
+	return cols
+}
+
+// hasAggregateFunctions checks if the columns contain aggregate functions
+func hasAggregateFunctions(columns []sql.Expression) bool {
+	aggregateFuncs := map[string]bool{
+		"COUNT": true, "SUM": true, "AVG": true,
+		"MIN": true, "MAX": true, "GROUP_CONCAT": true,
+	}
+
+	for _, col := range columns {
+		if fc, ok := col.(*sql.FunctionCall); ok {
+			if aggregateFuncs[strings.ToUpper(fc.Name)] {
+				return true
+			}
+		}
+		// Check window functions
+		if wfc, ok := col.(*sql.WindowFuncCall); ok {
+			if aggregateFuncs[strings.ToUpper(wfc.Func.Name)] {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // executeAlterTable executes an ALTER TABLE statement.
