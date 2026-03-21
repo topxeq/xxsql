@@ -229,6 +229,8 @@ func (p *Parser) parseStatement() Statement {
 		return p.parseRestore()
 	case TokVacuum:
 		return p.parseVacuum()
+	case TokPragma:
+		return p.parsePragma()
 	case TokExplain:
 		return p.parseExplain()
 	case TokBegin:
@@ -3554,6 +3556,69 @@ func (p *Parser) parseVacuum() *VacuumStmt {
 		}
 		stmt.IntoPath = p.currTok.Value
 		p.nextToken()
+	}
+
+	return stmt
+}
+
+// parsePragma parses a PRAGMA statement.
+// Syntax: PRAGMA name [= value]
+func (p *Parser) parsePragma() *PragmaStmt {
+	p.nextToken() // consume PRAGMA
+
+	// Get pragma name
+	if !p.curTokenIs(TokIdent) {
+		p.error("expected pragma name")
+		return nil
+	}
+
+	stmt := &PragmaStmt{
+		Name: p.currTok.Value,
+	}
+	p.nextToken()
+
+	// Check for = value
+	if p.curTokenIs(TokEq) {
+		p.nextToken()
+
+		switch {
+		case p.curTokenIs(TokString):
+			stmt.Value = p.currTok.Value
+			p.nextToken()
+		case p.curTokenIs(TokInt), p.curTokenIs(TokNumber):
+			// Parse the string value as int64
+			var intVal int64
+			_, err := fmt.Sscanf(p.currTok.Value, "%d", &intVal)
+			if err == nil {
+				stmt.Value = intVal
+			} else {
+				stmt.Value = p.currTok.Value
+			}
+			p.nextToken()
+		case p.curTokenIs(TokBoolLit):
+			// TRUE or FALSE literal
+			stmt.Value = strings.ToUpper(p.currTok.Value) == "TRUE"
+			p.nextToken()
+		case p.curTokenIs(TokOn):
+			// ON keyword - treat as boolean true
+			stmt.Value = true
+			p.nextToken()
+		case p.curTokenIs(TokIdent):
+			// Could be OFF, YES, NO, or other keywords
+			val := p.currTok.Value
+			p.nextToken()
+			switch strings.ToUpper(val) {
+			case "ON", "TRUE", "YES", "1":
+				stmt.Value = true
+			case "OFF", "FALSE", "NO", "0":
+				stmt.Value = false
+			default:
+				stmt.Value = val
+			}
+		default:
+			p.error("expected pragma value")
+			return nil
+		}
 	}
 
 	return stmt

@@ -1913,6 +1913,22 @@ func (s *VacuumStmt) String() string {
 	return sb.String()
 }
 
+// PragmaStmt represents a PRAGMA statement.
+// Syntax: PRAGMA name [= value]
+type PragmaStmt struct {
+	Name  string      // pragma name
+	Value interface{} // optional value (can be string, int, bool, or nil for query)
+}
+
+func (s *PragmaStmt) node()      {}
+func (s *PragmaStmt) statement() {}
+func (s *PragmaStmt) String() string {
+	if s.Value == nil {
+		return "PRAGMA " + s.Name
+	}
+	return fmt.Sprintf("PRAGMA %s = %v", s.Name, s.Value)
+}
+
 // ============================================================================
 // UDF Expression Types
 // ============================================================================

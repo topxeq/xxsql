@@ -101,6 +101,7 @@ type Executor struct {
 	lastInsertID  int64                  // Last auto-generated insert ID
 	lastRowCount  int64                  // Number of rows affected by last operation
 	ftsManager    *fts.FTSManager        // Full-text search manager
+	pragmaSettings map[string]interface{} // PRAGMA settings
 
 	// Transaction state
 	inTransaction bool
@@ -313,6 +314,8 @@ func (e *Executor) ExecuteWithPerms(sqlStr string, checker PermissionChecker) (*
 		return e.executeRestore(s)
 	case *sql.VacuumStmt:
 		return e.executeVacuum(s)
+	case *sql.PragmaStmt:
+		return e.executePragma(s)
 	case *sql.CreateFunctionStmt:
 		return e.executeCreateFunction(s)
 	case *sql.DropFunctionStmt:
@@ -6741,6 +6744,229 @@ func (e *Executor) vacuumTable(tbl *table.Table) error {
 	}
 
 	return nil
+}
+
+// executePragma executes a PRAGMA statement.
+// PRAGMA is used to query or set runtime configuration options.
+func (e *Executor) executePragma(stmt *sql.PragmaStmt) (*Result, error) {
+	name := strings.ToLower(stmt.Name)
+
+	// Initialize pragma settings if needed
+	if e.pragmaSettings == nil {
+		e.pragmaSettings = make(map[string]interface{})
+		// Set defaults
+		e.pragmaSettings["cache_size"] = int64(2000)
+		e.pragmaSettings["foreign_keys"] = true
+		e.pragmaSettings["synchronous"] = int64(1)
+		e.pragmaSettings["journal_mode"] = "WAL"
+		e.pragmaSettings["auto_vacuum"] = int64(0)
+		e.pragmaSettings["temp_store"] = "MEMORY"
+		e.pragmaSettings["busy_timeout"] = int64(5000)
+		e.pragmaSettings["locking_mode"] = "NORMAL"
+		e.pragmaSettings["recursive_triggers"] = true
+		e.pragmaSettings["ignore_check_constraints"] = false
+	}
+
+	// If value is provided, set the pragma
+	if stmt.Value != nil {
+		return e.setPragma(name, stmt.Value)
+	}
+
+	// Otherwise, return the current value
+	return e.getPragma(name)
+}
+
+// setPragma sets a pragma value.
+func (e *Executor) setPragma(name string, value interface{}) (*Result, error) {
+	switch name {
+	case "cache_size":
+		val, ok := toInt64(value)
+		if !ok {
+			return nil, fmt.Errorf("cache_size must be an integer")
+		}
+		e.pragmaSettings["cache_size"] = val
+		return &Result{Message: fmt.Sprintf("cache_size = %d", val)}, nil
+
+	case "foreign_keys":
+		val, ok := toBool(value)
+		if !ok {
+			return nil, fmt.Errorf("foreign_keys must be a boolean")
+		}
+		e.pragmaSettings["foreign_keys"] = val
+		return &Result{Message: fmt.Sprintf("foreign_keys = %v", val)}, nil
+
+	case "synchronous":
+		val, ok := toInt64(value)
+		if !ok {
+			return nil, fmt.Errorf("synchronous must be an integer (0=OFF, 1=NORMAL, 2=FULL)")
+		}
+		if val < 0 || val > 2 {
+			return nil, fmt.Errorf("synchronous must be 0, 1, or 2")
+		}
+		e.pragmaSettings["synchronous"] = val
+		return &Result{Message: fmt.Sprintf("synchronous = %d", val)}, nil
+
+	case "journal_mode":
+		val := strings.ToUpper(fmt.Sprintf("%v", value))
+		switch val {
+		case "DELETE", "TRUNCATE", "PERSIST", "MEMORY", "WAL", "OFF":
+			e.pragmaSettings["journal_mode"] = val
+			return &Result{Message: fmt.Sprintf("journal_mode = %s", val)}, nil
+		default:
+			return nil, fmt.Errorf("invalid journal_mode: %s (valid: DELETE, TRUNCATE, PERSIST, MEMORY, WAL, OFF)", val)
+		}
+
+	case "auto_vacuum":
+		val, ok := toInt64(value)
+		if !ok {
+			return nil, fmt.Errorf("auto_vacuum must be an integer (0=NONE, 1=FULL, 2=INCREMENTAL)")
+		}
+		if val < 0 || val > 2 {
+			return nil, fmt.Errorf("auto_vacuum must be 0, 1, or 2")
+		}
+		e.pragmaSettings["auto_vacuum"] = val
+		return &Result{Message: fmt.Sprintf("auto_vacuum = %d", val)}, nil
+
+	case "temp_store":
+		val := strings.ToUpper(fmt.Sprintf("%v", value))
+		switch val {
+		case "DEFAULT", "FILE", "MEMORY":
+			e.pragmaSettings["temp_store"] = val
+			return &Result{Message: fmt.Sprintf("temp_store = %s", val)}, nil
+		default:
+			return nil, fmt.Errorf("invalid temp_store: %s (valid: DEFAULT, FILE, MEMORY)", val)
+		}
+
+	case "busy_timeout":
+		val, ok := toInt64(value)
+		if !ok {
+			return nil, fmt.Errorf("busy_timeout must be an integer (milliseconds)")
+		}
+		e.pragmaSettings["busy_timeout"] = val
+		return &Result{Message: fmt.Sprintf("busy_timeout = %d", val)}, nil
+
+	case "locking_mode":
+		val := strings.ToUpper(fmt.Sprintf("%v", value))
+		switch val {
+		case "NORMAL", "EXCLUSIVE":
+			e.pragmaSettings["locking_mode"] = val
+			return &Result{Message: fmt.Sprintf("locking_mode = %s", val)}, nil
+		default:
+			return nil, fmt.Errorf("invalid locking_mode: %s (valid: NORMAL, EXCLUSIVE)", val)
+		}
+
+	case "recursive_triggers":
+		val, ok := toBool(value)
+		if !ok {
+			return nil, fmt.Errorf("recursive_triggers must be a boolean")
+		}
+		e.pragmaSettings["recursive_triggers"] = val
+		return &Result{Message: fmt.Sprintf("recursive_triggers = %v", val)}, nil
+
+	case "ignore_check_constraints":
+		val, ok := toBool(value)
+		if !ok {
+			return nil, fmt.Errorf("ignore_check_constraints must be a boolean")
+		}
+		e.pragmaSettings["ignore_check_constraints"] = val
+		return &Result{Message: fmt.Sprintf("ignore_check_constraints = %v", val)}, nil
+
+	case "database_version":
+		e.pragmaSettings["database_version"] = fmt.Sprintf("%v", value)
+		return &Result{Message: fmt.Sprintf("database_version = %v", value)}, nil
+
+	case "user_version":
+		val, ok := toInt64(value)
+		if !ok {
+			// Allow string values too
+			e.pragmaSettings["user_version"] = fmt.Sprintf("%v", value)
+			return &Result{Message: fmt.Sprintf("user_version = %v", value)}, nil
+		}
+		e.pragmaSettings["user_version"] = val
+		return &Result{Message: fmt.Sprintf("user_version = %d", val)}, nil
+
+	default:
+		// Store custom pragma
+		e.pragmaSettings[name] = value
+		return &Result{Message: fmt.Sprintf("%s = %v", name, value)}, nil
+	}
+}
+
+// getPragma returns a pragma value.
+func (e *Executor) getPragma(name string) (*Result, error) {
+	val, exists := e.pragmaSettings[name]
+	if !exists {
+		return nil, fmt.Errorf("unknown pragma: %s", name)
+	}
+
+	return &Result{
+		Columns: []ColumnInfo{
+			{Name: name, Type: "TEXT"},
+		},
+		Rows:    [][]interface{}{{val}},
+		Message: fmt.Sprintf("%v", val),
+	}, nil
+}
+
+// GetPragmaValue returns the current value of a pragma (for internal use).
+func (e *Executor) GetPragmaValue(name string) interface{} {
+	if e.pragmaSettings == nil {
+		return nil
+	}
+	return e.pragmaSettings[strings.ToLower(name)]
+}
+
+// toInt64 converts various types to int64.
+func toInt64(v interface{}) (int64, bool) {
+	switch val := v.(type) {
+	case int:
+		return int64(val), true
+	case int64:
+		return val, true
+	case int32:
+		return int64(val), true
+	case float64:
+		return int64(val), true
+	case float32:
+		return int64(val), true
+	case string:
+		// Try parsing as number
+		var i int64
+		_, err := fmt.Sscanf(val, "%d", &i)
+		return i, err == nil
+	case bool:
+		if val {
+			return 1, true
+		}
+		return 0, true
+	default:
+		return 0, false
+	}
+}
+
+// toBool converts various types to bool.
+func toBool(v interface{}) (bool, bool) {
+	switch val := v.(type) {
+	case bool:
+		return val, true
+	case int:
+		return val != 0, true
+	case int64:
+		return val != 0, true
+	case int32:
+		return val != 0, true
+	case string:
+		switch strings.ToUpper(val) {
+		case "TRUE", "ON", "YES", "1":
+			return true, true
+		case "FALSE", "OFF", "NO", "0":
+			return false, true
+		default:
+			return false, false
+		}
+	default:
+		return false, false
+	}
 }
 
 // executeCreateFunction executes a CREATE FUNCTION statement.
