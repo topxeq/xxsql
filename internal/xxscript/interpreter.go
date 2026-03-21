@@ -11,9 +11,14 @@ import (
 	"strings"
 	"time"
 
-	"github.com/topxeq/xxsql/internal/executor"
 	"github.com/topxeq/xxsql/internal/storage"
 )
+
+// SQLExecutor is an interface for executing SQL queries.
+// This interface breaks the circular dependency between xxscript and executor packages.
+type SQLExecutor interface {
+	ExecuteForScript(query string) (interface{}, error)
+}
 
 // Value represents a runtime value.
 type Value interface{}
@@ -31,7 +36,7 @@ func (e *ThrowError) Error() string {
 type Context struct {
 	Variables   map[string]Value
 	Functions   map[string]*UserFunc
-	Executor    *executor.Executor
+	Executor    SQLExecutor
 	Engine      *storage.Engine
 	HTTPWriter  http.ResponseWriter
 	HTTPRequest *http.Request
@@ -2133,28 +2138,29 @@ func (f *DBQueryFunc) Call(args []Value) (Value, error) {
 		return nil, fmt.Errorf("query must be string")
 	}
 
-	result, err := f.ctx.Executor.Execute(query)
+	result, err := f.ctx.Executor.ExecuteForScript(query)
 	if err != nil {
 		return nil, err
 	}
 
 	// Convert result to script values
-	rows := make([]Value, len(result.Rows))
-	for i, row := range result.Rows {
-		rowMap := make(map[string]Value)
-		for j, col := range result.Columns {
-			key := col.Name
-			if col.Alias != "" {
-				key = col.Alias
-			}
-			if j < len(row) {
-				rowMap[key] = row[j]
-			}
-		}
-		rows[i] = rowMap
+	rows, columns, err := extractResult(result)
+	if err != nil {
+		return nil, err
 	}
 
-	return rows, nil
+	resultRows := make([]Value, len(rows))
+	for i, row := range rows {
+		rowMap := make(map[string]Value)
+		for j, col := range columns {
+			if j < len(row) {
+				rowMap[col] = row[j]
+			}
+		}
+		resultRows[i] = rowMap
+	}
+
+	return resultRows, nil
 }
 
 // DBExecFunc executes a statement.
@@ -2173,14 +2179,15 @@ func (f *DBExecFunc) Call(args []Value) (Value, error) {
 		return nil, fmt.Errorf("query must be string")
 	}
 
-	result, err := f.ctx.Executor.Execute(query)
+	result, err := f.ctx.Executor.ExecuteForScript(query)
 	if err != nil {
 		return nil, err
 	}
 
+	affected, insertID := extractExecResult(result)
 	return map[string]Value{
-		"affected":  result.RowCount,
-		"insert_id": result.LastInsert,
+		"affected":  affected,
+		"insert_id": insertID,
 	}, nil
 }
 
@@ -2200,28 +2207,141 @@ func (f *DBQueryRowFunc) Call(args []Value) (Value, error) {
 		return nil, fmt.Errorf("query must be string")
 	}
 
-	result, err := f.ctx.Executor.Execute(query)
+	result, err := f.ctx.Executor.ExecuteForScript(query)
 	if err != nil {
 		return nil, err
 	}
 
-	if len(result.Rows) == 0 {
+	rows, columns, err := extractResult(result)
+	if err != nil {
+		return nil, err
+	}
+
+	if len(rows) == 0 {
 		return nil, nil
 	}
 
 	rowMap := make(map[string]Value)
-	row := result.Rows[0]
-	for j, col := range result.Columns {
-		key := col.Name
-		if col.Alias != "" {
-			key = col.Alias
-		}
+	row := rows[0]
+	for j, col := range columns {
 		if j < len(row) {
-			rowMap[key] = row[j]
+			rowMap[col] = row[j]
 		}
 	}
 
 	return rowMap, nil
+}
+
+// extractResult extracts rows and columns from a result.
+// It handles both map[string]interface{} and struct types via reflection.
+func extractResult(result interface{}) ([][]interface{}, []string, error) {
+	if result == nil {
+		return nil, nil, nil
+	}
+
+	// Try map[string]interface{} first (our adapter returns this)
+	if m, ok := result.(map[string]interface{}); ok {
+		var rows [][]interface{}
+		var columns []string
+
+		if r, ok := m["rows"].([][]interface{}); ok {
+			rows = r
+		}
+		if c, ok := m["columns"].([]string); ok {
+			columns = c
+		}
+
+		return rows, columns, nil
+	}
+
+	// Try using reflection for struct types
+	rv := reflect.ValueOf(result)
+	if rv.Kind() == reflect.Ptr {
+		rv = rv.Elem()
+	}
+
+	if rv.Kind() == reflect.Struct {
+		var rows [][]interface{}
+		var columns []string
+
+		// Try to get Rows field
+		rowsField := rv.FieldByName("Rows")
+		if rowsField.IsValid() {
+			for i := 0; i < rowsField.Len(); i++ {
+				rowField := rowsField.Index(i)
+				var row []interface{}
+				if rowField.Kind() == reflect.Slice {
+					for j := 0; j < rowField.Len(); j++ {
+						row = append(row, rowField.Index(j).Interface())
+					}
+				}
+				rows = append(rows, row)
+			}
+		}
+
+		// Try to get Columns field
+		colsField := rv.FieldByName("Columns")
+		if colsField.IsValid() && colsField.Kind() == reflect.Slice {
+			for i := 0; i < colsField.Len(); i++ {
+				col := colsField.Index(i)
+				if col.Kind() == reflect.Struct {
+					nameField := col.FieldByName("Name")
+					if nameField.IsValid() {
+						columns = append(columns, nameField.String())
+					}
+				} else if col.Kind() == reflect.String {
+					columns = append(columns, col.String())
+				}
+			}
+		}
+
+		return rows, columns, nil
+	}
+
+	return nil, nil, fmt.Errorf("unsupported result type: %T", result)
+}
+
+// extractExecResult extracts affected rows and insert ID from an exec result.
+func extractExecResult(result interface{}) (int64, int64) {
+	var affected, insertID int64
+
+	if result == nil {
+		return affected, insertID
+	}
+
+	// Try map
+	if m, ok := result.(map[string]interface{}); ok {
+		if a, ok := m["affected"].(int64); ok {
+			affected = a
+		}
+		if i, ok := m["insert_id"].(int64); ok {
+			insertID = i
+		}
+		return affected, insertID
+	}
+
+	// Try reflection
+	rv := reflect.ValueOf(result)
+	if rv.Kind() == reflect.Ptr {
+		rv = rv.Elem()
+	}
+
+	if rv.Kind() == reflect.Struct {
+		if f := rv.FieldByName("RowCount"); f.IsValid() {
+			switch f.Kind() {
+			case reflect.Int, reflect.Int64:
+				affected = f.Int()
+			}
+		}
+		if f := rv.FieldByName("LastInsert"); f.IsValid() {
+			switch f.Kind() {
+			case reflect.Int, reflect.Int64:
+				insertID = f.Int()
+			}
+		}
+	}
+
+	return affected, insertID
 }
 
 // SetupBuiltins sets up built-in objects.

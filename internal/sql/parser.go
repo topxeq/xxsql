@@ -1132,62 +1132,10 @@ func (p *Parser) parseCreate() Statement {
 			return nil
 		}
 		if p.curTokenIs(TokFunction) {
-			p.nextToken()
-			// FUNCTION already consumed, parse rest
-			stmt := &CreateFunctionStmt{
-				Name:    p.currTok.Value,
-				Replace: true,
+			stmt := p.parseCreateFunction()
+			if stmt != nil {
+				stmt.Replace = true
 			}
-			p.nextToken() // consume function name
-
-			// Parse parameters and rest
-			if !p.expect(TokLParen) {
-				return nil
-			}
-
-			for !p.curTokenIs(TokRParen) && p.err == nil {
-				param := &FunctionParameter{
-					Name: p.currTok.Value,
-				}
-				p.nextToken()
-
-				param.Type = p.parseDataType()
-				if param.Type == nil {
-					p.error("expected data type for parameter %s", param.Name)
-					return nil
-				}
-
-				stmt.Parameters = append(stmt.Parameters, param)
-
-				if p.curTokenIs(TokComma) {
-					p.nextToken()
-				}
-			}
-
-			if !p.expect(TokRParen) {
-				return nil
-			}
-
-			if !p.expect(TokReturns) {
-				return nil
-			}
-
-			stmt.ReturnType = p.parseDataType()
-			if stmt.ReturnType == nil {
-				p.error("expected return type")
-				return nil
-			}
-
-			if !p.expect(TokReturn) {
-				return nil
-			}
-
-			stmt.Body = p.parseExpression()
-			if stmt.Body == nil {
-				p.error("expected function body expression")
-				return nil
-			}
-
 			return stmt
 		} else if p.curTokenIs(TokView) {
 			return p.parseCreateView(true)
@@ -3912,7 +3860,10 @@ func (p *Parser) parseShowGrants() *ShowGrantsStmt {
 // ============================================================================
 
 // parseCreateFunction parses a CREATE FUNCTION statement.
-// Syntax: CREATE FUNCTION name(param1 TYPE, param2 TYPE) RETURNS TYPE RETURN expression
+// Syntax variations:
+//   - Old: CREATE FUNCTION name(param1 TYPE, param2 TYPE) RETURNS TYPE RETURN expression
+//   - New: CREATE FUNCTION name(param1, param2) RETURNS TYPE AS $$ script $$
+//   - New: CREATE FUNCTION name(param1, param2) RETURNS TYPE SCRIPT 'script'
 // Current token should be FUNCTION keyword.
 func (p *Parser) parseCreateFunction() *CreateFunctionStmt {
 	p.nextToken() // consume FUNCTION keyword
@@ -3933,11 +3884,9 @@ func (p *Parser) parseCreateFunction() *CreateFunctionStmt {
 		}
 		p.nextToken()
 
-		// Parse type
-		param.Type = p.parseDataType()
-		if param.Type == nil {
-			p.error("expected data type for parameter %s", param.Name)
-			return nil
+		// Parse optional type
+		if p.isDataType() {
+			param.Type = p.parseDataType()
 		}
 
 		// Optional DEFAULT value
@@ -3961,21 +3910,40 @@ func (p *Parser) parseCreateFunction() *CreateFunctionStmt {
 		return nil
 	}
 
-	// RETURNS
-	if !p.expect(TokReturns) {
-		return nil
+	// RETURNS (optional for script functions)
+	if p.curTokenIs(TokReturns) {
+		p.nextToken()
+		stmt.ReturnType = p.parseDataType()
+		if stmt.ReturnType == nil {
+			p.error("expected return type")
+			return nil
+		}
 	}
 
-	// Return type
-	stmt.ReturnType = p.parseDataType()
-	if stmt.ReturnType == nil {
-		p.error("expected return type")
-		return nil
-	}
-
-	// Function body: either RETURN expr or BEGIN ... END block
-	if p.curTokenIs(TokReturn) {
-		// Simple: RETURN expression
+	// Function body: AS $$ script $$, SCRIPT 'script', RETURN expr, or BEGIN ... END
+	if p.curTokenIs(TokAs) {
+		// AS $$ script $$ syntax
+		p.nextToken()
+		if p.curTokenIs(TokString) {
+			// AS 'script' syntax
+			stmt.Script = p.currTok.Value
+			p.nextToken()
+		} else {
+			// Read until $$ or end
+			script := p.readDollarQuotedString()
+			stmt.Script = script
+		}
+	} else if p.curTokenIs(TokIdent) && p.currTok.Value == "SCRIPT" {
+		// SCRIPT 'script' syntax
+		p.nextToken()
+		if !p.curTokenIs(TokString) {
+			p.error("expected script string after SCRIPT")
+			return nil
+		}
+		stmt.Script = p.currTok.Value
+		p.nextToken()
+	} else if p.curTokenIs(TokReturn) {
+		// Old style: RETURN expression
 		p.nextToken()
 		stmt.Body = p.parseExpression()
 		if stmt.Body == nil {
@@ -3983,18 +3951,75 @@ func (p *Parser) parseCreateFunction() *CreateFunctionStmt {
 			return nil
 		}
 	} else if p.curTokenIs(TokBegin) {
-		// BEGIN ... END block
+		// Old style: BEGIN ... END block
 		stmt.Body = p.parseBlockExpr()
 		if stmt.Body == nil {
 			p.error("expected function body")
 			return nil
 		}
 	} else {
-		p.error("expected RETURN or BEGIN for function body")
+		p.error("expected AS, SCRIPT, RETURN or BEGIN for function body")
 		return nil
 	}
 
 	return stmt
+}
+
+// readDollarQuotedString reads a $$...$$ delimited string.
+func (p *Parser) readDollarQuotedString() string {
+	var result strings.Builder
+
+	// Skip initial $$ if present
+	if p.currTok.Type == TokDollar {
+		p.nextToken()
+		if p.currTok.Type == TokDollar {
+			p.nextToken()
+		}
+	}
+
+	// Read until $$
+	for !p.curTokenIs(TokEOF) && p.err == nil {
+		if p.currTok.Type == TokDollar {
+			// Check if next is also $
+			if p.peekToken().Type == TokDollar {
+				p.nextToken() // skip first $
+				p.nextToken() // skip second $
+				break
+			}
+		}
+		result.WriteString(p.currTok.Value)
+		p.nextToken()
+	}
+
+	return result.String()
+}
+
+// isDataType checks if current token is a data type keyword.
+func (p *Parser) isDataType() bool {
+	switch p.currTok.Type {
+	case TokInt, TokBigInt, TokSmallInt, TokTinyInt,
+		TokFloat, TokDouble, TokDecimal, TokNumeric,
+		TokChar, TokVarchar, TokText,
+		TokDate, TokTime, TokDateTime, TokTimestamp,
+		TokBool, TokBoolean, TokBlob, TokSeq:
+		return true
+	case TokIdent:
+		// Check for type names like INT, VARCHAR etc as identifiers
+		switch strings.ToUpper(p.currTok.Value) {
+		case "INT", "INTEGER", "BIGINT", "SMALLINT", "TINYINT",
+			"FLOAT", "DOUBLE", "DECIMAL", "NUMERIC", "REAL",
+			"CHAR", "VARCHAR", "TEXT", "STRING",
+			"DATE", "TIME", "DATETIME", "TIMESTAMP",
+			"BOOL", "BOOLEAN", "BLOB", "SEQ":
+			return true
+		}
+	}
+	return false
+}
+
+// peekToken returns the next token without consuming it.
+func (p *Parser) peekToken() Token {
+	return p.peekTok
 }
 
 // parseDropFunction parses a DROP FUNCTION statement.

@@ -2080,8 +2080,9 @@ type CreateFunctionStmt struct {
 	Name       string
 	Parameters []*FunctionParameter
 	ReturnType *DataType
-	Body       Expression
-	Replace    bool // CREATE OR REPLACE
+	Body       Expression // Old style: SQL expression body
+	Script     string     // New style: XxScript body
+	Replace    bool       // CREATE OR REPLACE
 }
 
 func (s *CreateFunctionStmt) node()      {}
@@ -2100,12 +2101,24 @@ func (s *CreateFunctionStmt) String() string {
 		if i > 0 {
 			sb.WriteString(", ")
 		}
-		sb.WriteString(p.String())
+		sb.WriteString(p.Name)
+		if p.Type != nil {
+			sb.WriteString(" ")
+			sb.WriteString(p.Type.String())
+		}
 	}
 	sb.WriteString(") RETURNS ")
-	sb.WriteString(s.ReturnType.String())
-	sb.WriteString(" RETURN ")
-	sb.WriteString(s.Body.String())
+	if s.ReturnType != nil {
+		sb.WriteString(s.ReturnType.String())
+	}
+	if s.Script != "" {
+		sb.WriteString(" AS $$ ")
+		sb.WriteString(s.Script)
+		sb.WriteString(" $$")
+	} else if s.Body != nil {
+		sb.WriteString(" RETURN ")
+		sb.WriteString(s.Body.String())
+	}
 	return sb.String()
 }
 

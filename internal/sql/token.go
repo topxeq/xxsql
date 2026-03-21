@@ -304,6 +304,7 @@ const (
 	TokColon     // :
 	TokArrow     // ->
 	TokDoubleCol // ::
+	TokDollar    // $
 
 	// Special
 	TokParameter // ? or $1 for prepared statements

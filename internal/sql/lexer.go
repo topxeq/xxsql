@@ -315,10 +315,16 @@ func (l *Lexer) scanString(quote rune) Token {
 	return Token{Type: TokString, Value: sb.String(), Line: line, Column: col}
 }
 
-// scanParameter scans a parameter placeholder ($1, $2, etc.)
+// scanParameter scans a parameter placeholder ($1, $2, etc.) or dollar-quoted string ($$...$$)
 func (l *Lexer) scanParameter() Token {
 	line, col := l.line, l.column
 	l.next() // consume $
+
+	// Check for $$ (dollar-quoted string)
+	if l.peek() == '$' {
+		l.next() // consume second $
+		return l.scanDollarQuotedString(line, col)
+	}
 
 	var sb strings.Builder
 	sb.WriteRune('$')
@@ -328,6 +334,31 @@ func (l *Lexer) scanParameter() Token {
 	}
 
 	return Token{Type: TokParameter, Value: sb.String(), Line: line, Column: col}
+}
+
+// scanDollarQuotedString scans a $$...$$ delimited string.
+func (l *Lexer) scanDollarQuotedString(line, col int) Token {
+	var sb strings.Builder
+
+	for {
+		r := l.peek()
+		if r == 0 {
+			return Token{Type: TokError, Value: "unterminated dollar-quoted string", Line: line, Column: col}
+		}
+		if r == '$' {
+			l.next() // consume first $
+			if l.peek() == '$' {
+				l.next() // consume second $
+				break
+			}
+			sb.WriteRune('$')
+			continue
+		}
+		sb.WriteRune(r)
+		l.next()
+	}
+
+	return Token{Type: TokString, Value: sb.String(), Line: line, Column: col}
 }
 
 // scanBlobLiteral scans a BLOB literal X'...' or x'...'

@@ -634,3 +634,220 @@ func TestExecutor_UDFWithDefaultParam(t *testing.T) {
 		t.Errorf("greet() = %v, want 'Hello, World'", result.Rows[0][0])
 	}
 }
+
+// ============================================================================
+// XxScript-based UDF Tests
+// ============================================================================
+
+func TestParseCreateFunctionWithScript(t *testing.T) {
+	tests := []struct {
+		input    string
+		name     string
+		params   int
+		hasScript bool
+	}{
+		{
+			input:     "CREATE FUNCTION add_nums(x, y) RETURNS INT AS $$ return x + y $$",
+			name:      "add_nums",
+			params:    2,
+			hasScript: true,
+		},
+		{
+			input:     "CREATE FUNCTION double(x) RETURNS INT SCRIPT 'return x * 2'",
+			name:      "double",
+			params:    1,
+			hasScript: true,
+		},
+		{
+			input:     "CREATE OR REPLACE FUNCTION greet(name) RETURNS VARCHAR AS $$ return 'Hello, ' + name $$",
+			name:      "greet",
+			params:    1,
+			hasScript: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			stmt, err := sql.Parse(tt.input)
+			if err != nil {
+				t.Fatalf("Parse failed: %v", err)
+			}
+
+			cf, ok := stmt.(*sql.CreateFunctionStmt)
+			if !ok {
+				t.Fatalf("Expected *CreateFunctionStmt, got %T", stmt)
+			}
+
+			if cf.Name != tt.name {
+				t.Errorf("Name = %q, want %q", cf.Name, tt.name)
+			}
+
+			if len(cf.Parameters) != tt.params {
+				t.Errorf("Parameters count = %d, want %d", len(cf.Parameters), tt.params)
+			}
+
+			if tt.hasScript && cf.Script == "" {
+				t.Error("Script should not be empty")
+			}
+
+			t.Logf("Script: %q", cf.Script)
+		})
+	}
+}
+
+func TestExecutor_ScriptUDF(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "script_udf_test")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	engine := storage.NewEngine(tmpDir)
+	defer engine.Close()
+
+	exec := NewExecutor(engine)
+	udfMgr := NewUDFManager(tmpDir)
+	exec.SetUDFManager(udfMgr)
+	scriptUDFMgr := NewScriptUDFManager(tmpDir)
+	exec.SetScriptUDFManager(scriptUDFMgr)
+
+	// Create script-based function using dollar-quoted string
+	_, err = exec.Execute("CREATE FUNCTION add_nums(x, y) RETURNS INT AS $$ return x + y $$")
+	if err != nil {
+		t.Fatalf("CREATE FUNCTION failed: %v", err)
+	}
+
+	// Test calling the function
+	result, err := exec.Execute("SELECT add_nums(3, 4)")
+	if err != nil {
+		t.Fatalf("SELECT add_nums(3, 4) failed: %v", err)
+	}
+
+	if len(result.Rows) == 0 {
+		t.Fatal("Expected result rows")
+	}
+
+	// Result should be 7
+	var got int
+	switch v := result.Rows[0][0].(type) {
+	case int:
+		got = v
+	case int64:
+		got = int(v)
+	case float64:
+		got = int(v)
+	default:
+		t.Fatalf("Unexpected type %T: %v", result.Rows[0][0], result.Rows[0][0])
+	}
+
+	if got != 7 {
+		t.Errorf("add_nums(3, 4) = %d, want 7", got)
+	}
+}
+
+func TestExecutor_ScriptUDFWithString(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "script_udf_test")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	engine := storage.NewEngine(tmpDir)
+	defer engine.Close()
+
+	exec := NewExecutor(engine)
+	udfMgr := NewUDFManager(tmpDir)
+	exec.SetUDFManager(udfMgr)
+	scriptUDFMgr := NewScriptUDFManager(tmpDir)
+	exec.SetScriptUDFManager(scriptUDFMgr)
+
+	// Create script-based function using SCRIPT keyword
+	_, err = exec.Execute("CREATE FUNCTION greet(name) RETURNS VARCHAR SCRIPT 'return \"Hello, \" + name'")
+	if err != nil {
+		t.Fatalf("CREATE FUNCTION failed: %v", err)
+	}
+
+	// Test calling the function
+	result, err := exec.Execute("SELECT greet('World')")
+	if err != nil {
+		t.Fatalf("SELECT greet('World') failed: %v", err)
+	}
+
+	if len(result.Rows) == 0 {
+		t.Fatal("Expected result rows")
+	}
+
+	// Result should be "Hello, World"
+	got, ok := result.Rows[0][0].(string)
+	if !ok {
+		t.Fatalf("Expected string, got %T", result.Rows[0][0])
+	}
+
+	if got != "Hello, World" {
+		t.Errorf("greet('World') = %q, want 'Hello, World'", got)
+	}
+}
+
+func TestExecutor_ScriptUDFWithCondition(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "script_udf_test")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	engine := storage.NewEngine(tmpDir)
+	defer engine.Close()
+
+	exec := NewExecutor(engine)
+	udfMgr := NewUDFManager(tmpDir)
+	exec.SetUDFManager(udfMgr)
+	scriptUDFMgr := NewScriptUDFManager(tmpDir)
+	exec.SetScriptUDFManager(scriptUDFMgr)
+
+	// Create script-based function with condition
+	_, err = exec.Execute("CREATE FUNCTION abs_val(x) RETURNS INT AS $$ if x < 0 { return -x } return x $$")
+	if err != nil {
+		t.Fatalf("CREATE FUNCTION failed: %v", err)
+	}
+
+	// Test with positive value
+	result, err := exec.Execute("SELECT abs_val(5)")
+	if err != nil {
+		t.Fatalf("SELECT abs_val(5) failed: %v", err)
+	}
+
+	var got int
+	switch v := result.Rows[0][0].(type) {
+	case int:
+		got = v
+	case int64:
+		got = int(v)
+	case float64:
+		got = int(v)
+	default:
+		t.Fatalf("Unexpected type %T", result.Rows[0][0])
+	}
+	if got != 5 {
+		t.Errorf("abs_val(5) = %d, want 5", got)
+	}
+
+	// Test with negative value
+	result, err = exec.Execute("SELECT abs_val(-5)")
+	if err != nil {
+		t.Fatalf("SELECT abs_val(-5) failed: %v", err)
+	}
+
+	switch v := result.Rows[0][0].(type) {
+	case int:
+		got = v
+	case int64:
+		got = int(v)
+	case float64:
+		got = int(v)
+	default:
+		t.Fatalf("Unexpected type %T", result.Rows[0][0])
+	}
+	if got != 5 {
+		t.Errorf("abs_val(-5) = %d, want 5", got)
+	}
+}

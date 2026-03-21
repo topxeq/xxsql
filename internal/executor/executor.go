@@ -26,6 +26,7 @@ import (
 	"github.com/topxeq/xxsql/internal/storage/row"
 	"github.com/topxeq/xxsql/internal/storage/table"
 	"github.com/topxeq/xxsql/internal/storage/types"
+	"github.com/topxeq/xxsql/internal/xxscript"
 )
 
 // Permission represents a permission bit.
@@ -95,7 +96,8 @@ type Executor struct {
 	database      string
 	perms         PermissionChecker
 	authMgr       AuthManager
-	udfManager    *UDFManager
+	udfManager    *UDFManager          // Old style UDF (SQL expressions)
+	scriptUDFMgr  *ScriptUDFManager    // New style UDF (XxScript)
 	outerContext  map[string]interface{} // For correlated subqueries
 	currentTable  string                 // Current table being queried (for outer context)
 	subqueryCache map[string]interface{} // Cache for non-correlated subquery results (optimization)
@@ -155,6 +157,11 @@ func (e *Executor) SetUDFManager(m *UDFManager) {
 	e.udfManager = m
 }
 
+// SetScriptUDFManager sets the script-based UDF manager for the executor.
+func (e *Executor) SetScriptUDFManager(m *ScriptUDFManager) {
+	e.scriptUDFMgr = m
+}
+
 // SetDatabase sets the current database.
 func (e *Executor) SetDatabase(db string) {
 	e.database = db
@@ -173,6 +180,12 @@ func (e *Executor) SetAuthManager(mgr AuthManager) {
 // Execute executes a SQL statement.
 func (e *Executor) Execute(sqlStr string) (*Result, error) {
 	return e.ExecuteWithPerms(sqlStr, e.perms)
+}
+
+// ExecuteForScript executes a SQL statement and returns the result as interface{}.
+// This method satisfies the xxscript.SQLExecutor interface.
+func (e *Executor) ExecuteForScript(sqlStr string) (interface{}, error) {
+	return e.Execute(sqlStr)
 }
 
 // ExecuteWithPerms executes a SQL statement with a specific permission checker.
@@ -8359,6 +8372,45 @@ func getColumnNames(columns []*types.ColumnInfo) []string {
 
 // executeCreateFunction executes a CREATE FUNCTION statement.
 func (e *Executor) executeCreateFunction(stmt *sql.CreateFunctionStmt) (*Result, error) {
+	// Check if it's a script-based function (new style)
+	if stmt.Script != "" {
+		if e.scriptUDFMgr == nil {
+			return nil, fmt.Errorf("script UDF manager not initialized")
+		}
+
+		// Extract parameter names
+		params := make([]string, len(stmt.Parameters))
+		for i, p := range stmt.Parameters {
+			params[i] = p.Name
+		}
+
+		retType := ""
+		if stmt.ReturnType != nil {
+			retType = stmt.ReturnType.Name
+		}
+
+		fn := &ScriptFunction{
+			Name:       strings.ToUpper(stmt.Name),
+			Params:     params,
+			ReturnType: retType,
+			Script:     stmt.Script,
+		}
+
+		if err := e.scriptUDFMgr.CreateFunction(fn, stmt.Replace); err != nil {
+			return nil, err
+		}
+
+		// Save to disk
+		if err := e.scriptUDFMgr.Save(); err != nil {
+			return nil, fmt.Errorf("failed to save function: %w", err)
+		}
+
+		return &Result{
+			Message: fmt.Sprintf("Function %s created", stmt.Name),
+		}, nil
+	}
+
+	// Old style: SQL expression body
 	if e.udfManager == nil {
 		return nil, fmt.Errorf("UDF manager not initialized")
 	}
@@ -8386,26 +8438,46 @@ func (e *Executor) executeCreateFunction(stmt *sql.CreateFunctionStmt) (*Result,
 
 // executeDropFunction executes a DROP FUNCTION statement.
 func (e *Executor) executeDropFunction(stmt *sql.DropFunctionStmt) (*Result, error) {
-	if e.udfManager == nil {
-		return nil, fmt.Errorf("UDF manager not initialized")
-	}
-
 	name := strings.ToUpper(stmt.Name)
-	if err := e.udfManager.DropFunction(name); err != nil {
-		if stmt.IfExists {
-			return &Result{Message: "OK"}, nil
+
+	// Try script UDF first
+	if e.scriptUDFMgr != nil {
+		if _, exists := e.scriptUDFMgr.GetFunction(name); exists {
+			if err := e.scriptUDFMgr.DropFunction(name); err != nil {
+				if stmt.IfExists {
+					return &Result{Message: "OK"}, nil
+				}
+				return nil, err
+			}
+			if err := e.scriptUDFMgr.Save(); err != nil {
+				return nil, fmt.Errorf("failed to save functions: %w", err)
+			}
+			return &Result{
+				Message: fmt.Sprintf("Function %s dropped", stmt.Name),
+			}, nil
 		}
-		return nil, err
 	}
 
-	// Save to disk
-	if err := e.udfManager.Save(); err != nil {
-		return nil, fmt.Errorf("failed to save functions: %w", err)
+	// Try old style UDF
+	if e.udfManager != nil {
+		if err := e.udfManager.DropFunction(name); err != nil {
+			if stmt.IfExists {
+				return &Result{Message: "OK"}, nil
+			}
+			return nil, err
+		}
+		if err := e.udfManager.Save(); err != nil {
+			return nil, fmt.Errorf("failed to save functions: %w", err)
+		}
+		return &Result{
+			Message: fmt.Sprintf("Function %s dropped", stmt.Name),
+		}, nil
 	}
 
-	return &Result{
-		Message: fmt.Sprintf("Function %s dropped", stmt.Name),
-	}, nil
+	if stmt.IfExists {
+		return &Result{Message: "OK"}, nil
+	}
+	return nil, fmt.Errorf("function %s does not exist", stmt.Name)
 }
 
 // executeCreateTrigger executes a CREATE TRIGGER statement.
@@ -12322,6 +12394,22 @@ func (e *Executor) evaluateFunction(fc *sql.FunctionCall, r *row.Row, columnMap 
 
 	default:
 		// Check for user-defined function
+		// Check for script-based UDF first (new style)
+		if e.scriptUDFMgr != nil {
+			if fn, exists := e.scriptUDFMgr.GetFunction(funcName); exists {
+				// Evaluate arguments
+				argValues := make([]interface{}, len(fc.Args))
+				for i, arg := range fc.Args {
+					val, err := evalExpr(arg)
+					if err != nil {
+						return nil, err
+					}
+					argValues[i] = val
+				}
+				return e.callScriptFunction(fn, argValues)
+			}
+		}
+		// Check for old style UDF
 		if e.udfManager != nil {
 			if udf, exists := e.udfManager.GetFunction(funcName); exists {
 				return e.evaluateUDF(udf, fc.Args, evalExpr)
@@ -15285,4 +15373,52 @@ func jsonLength(jsonStr string) int64 {
 	default:
 		return 1
 	}
+}
+
+// callScriptFunction calls a XxScript-based UDF with the given arguments.
+func (e *Executor) callScriptFunction(fn *ScriptFunction, args []interface{}) (interface{}, error) {
+	// Build parameter assignments
+	var scriptBuilder strings.Builder
+	for i, param := range fn.Params {
+		if i < len(args) {
+			scriptBuilder.WriteString(fmt.Sprintf("var %s = ", param))
+			val := args[i]
+			switch v := val.(type) {
+			case string:
+				// Escape quotes in string
+				escaped := strings.ReplaceAll(v, "\\", "\\\\")
+				escaped = strings.ReplaceAll(escaped, "\"", "\\\"")
+				scriptBuilder.WriteString(fmt.Sprintf("\"%s\"", escaped))
+			case nil:
+				scriptBuilder.WriteString("null")
+			case bool:
+				if v {
+					scriptBuilder.WriteString("true")
+				} else {
+					scriptBuilder.WriteString("false")
+				}
+			case int:
+				scriptBuilder.WriteString(fmt.Sprintf("%d", v))
+			case int64:
+				scriptBuilder.WriteString(fmt.Sprintf("%d", v))
+			case float64:
+				scriptBuilder.WriteString(fmt.Sprintf("%v", v))
+			default:
+				// Try to convert to string
+				scriptBuilder.WriteString(fmt.Sprintf("\"%v\"", v))
+			}
+			scriptBuilder.WriteString("\n")
+		}
+	}
+
+	// Append the function script
+	scriptBuilder.WriteString(fn.Script)
+
+	// Execute the script
+	result, err := xxscript.Run(scriptBuilder.String(), nil)
+	if err != nil {
+		return nil, fmt.Errorf("script error in function %s: %w", fn.Name, err)
+	}
+
+	return result, nil
 }
