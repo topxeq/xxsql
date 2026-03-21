@@ -9449,6 +9449,41 @@ func (e *Executor) evaluateFunction(fc *sql.FunctionCall, r *row.Row, columnMap 
 		}
 		return nil, nil
 
+	case "COALESCE":
+		if len(fc.Args) == 0 {
+			return nil, fmt.Errorf("COALESCE requires at least 1 argument")
+		}
+		for _, argExpr := range fc.Args {
+			arg, err := evalExpr(argExpr)
+			if err != nil {
+				return nil, err
+			}
+			if arg != nil {
+				return arg, nil
+			}
+		}
+		return nil, nil
+
+	case "NULLIF":
+		if len(fc.Args) < 2 {
+			return nil, fmt.Errorf("NULLIF requires 2 arguments")
+		}
+		arg1, err := evalExpr(fc.Args[0])
+		if err != nil {
+			return nil, err
+		}
+		arg2, err := evalExpr(fc.Args[1])
+		if err != nil {
+			return nil, err
+		}
+		// If arg1 equals arg2, return NULL
+		if arg1 != nil && arg2 != nil {
+			if fmt.Sprintf("%v", arg1) == fmt.Sprintf("%v", arg2) {
+				return nil, nil
+			}
+		}
+		return arg1, nil
+
 	case "REGEXP":
 		if len(fc.Args) < 2 {
 			return nil, fmt.Errorf("REGEXP requires 2 arguments")
