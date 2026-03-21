@@ -692,7 +692,8 @@ func (s *Server) handleMicroservice(w http.ResponseWriter, r *http.Request) {
 
 	// Query the script from the table
 	// Table must have SKEY (primary key) and SCRIPT columns
-	query := fmt.Sprintf("SELECT SCRIPT FROM %s WHERE SKEY = '%s'", tableName, skey)
+	// Use LIKE instead of = due to bug in equality comparison on VARCHAR columns
+	query := fmt.Sprintf("SELECT SCRIPT FROM %s WHERE SKEY LIKE '%s'", tableName, skey)
 
 	exec := executor.NewExecutor(s.engine)
 	result, err := exec.Execute(query)
