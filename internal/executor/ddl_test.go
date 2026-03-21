@@ -1101,3 +1101,253 @@ func TestCreateTableIfNotExists(t *testing.T) {
 		t.Error("Expected error when creating existing table")
 	}
 }
+
+// ============================================================================
+// ALTER TABLE Data Integrity Tests
+// ============================================================================
+
+func TestAlterTableAddColumnDataIntegrity(t *testing.T) {
+	exec, cleanup := setupDDLTest(t)
+	defer cleanup()
+
+	// Create table and insert data
+	_, err := exec.Execute(`
+		CREATE TABLE test_data (
+			id SEQ PRIMARY KEY,
+			name VARCHAR(100)
+		)
+	`)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = exec.Execute(`INSERT INTO test_data (id, name) VALUES (1, 'Alice')`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = exec.Execute(`INSERT INTO test_data (id, name) VALUES (2, 'Bob')`)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Add column
+	_, err = exec.Execute(`ALTER TABLE test_data ADD COLUMN email VARCHAR(100)`)
+	if err != nil {
+		t.Fatalf("Failed to add column: %v", err)
+	}
+
+	// Verify existing data is still there
+	result, err := exec.Execute(`SELECT id, name FROM test_data ORDER BY id`)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if result.RowCount != 2 {
+		t.Errorf("Expected 2 rows, got %d", result.RowCount)
+	}
+
+	if result.Rows[0][1] != "Alice" || result.Rows[1][1] != "Bob" {
+		t.Errorf("Data corrupted after ADD COLUMN: %v", result.Rows)
+	}
+
+	// Insert new row with new column
+	_, err = exec.Execute(`INSERT INTO test_data (id, name, email) VALUES (3, 'Charlie', 'charlie@test.com')`)
+	if err != nil {
+		t.Fatalf("Insert with new column failed: %v", err)
+	}
+
+	// Verify new data
+	result, err = exec.Execute(`SELECT * FROM test_data WHERE id = 3`)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if result.RowCount != 1 {
+		t.Errorf("Expected 1 row, got %d", result.RowCount)
+	}
+
+	if result.Rows[0][2] != "charlie@test.com" {
+		t.Errorf("New column value not stored correctly: %v", result.Rows[0])
+	}
+}
+
+func TestAlterTableDropColumnDataIntegrity(t *testing.T) {
+	exec, cleanup := setupDDLTest(t)
+	defer cleanup()
+
+	// Create table with 3 columns
+	_, err := exec.Execute(`
+		CREATE TABLE test_drop_data (
+			id SEQ PRIMARY KEY,
+			name VARCHAR(100),
+			email VARCHAR(100)
+		)
+	`)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = exec.Execute(`INSERT INTO test_drop_data (id, name, email) VALUES (1, 'Alice', 'alice@test.com')`)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Drop column
+	_, err = exec.Execute(`ALTER TABLE test_drop_data DROP COLUMN email`)
+	if err != nil {
+		t.Fatalf("Failed to drop column: %v", err)
+	}
+
+	// Verify remaining data
+	result, err := exec.Execute(`SELECT id, name FROM test_drop_data`)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if result.RowCount != 1 {
+		t.Errorf("Expected 1 row, got %d", result.RowCount)
+	}
+
+	if result.Rows[0][1] != "Alice" {
+		t.Errorf("Data corrupted after DROP COLUMN: %v", result.Rows)
+	}
+
+	// Verify we can no longer select the dropped column
+	_, err = exec.Execute(`SELECT email FROM test_drop_data`)
+	if err == nil {
+		t.Error("Expected error selecting dropped column")
+	}
+}
+
+func TestAlterTableRenameColumnDataIntegrity(t *testing.T) {
+	exec, cleanup := setupDDLTest(t)
+	defer cleanup()
+
+	// Create table
+	_, err := exec.Execute(`
+		CREATE TABLE test_rename_data (
+			id SEQ PRIMARY KEY,
+			name VARCHAR(100)
+		)
+	`)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = exec.Execute(`INSERT INTO test_rename_data (id, name) VALUES (1, 'Alice')`)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Rename column
+	_, err = exec.Execute(`ALTER TABLE test_rename_data RENAME COLUMN name TO username`)
+	if err != nil {
+		t.Fatalf("Failed to rename column: %v", err)
+	}
+
+	// Verify data is accessible via new column name
+	result, err := exec.Execute(`SELECT id, username FROM test_rename_data`)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if result.RowCount != 1 {
+		t.Errorf("Expected 1 row, got %d", result.RowCount)
+	}
+
+	if result.Rows[0][1] != "Alice" {
+		t.Errorf("Data corrupted after RENAME COLUMN: %v", result.Rows)
+	}
+
+	// Verify old column name no longer works
+	_, err = exec.Execute(`SELECT name FROM test_rename_data`)
+	if err == nil {
+		t.Error("Expected error selecting old column name")
+	}
+}
+
+func TestAlterTableWithIndexes(t *testing.T) {
+	exec, cleanup := setupDDLTest(t)
+	defer cleanup()
+
+	// Create table with index
+	_, err := exec.Execute(`
+		CREATE TABLE test_idx (
+			id SEQ PRIMARY KEY,
+			name VARCHAR(100),
+			email VARCHAR(100)
+		)
+	`)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = exec.Execute(`CREATE INDEX idx_email ON test_idx(email)`)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = exec.Execute(`INSERT INTO test_idx (id, name, email) VALUES (1, 'Alice', 'alice@test.com')`)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Drop column that has index - should handle gracefully
+	_, err = exec.Execute(`ALTER TABLE test_idx DROP COLUMN email`)
+	if err != nil {
+		// Some databases don't allow dropping indexed columns
+		t.Logf("Drop column with index result: %v", err)
+	}
+
+	// Verify table still works
+	result, err := exec.Execute(`SELECT id, name FROM test_idx`)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if result.RowCount != 1 {
+		t.Errorf("Expected 1 row, got %d", result.RowCount)
+	}
+}
+
+func TestAlterTableRenameTableWithForeignKey(t *testing.T) {
+	exec, cleanup := setupDDLTest(t)
+	defer cleanup()
+
+	// Create parent table
+	_, err := exec.Execute(`
+		CREATE TABLE parent (
+			id SEQ PRIMARY KEY,
+			name VARCHAR(100)
+		)
+	`)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Create child table with foreign key
+	_, err = exec.Execute(`
+		CREATE TABLE child (
+			id SEQ PRIMARY KEY,
+			parent_id INT,
+			FOREIGN KEY (parent_id) REFERENCES parent(id)
+		)
+	`)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Rename parent table
+	_, err = exec.Execute(`ALTER TABLE parent RENAME TO parent_renamed`)
+	if err != nil {
+		t.Fatalf("Failed to rename table: %v", err)
+	}
+
+	// Verify renamed table exists
+	result, err := exec.Execute(`SELECT * FROM parent_renamed`)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	t.Logf("Renamed table query result: %d rows", result.RowCount)
+}

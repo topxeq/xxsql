@@ -3855,6 +3855,102 @@ func (e *Executor) evaluateBinaryExprWithoutRow(expr *sql.BinaryExpr) (interface
 	return e.evaluateBinaryOp(left, expr.Op, right)
 }
 
+// evaluateExpressionWithoutRow evaluates an expression without row context.
+// Used for evaluating default values, check constraints, etc.
+func (e *Executor) evaluateExpressionWithoutRow(expr sql.Expression) (interface{}, error) {
+	switch ex := expr.(type) {
+	case *sql.Literal:
+		return ex.Value, nil
+	case *sql.BinaryExpr:
+		return e.evaluateBinaryExprWithoutRow(ex)
+	case *sql.UnaryExpr:
+		val, err := e.evaluateExpressionWithoutRow(ex.Right)
+		if err != nil {
+			return nil, err
+		}
+		if ex.Op == sql.OpNeg {
+			switch v := val.(type) {
+			case int:
+				return -v, nil
+			case int64:
+				return -v, nil
+			case float64:
+				return -v, nil
+			}
+		}
+		return val, nil
+	case *sql.FunctionCall:
+		// Handle simple functions that don't require row data
+		return e.evaluateFunctionWithoutRow(ex)
+	case *sql.CastExpr:
+		val, err := e.evaluateExpressionWithoutRow(ex.Expr)
+		if err != nil {
+			return nil, err
+		}
+		return e.castValue(val, ex.Type.Name)
+	default:
+		return nil, fmt.Errorf("unsupported expression type for evaluation: %T", expr)
+	}
+}
+
+// evaluateFunctionWithoutRow evaluates a function without row context.
+func (e *Executor) evaluateFunctionWithoutRow(expr *sql.FunctionCall) (interface{}, error) {
+	// Handle simple functions that don't require row data
+	switch strings.ToUpper(expr.Name) {
+	case "CURRENT_TIMESTAMP", "NOW":
+		return time.Now().Format("2006-01-02 15:04:05"), nil
+	case "CURRENT_DATE":
+		return time.Now().Format("2006-01-02"), nil
+	case "CURRENT_TIME":
+		return time.Now().Format("15:04:05"), nil
+	case "NULL":
+		return nil, nil
+	case "UPPER":
+		if len(expr.Args) > 0 {
+			val, err := e.evaluateExpressionWithoutRow(expr.Args[0])
+			if err != nil {
+				return nil, err
+			}
+			return strings.ToUpper(fmt.Sprintf("%v", val)), nil
+		}
+		return nil, nil
+	case "LOWER":
+		if len(expr.Args) > 0 {
+			val, err := e.evaluateExpressionWithoutRow(expr.Args[0])
+			if err != nil {
+				return nil, err
+			}
+			return strings.ToLower(fmt.Sprintf("%v", val)), nil
+		}
+		return nil, nil
+	case "COALESCE":
+		for _, arg := range expr.Args {
+			val, err := e.evaluateExpressionWithoutRow(arg)
+			if err != nil {
+				return nil, err
+			}
+			if val != nil {
+				return val, nil
+			}
+		}
+		return nil, nil
+	case "IFNULL":
+		if len(expr.Args) >= 2 {
+			val, err := e.evaluateExpressionWithoutRow(expr.Args[0])
+			if err != nil {
+				return nil, err
+			}
+			if val != nil {
+				return val, nil
+			}
+			return e.evaluateExpressionWithoutRow(expr.Args[1])
+		}
+		return nil, nil
+	default:
+		return nil, fmt.Errorf("function %s cannot be evaluated without row context", expr.Name)
+	}
+}
+
 // executeInsert executes an INSERT statement.
 func (e *Executor) executeInsert(stmt *sql.InsertStmt) (*Result, error) {
 	// Handle WITH clause if present
@@ -6164,6 +6260,16 @@ func (e *Executor) executeAddColumn(tableName string, action *sql.AddColumnActio
 		Nullable:   col.Nullable,
 		PrimaryKey: col.PrimaryKey,
 		AutoIncr:   col.AutoIncr,
+	}
+
+	// Handle default value
+	if col.Default != nil {
+		defaultVal, err := e.evaluateExpressionWithoutRow(col.Default)
+		if err != nil {
+			return fmt.Errorf("invalid default value: %v", err)
+		}
+		// Convert to types.Value
+		newCol.Default = e.interfaceToValue(defaultVal, newCol)
 	}
 
 	return tbl.AddColumn(newCol)
