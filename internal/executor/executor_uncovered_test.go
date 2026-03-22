@@ -1034,6 +1034,25 @@ func TestCompareValuesJoin(t *testing.T) {
 		{true, false, 1},
 		{false, true, -1},
 		{true, true, 0},
+		// float64 comparisons
+		{float64(1.0), float64(2.0), -1},
+		{float64(2.0), float64(1.0), 1},
+		{float64(1.0), float64(1.0), 0},
+		{float64(3.14), float64(3.14), 0},
+		// int and int64 cross comparisons
+		{int(1), int(2), -1},
+		{int(2), int(1), 1},
+		{int(5), int64(5), 0},
+		{int64(5), int(5), 0},
+		{int(1), int64(2), -1},
+		{int64(2), int(1), 1},
+		// bool comparisons
+		{false, false, 0},
+		// mixed type comparisons (should return 0 for incompatible types)
+		{int64(1), "1", 0},
+		{"1", int64(1), 0},
+		{float64(1.0), "1", 0},
+		{true, int64(1), 0},
 	}
 
 	for _, tt := range tests {
@@ -11521,6 +11540,237 @@ func TestEvaluateExpressionExtra(t *testing.T) {
 		}
 		if result != "test" {
 			t.Errorf("expected 'test', got %v", result)
+		}
+	})
+}
+
+// TestEvaluateWhereForRowMore tests more cases of evaluateWhereForRow
+func TestEvaluateWhereForRowMore(t *testing.T) {
+	exec := &Executor{}
+
+	// Create test columns
+	columns := []*types.ColumnInfo{
+		{Name: "id", Type: types.TypeInt},
+		{Name: "name", Type: types.TypeVarchar},
+	}
+	colIdxMap := map[string]int{"id": 0, "name": 1}
+
+	// Create test row
+	testRow := &row.Row{
+		ID: 1,
+		Values: []types.Value{
+			types.NewIntValue(42),
+			types.NewStringValue("test", types.TypeVarchar),
+		},
+	}
+
+	t.Run("in expr with NOT", func(t *testing.T) {
+		expr := &sql.InExpr{
+			Expr: &sql.ColumnRef{Name: "id"},
+			List: []sql.Expression{
+				&sql.Literal{Value: int64(1)},
+				&sql.Literal{Value: int64(2)},
+			},
+			Not: true,
+		}
+		result, err := exec.evaluateWhereForRow(expr, testRow, columns, colIdxMap)
+		if err != nil {
+			t.Errorf("unexpected error: %v", err)
+		}
+		if !result {
+			t.Error("expected true for id NOT IN (1, 2) when id=42")
+		}
+	})
+
+	t.Run("in expr with NOT - value in list", func(t *testing.T) {
+		expr := &sql.InExpr{
+			Expr: &sql.ColumnRef{Name: "id"},
+			List: []sql.Expression{
+				&sql.Literal{Value: int64(42)},
+			},
+			Not: true,
+		}
+		result, err := exec.evaluateWhereForRow(expr, testRow, columns, colIdxMap)
+		if err != nil {
+			t.Errorf("unexpected error: %v", err)
+		}
+		if result {
+			t.Error("expected false for id NOT IN (42) when id=42")
+		}
+	})
+
+	t.Run("literal bool true", func(t *testing.T) {
+		expr := &sql.Literal{Value: true, Type: sql.LiteralBool}
+		result, err := exec.evaluateWhereForRow(expr, testRow, columns, colIdxMap)
+		if err != nil {
+			t.Errorf("unexpected error: %v", err)
+		}
+		if !result {
+			t.Error("expected true for literal true")
+		}
+	})
+
+	t.Run("literal bool false", func(t *testing.T) {
+		expr := &sql.Literal{Value: false, Type: sql.LiteralBool}
+		result, err := exec.evaluateWhereForRow(expr, testRow, columns, colIdxMap)
+		if err != nil {
+			t.Errorf("unexpected error: %v", err)
+		}
+		if result {
+			t.Error("expected false for literal false")
+		}
+	})
+
+	t.Run("literal non-bool", func(t *testing.T) {
+		expr := &sql.Literal{Value: 42, Type: sql.LiteralNumber}
+		result, err := exec.evaluateWhereForRow(expr, testRow, columns, colIdxMap)
+		if err != nil {
+			t.Errorf("unexpected error: %v", err)
+		}
+		if result {
+			t.Error("expected false for non-bool literal")
+		}
+	})
+
+	t.Run("match expression - no fts manager", func(t *testing.T) {
+		expr := &sql.MatchExpr{
+			Table: "users",
+			Query: "test",
+		}
+		result, err := exec.evaluateWhereForRow(expr, testRow, columns, colIdxMap)
+		if err != nil {
+			t.Errorf("unexpected error: %v", err)
+		}
+		if result {
+			t.Error("expected false for match expression without FTS manager")
+		}
+	})
+}
+
+// TestHasAggregateFunctions tests the hasAggregateFunctions function
+func TestHasAggregateFunctions(t *testing.T) {
+	t.Run("empty columns", func(t *testing.T) {
+		result := hasAggregateFunctions([]sql.Expression{})
+		if result {
+			t.Error("expected false for empty columns")
+		}
+	})
+
+	t.Run("no aggregate functions", func(t *testing.T) {
+		columns := []sql.Expression{
+			&sql.ColumnRef{Name: "id"},
+			&sql.Literal{Value: 42},
+		}
+		result := hasAggregateFunctions(columns)
+		if result {
+			t.Error("expected false for non-aggregate columns")
+		}
+	})
+
+	t.Run("with COUNT", func(t *testing.T) {
+		columns := []sql.Expression{
+			&sql.FunctionCall{Name: "COUNT", Args: []sql.Expression{}},
+		}
+		result := hasAggregateFunctions(columns)
+		if !result {
+			t.Error("expected true for COUNT")
+		}
+	})
+
+	t.Run("with SUM", func(t *testing.T) {
+		columns := []sql.Expression{
+			&sql.FunctionCall{Name: "SUM", Args: []sql.Expression{}},
+		}
+		result := hasAggregateFunctions(columns)
+		if !result {
+			t.Error("expected true for SUM")
+		}
+	})
+
+	t.Run("with AVG", func(t *testing.T) {
+		columns := []sql.Expression{
+			&sql.FunctionCall{Name: "AVG", Args: []sql.Expression{}},
+		}
+		result := hasAggregateFunctions(columns)
+		if !result {
+			t.Error("expected true for AVG")
+		}
+	})
+
+	t.Run("with MIN", func(t *testing.T) {
+		columns := []sql.Expression{
+			&sql.FunctionCall{Name: "MIN", Args: []sql.Expression{}},
+		}
+		result := hasAggregateFunctions(columns)
+		if !result {
+			t.Error("expected true for MIN")
+		}
+	})
+
+	t.Run("with MAX", func(t *testing.T) {
+		columns := []sql.Expression{
+			&sql.FunctionCall{Name: "MAX", Args: []sql.Expression{}},
+		}
+		result := hasAggregateFunctions(columns)
+		if !result {
+			t.Error("expected true for MAX")
+		}
+	})
+
+	t.Run("with GROUP_CONCAT", func(t *testing.T) {
+		columns := []sql.Expression{
+			&sql.FunctionCall{Name: "GROUP_CONCAT", Args: []sql.Expression{}},
+		}
+		result := hasAggregateFunctions(columns)
+		if !result {
+			t.Error("expected true for GROUP_CONCAT")
+		}
+	})
+
+	t.Run("with window function COUNT", func(t *testing.T) {
+		columns := []sql.Expression{
+			&sql.WindowFuncCall{
+				Func: &sql.FunctionCall{Name: "COUNT", Args: []sql.Expression{}},
+			},
+		}
+		result := hasAggregateFunctions(columns)
+		if !result {
+			t.Error("expected true for window function COUNT")
+		}
+	})
+
+	t.Run("with window function SUM", func(t *testing.T) {
+		columns := []sql.Expression{
+			&sql.WindowFuncCall{
+				Func: &sql.FunctionCall{Name: "SUM", Args: []sql.Expression{}},
+			},
+		}
+		result := hasAggregateFunctions(columns)
+		if !result {
+			t.Error("expected true for window function SUM")
+		}
+	})
+
+	t.Run("with non-aggregate window function", func(t *testing.T) {
+		columns := []sql.Expression{
+			&sql.WindowFuncCall{
+				Func: &sql.FunctionCall{Name: "ROW_NUMBER", Args: []sql.Expression{}},
+			},
+		}
+		result := hasAggregateFunctions(columns)
+		if result {
+			t.Error("expected false for ROW_NUMBER window function")
+		}
+	})
+
+	t.Run("mixed columns with aggregate", func(t *testing.T) {
+		columns := []sql.Expression{
+			&sql.ColumnRef{Name: "id"},
+			&sql.FunctionCall{Name: "COUNT", Args: []sql.Expression{}},
+		}
+		result := hasAggregateFunctions(columns)
+		if !result {
+			t.Error("expected true for mixed columns with COUNT")
 		}
 	})
 }
