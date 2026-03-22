@@ -189,7 +189,7 @@ func TestHandleAPILogin(t *testing.T) {
 	}
 }
 
-func TestHandleAPILogout(t *testing.T) {
+func TestHandleAPILogoutExtra(t *testing.T) {
 	server, _ := setupTestServer(t)
 
 	req := httptest.NewRequest(http.MethodPost, "/api/logout", nil)
@@ -417,7 +417,7 @@ func TestHandleAPIConfig(t *testing.T) {
 	})
 }
 
-func TestHandleAPIBackups(t *testing.T) {
+func TestHandleAPIBackupsExtra(t *testing.T) {
 	server, _ := setupTestServer(t)
 
 	t.Run("list backups", func(t *testing.T) {
@@ -1419,5 +1419,215 @@ func TestHandleAPIKeyDetail_EnableDisable(t *testing.T) {
 	updatedKey, _ := server.apiKeyManager.GetKey(key.ID)
 	if updatedKey.Enabled {
 		t.Error("Key should be disabled")
+	}
+}
+
+// TestHandleAPITables tests handleAPITables
+func TestHandleAPITablesExtra(t *testing.T) {
+	server, _ := setupTestServer(t)
+
+	// Login first
+	loginBody, _ := json.Marshal(map[string]string{
+		"username": "admin",
+		"password": "admin",
+	})
+	loginReq := httptest.NewRequest(http.MethodPost, "/api/login", bytes.NewBuffer(loginBody))
+	loginReq.Header.Set("Content-Type", "application/json")
+	loginW := httptest.NewRecorder()
+	server.handleAPILogin(loginW, loginReq)
+
+	// Get tables
+	req := httptest.NewRequest(http.MethodGet, "/api/tables", nil)
+	for _, cookie := range loginW.Result().Cookies() {
+		req.AddCookie(cookie)
+	}
+	w := httptest.NewRecorder()
+
+	handler := server.authMiddleware(http.HandlerFunc(server.handleAPITables))
+	handler.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("Status: got %d, want %d", w.Code, http.StatusOK)
+	}
+}
+
+// TestHandleAPIBackups tests handleAPIBackups
+func TestHandleAPIBackups(t *testing.T) {
+	server, _ := setupTestServer(t)
+
+	// Login first
+	loginBody, _ := json.Marshal(map[string]string{
+		"username": "admin",
+		"password": "admin",
+	})
+	loginReq := httptest.NewRequest(http.MethodPost, "/api/login", bytes.NewBuffer(loginBody))
+	loginReq.Header.Set("Content-Type", "application/json")
+	loginW := httptest.NewRecorder()
+	server.handleAPILogin(loginW, loginReq)
+
+	// Get backups
+	req := httptest.NewRequest(http.MethodGet, "/api/backups", nil)
+	for _, cookie := range loginW.Result().Cookies() {
+		req.AddCookie(cookie)
+	}
+	w := httptest.NewRecorder()
+
+	handler := server.authMiddleware(http.HandlerFunc(server.handleAPIBackups))
+	handler.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("Status: got %d, want %d", w.Code, http.StatusOK)
+	}
+}
+
+// TestHandleAPIMetrics tests handleAPIMetrics
+func TestHandleAPIMetricsExtra(t *testing.T) {
+	server, _ := setupTestServer(t)
+
+	// Login first
+	loginBody, _ := json.Marshal(map[string]string{
+		"username": "admin",
+		"password": "admin",
+	})
+	loginReq := httptest.NewRequest(http.MethodPost, "/api/login", bytes.NewBuffer(loginBody))
+	loginReq.Header.Set("Content-Type", "application/json")
+	loginW := httptest.NewRecorder()
+	server.handleAPILogin(loginW, loginReq)
+
+	// Get metrics
+	req := httptest.NewRequest(http.MethodGet, "/api/metrics", nil)
+	for _, cookie := range loginW.Result().Cookies() {
+		req.AddCookie(cookie)
+	}
+	w := httptest.NewRecorder()
+
+	handler := server.authMiddleware(http.HandlerFunc(server.handleAPIMetrics))
+	handler.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("Status: got %d, want %d", w.Code, http.StatusOK)
+	}
+}
+
+// TestHandleAPIConfig tests handleAPIConfig
+func TestHandleAPIConfigExtra(t *testing.T) {
+	server, _ := setupTestServer(t)
+
+	// Login first
+	loginBody, _ := json.Marshal(map[string]string{
+		"username": "admin",
+		"password": "admin",
+	})
+	loginReq := httptest.NewRequest(http.MethodPost, "/api/login", bytes.NewBuffer(loginBody))
+	loginReq.Header.Set("Content-Type", "application/json")
+	loginW := httptest.NewRecorder()
+	server.handleAPILogin(loginW, loginReq)
+
+	// Get config
+	req := httptest.NewRequest(http.MethodGet, "/api/config", nil)
+	for _, cookie := range loginW.Result().Cookies() {
+		req.AddCookie(cookie)
+	}
+	w := httptest.NewRecorder()
+
+	handler := server.authMiddleware(http.HandlerFunc(server.handleAPIConfig))
+	handler.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("Status: got %d, want %d", w.Code, http.StatusOK)
+	}
+}
+
+// TestHandleAPIKeys tests handleAPIKeys
+func TestHandleAPIKeys(t *testing.T) {
+	server, _ := setupTestServer(t)
+
+	// Login first
+	loginBody, _ := json.Marshal(map[string]string{
+		"username": "admin",
+		"password": "admin",
+	})
+	loginReq := httptest.NewRequest(http.MethodPost, "/api/login", bytes.NewBuffer(loginBody))
+	loginReq.Header.Set("Content-Type", "application/json")
+	loginW := httptest.NewRecorder()
+	server.handleAPILogin(loginW, loginReq)
+
+	// Get API keys
+	req := httptest.NewRequest(http.MethodGet, "/api/keys", nil)
+	for _, cookie := range loginW.Result().Cookies() {
+		req.AddCookie(cookie)
+	}
+	w := httptest.NewRecorder()
+
+	handler := server.authMiddleware(http.HandlerFunc(server.handleAPIKeys))
+	handler.ServeHTTP(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("Status: got %d, want %d", w.Code, http.StatusOK)
+	}
+}
+
+// TestAuthenticateAPIKey tests authenticateAPIKey
+func TestAuthenticateAPIKey(t *testing.T) {
+	server, _ := setupTestServer(t)
+
+	// Generate an API key
+	fullKey, _, _ := server.apiKeyManager.GenerateKey("test-key", "admin", auth.PermSelect, 0)
+
+	// Test with valid API key
+	req := httptest.NewRequest(http.MethodGet, "/api/status", nil)
+	req.Header.Set("X-API-Key", fullKey)
+	w := httptest.NewRecorder()
+
+	// Create a dummy handler
+	nextHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
+
+	ok := server.authenticateAPIKey(w, req, nextHandler)
+	if !ok {
+		t.Error("authenticateAPIKey should succeed with valid key")
+	}
+}
+
+// TestHandleAPILogout tests handleAPILogout
+func TestHandleAPILogout(t *testing.T) {
+	server, _ := setupTestServer(t)
+
+	// Login first
+	loginBody, _ := json.Marshal(map[string]string{
+		"username": "admin",
+		"password": "admin",
+	})
+	loginReq := httptest.NewRequest(http.MethodPost, "/api/login", bytes.NewBuffer(loginBody))
+	loginReq.Header.Set("Content-Type", "application/json")
+	loginW := httptest.NewRecorder()
+	server.handleAPILogin(loginW, loginReq)
+
+	// Logout
+	req := httptest.NewRequest(http.MethodPost, "/api/logout", nil)
+	for _, cookie := range loginW.Result().Cookies() {
+		req.AddCookie(cookie)
+	}
+	w := httptest.NewRecorder()
+
+	server.handleAPILogout(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("Status: got %d, want %d", w.Code, http.StatusOK)
+	}
+}
+
+// TestHandleAPIStatus tests handleAPIStatus
+func TestHandleAPIStatusExtra(t *testing.T) {
+	server, _ := setupTestServer(t)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/status", nil)
+	w := httptest.NewRecorder()
+
+	server.handleAPIStatus(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("Status: got %d, want %d", w.Code, http.StatusOK)
 	}
 }
