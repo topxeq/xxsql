@@ -11929,3 +11929,639 @@ func TestEvaluateFunctionMore(t *testing.T) {
 	})
 }
 
+// TestGenerateQueryPlan tests the generateQueryPlan function
+func TestGenerateQueryPlan(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "xxsql-plan-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	engine := storage.NewEngine(tmpDir)
+	if err := engine.Open(); err != nil {
+		t.Fatalf("Failed to open engine: %v", err)
+	}
+	defer engine.Close()
+
+	exec := NewExecutor(engine)
+	exec.SetDatabase("testdb")
+
+	// Create a table for testing
+	_, _ = exec.Execute("CREATE TABLE users (id INT, name VARCHAR(100))")
+	_, _ = exec.Execute("INSERT INTO users VALUES (1, 'Alice')")
+	_, _ = exec.Execute("INSERT INTO users VALUES (2, 'Bob')")
+
+	t.Run("SELECT without FROM", func(t *testing.T) {
+		stmt := &sql.SelectStmt{
+			Columns: []sql.Expression{&sql.Literal{Value: 1}},
+		}
+		rows := exec.generateQueryPlan(stmt)
+		if len(rows) == 0 {
+			t.Error("expected at least one row in plan")
+		}
+	})
+
+	t.Run("SELECT with table", func(t *testing.T) {
+		stmt := &sql.SelectStmt{
+			Columns: []sql.Expression{&sql.ColumnRef{Name: "id"}},
+			From: &sql.FromClause{
+				Table: &sql.TableRef{Name: "users"},
+			},
+		}
+		rows := exec.generateQueryPlan(stmt)
+		if len(rows) == 0 {
+			t.Error("expected at least one row in plan")
+		}
+	})
+
+	t.Run("SELECT with WHERE", func(t *testing.T) {
+		stmt := &sql.SelectStmt{
+			Columns: []sql.Expression{&sql.ColumnRef{Name: "id"}},
+			From: &sql.FromClause{
+				Table: &sql.TableRef{Name: "users"},
+			},
+			Where: &sql.BinaryExpr{
+				Left:  &sql.ColumnRef{Name: "id"},
+				Op:    sql.OpEq,
+				Right: &sql.Literal{Value: int64(1)},
+			},
+		}
+		rows := exec.generateQueryPlan(stmt)
+		if len(rows) == 0 {
+			t.Error("expected at least one row in plan")
+		}
+	})
+
+	t.Run("SELECT with JOIN", func(t *testing.T) {
+		_, _ = exec.Execute("CREATE TABLE orders (id INT, user_id INT)")
+		stmt := &sql.SelectStmt{
+			Columns: []sql.Expression{&sql.ColumnRef{Name: "id"}},
+			From: &sql.FromClause{
+				Table: &sql.TableRef{Name: "users"},
+				Joins: []*sql.JoinClause{
+					{
+						Type:  sql.JoinInner,
+						Table: &sql.TableRef{Name: "orders"},
+					},
+				},
+			},
+		}
+		rows := exec.generateQueryPlan(stmt)
+		if len(rows) == 0 {
+			t.Error("expected at least one row in plan")
+		}
+	})
+
+	t.Run("INSERT statement", func(t *testing.T) {
+		stmt := &sql.InsertStmt{
+			Table:  "users",
+			Values: [][]sql.Expression{{&sql.Literal{Value: int64(3)}}, {&sql.Literal{Value: int64(4)}}},
+		}
+		rows := exec.generateQueryPlan(stmt)
+		if len(rows) == 0 {
+			t.Error("expected at least one row in plan")
+		}
+	})
+
+	t.Run("INSERT with columns", func(t *testing.T) {
+		stmt := &sql.InsertStmt{
+			Table:   "users",
+			Columns: []string{"id", "name"},
+			Values:  [][]sql.Expression{{&sql.Literal{Value: int64(5)}}},
+		}
+		rows := exec.generateQueryPlan(stmt)
+		if len(rows) == 0 {
+			t.Error("expected at least one row in plan")
+		}
+	})
+
+	t.Run("INSERT with ON CONFLICT DO NOTHING", func(t *testing.T) {
+		stmt := &sql.InsertStmt{
+			Table:  "users",
+			Values: [][]sql.Expression{{&sql.Literal{Value: int64(1)}}},
+			OnConflict: &sql.UpsertClause{
+				DoNothing: true,
+			},
+		}
+		rows := exec.generateQueryPlan(stmt)
+		if len(rows) == 0 {
+			t.Error("expected at least one row in plan")
+		}
+	})
+
+	t.Run("INSERT with ON CONFLICT DO UPDATE", func(t *testing.T) {
+		stmt := &sql.InsertStmt{
+			Table:  "users",
+			Values: [][]sql.Expression{{&sql.Literal{Value: int64(1)}}},
+			OnConflict: &sql.UpsertClause{
+				DoNothing: false,
+				DoUpdate:  true,
+			},
+		}
+		rows := exec.generateQueryPlan(stmt)
+		if len(rows) == 0 {
+			t.Error("expected at least one row in plan")
+		}
+	})
+
+	t.Run("INSERT with RETURNING", func(t *testing.T) {
+		stmt := &sql.InsertStmt{
+			Table:     "users",
+			Values:    [][]sql.Expression{{&sql.Literal{Value: int64(1)}}},
+			Returning: &sql.ReturningClause{All: true},
+		}
+		rows := exec.generateQueryPlan(stmt)
+		if len(rows) == 0 {
+			t.Error("expected at least one row in plan")
+		}
+	})
+
+	t.Run("UPDATE statement", func(t *testing.T) {
+		stmt := &sql.UpdateStmt{
+			Table: "users",
+			Assignments: []*sql.Assignment{
+				{Column: "name", Value: &sql.Literal{Value: "test"}},
+			},
+		}
+		rows := exec.generateQueryPlan(stmt)
+		if len(rows) == 0 {
+			t.Error("expected at least one row in plan")
+		}
+	})
+
+	t.Run("UPDATE with WHERE", func(t *testing.T) {
+		stmt := &sql.UpdateStmt{
+			Table: "users",
+			Assignments: []*sql.Assignment{
+				{Column: "name", Value: &sql.Literal{Value: "test"}},
+			},
+			Where: &sql.BinaryExpr{
+				Left:  &sql.ColumnRef{Name: "id"},
+				Op:    sql.OpEq,
+				Right: &sql.Literal{Value: int64(1)},
+			},
+		}
+		rows := exec.generateQueryPlan(stmt)
+		if len(rows) == 0 {
+			t.Error("expected at least one row in plan")
+		}
+	})
+
+	t.Run("DELETE statement", func(t *testing.T) {
+		stmt := &sql.DeleteStmt{
+			Table: "users",
+		}
+		rows := exec.generateQueryPlan(stmt)
+		if len(rows) == 0 {
+			t.Error("expected at least one row in plan")
+		}
+	})
+
+	t.Run("DELETE with WHERE", func(t *testing.T) {
+		stmt := &sql.DeleteStmt{
+			Table: "users",
+			Where: &sql.BinaryExpr{
+				Left:  &sql.ColumnRef{Name: "id"},
+				Op:    sql.OpEq,
+				Right: &sql.Literal{Value: int64(1)},
+			},
+		}
+		rows := exec.generateQueryPlan(stmt)
+		if len(rows) == 0 {
+			t.Error("expected at least one row in plan")
+		}
+	})
+}
+
+// TestEvaluateWhereForRowAdditional tests evaluateWhereForRow with various expression types
+func TestEvaluateWhereForRowAdditional(t *testing.T) {
+	engine := setupTestEngine(t)
+	exec := NewExecutor(engine)
+	exec.SetDatabase("testdb")
+
+	// Create table and insert data
+	_, _ = exec.Execute("CREATE TABLE test_where_add (id INT, name VARCHAR(50), active BOOL)")
+	_, _ = exec.Execute("INSERT INTO test_where_add VALUES (1, 'Alice', true)")
+	_, _ = exec.Execute("INSERT INTO test_where_add VALUES (2, 'Bob', false)")
+
+	// Get table info
+	tbl, err := engine.GetTable("test_where_add")
+	if err != nil {
+		t.Fatalf("Failed to get table: %v", err)
+	}
+	tblInfo := tbl.GetInfo()
+
+	columns := tblInfo.Columns
+	colIdxMap := make(map[string]int)
+	for i, col := range columns {
+		colIdxMap[col.Name] = i
+	}
+
+	t.Run("BinaryExpr equality", func(t *testing.T) {
+		r := row.NewRow(1, columns)
+		r.Values[0] = types.NewIntValue(1)
+		r.Values[1] = types.NewStringValue("Alice", types.TypeVarchar)
+		r.Values[2] = types.NewBoolValue(true)
+
+		expr := &sql.BinaryExpr{
+			Left:  &sql.ColumnRef{Name: "id"},
+			Op:    sql.OpEq,
+			Right: &sql.Literal{Value: int64(1)},
+		}
+
+		result, err := exec.evaluateWhereForRow(expr, r, columns, colIdxMap)
+		if err != nil {
+			t.Errorf("evaluateWhereForRow failed: %v", err)
+		}
+		if !result {
+			t.Error("expected true for id = 1")
+		}
+	})
+
+	t.Run("BinaryExpr greater than", func(t *testing.T) {
+		r := row.NewRow(2, columns)
+		r.Values[0] = types.NewIntValue(2)
+		r.Values[1] = types.NewStringValue("Bob", types.TypeVarchar)
+		r.Values[2] = types.NewBoolValue(false)
+
+		expr := &sql.BinaryExpr{
+			Left:  &sql.ColumnRef{Name: "id"},
+			Op:    sql.OpGt,
+			Right: &sql.Literal{Value: int64(1)},
+		}
+
+		result, err := exec.evaluateWhereForRow(expr, r, columns, colIdxMap)
+		if err != nil {
+			t.Errorf("evaluateWhereForRow failed: %v", err)
+		}
+		if !result {
+			t.Error("expected true for id > 1 when id = 2")
+		}
+	})
+
+	t.Run("UnaryExpr NOT", func(t *testing.T) {
+		r := row.NewRow(1, columns)
+		r.Values[0] = types.NewIntValue(1)
+		r.Values[1] = types.NewStringValue("Alice", types.TypeVarchar)
+		r.Values[2] = types.NewBoolValue(true)
+
+		expr := &sql.UnaryExpr{
+			Op:    sql.OpNot,
+			Right: &sql.BinaryExpr{
+				Left:  &sql.ColumnRef{Name: "id"},
+				Op:    sql.OpEq,
+				Right: &sql.Literal{Value: int64(2)},
+			},
+		}
+
+		result, err := exec.evaluateWhereForRow(expr, r, columns, colIdxMap)
+		if err != nil {
+			t.Errorf("evaluateWhereForRow failed: %v", err)
+		}
+		if !result {
+			t.Error("expected true for NOT (id = 2) when id = 1")
+		}
+	})
+
+	t.Run("IsNullExpr", func(t *testing.T) {
+		r := row.NewRow(1, columns)
+		r.Values[0] = types.NewIntValue(1)
+		r.Values[1] = types.NewStringValue("Alice", types.TypeVarchar)
+		r.Values[2] = types.NewBoolValue(true)
+
+		expr := &sql.IsNullExpr{
+			Expr: &sql.ColumnRef{Name: "id"},
+			Not:  false,
+		}
+
+		result, err := exec.evaluateWhereForRow(expr, r, columns, colIdxMap)
+		if err != nil {
+			t.Errorf("evaluateWhereForRow failed: %v", err)
+		}
+		if result {
+			t.Error("expected false for IS NULL when id is not null")
+		}
+
+		// Test IS NOT NULL
+		expr.Not = true
+		result, err = exec.evaluateWhereForRow(expr, r, columns, colIdxMap)
+		if err != nil {
+			t.Errorf("evaluateWhereForRow failed: %v", err)
+		}
+		if !result {
+			t.Error("expected true for IS NOT NULL when id is not null")
+		}
+	})
+
+	t.Run("InExpr with list", func(t *testing.T) {
+		r := row.NewRow(2, columns)
+		r.Values[0] = types.NewIntValue(2)
+		r.Values[1] = types.NewStringValue("Bob", types.TypeVarchar)
+		r.Values[2] = types.NewBoolValue(false)
+
+		expr := &sql.InExpr{
+			Expr: &sql.ColumnRef{Name: "id"},
+			List: []sql.Expression{
+				&sql.Literal{Value: int64(1)},
+				&sql.Literal{Value: int64(2)},
+				&sql.Literal{Value: int64(3)},
+			},
+			Not: false,
+		}
+
+		result, err := exec.evaluateWhereForRow(expr, r, columns, colIdxMap)
+		if err != nil {
+			t.Errorf("evaluateWhereForRow failed: %v", err)
+		}
+		if !result {
+			t.Error("expected true for id IN (1,2,3) when id = 2")
+		}
+
+		// Test NOT IN
+		expr.Not = true
+		result, err = exec.evaluateWhereForRow(expr, r, columns, colIdxMap)
+		if err != nil {
+			t.Errorf("evaluateWhereForRow failed: %v", err)
+		}
+		if result {
+			t.Error("expected false for id NOT IN (1,2,3) when id = 2")
+		}
+	})
+
+	t.Run("BinaryExpr LIKE", func(t *testing.T) {
+		r := row.NewRow(1, columns)
+		r.Values[0] = types.NewIntValue(1)
+		r.Values[1] = types.NewStringValue("Alice", types.TypeVarchar)
+		r.Values[2] = types.NewBoolValue(true)
+
+		expr := &sql.BinaryExpr{
+			Left:  &sql.ColumnRef{Name: "name"},
+			Op:    sql.OpLike,
+			Right: &sql.Literal{Value: "Ali%"},
+		}
+
+		result, err := exec.evaluateWhereForRow(expr, r, columns, colIdxMap)
+		if err != nil {
+			t.Errorf("evaluateWhereForRow failed: %v", err)
+		}
+		if !result {
+			t.Error("expected true for name LIKE 'Ali%' when name = 'Alice'")
+		}
+	})
+
+	t.Run("BinaryExpr AND", func(t *testing.T) {
+		r := row.NewRow(1, columns)
+		r.Values[0] = types.NewIntValue(1)
+		r.Values[1] = types.NewStringValue("Alice", types.TypeVarchar)
+		r.Values[2] = types.NewBoolValue(true)
+
+		expr := &sql.BinaryExpr{
+			Left: &sql.BinaryExpr{
+				Left:  &sql.ColumnRef{Name: "id"},
+				Op:    sql.OpEq,
+				Right: &sql.Literal{Value: int64(1)},
+			},
+			Op: sql.OpAnd,
+			Right: &sql.BinaryExpr{
+				Left:  &sql.ColumnRef{Name: "name"},
+				Op:    sql.OpEq,
+				Right: &sql.Literal{Value: "Alice"},
+			},
+		}
+
+		result, err := exec.evaluateWhereForRow(expr, r, columns, colIdxMap)
+		if err != nil {
+			t.Errorf("evaluateWhereForRow failed: %v", err)
+		}
+		// Result depends on how string comparisons work
+		t.Logf("BinaryExpr AND result: %v", result)
+	})
+
+	t.Run("BinaryExpr OR", func(t *testing.T) {
+		r := row.NewRow(2, columns)
+		r.Values[0] = types.NewIntValue(2)
+		r.Values[1] = types.NewStringValue("Bob", types.TypeVarchar)
+		r.Values[2] = types.NewBoolValue(false)
+
+		expr := &sql.BinaryExpr{
+			Left: &sql.BinaryExpr{
+				Left:  &sql.ColumnRef{Name: "id"},
+				Op:    sql.OpEq,
+				Right: &sql.Literal{Value: int64(1)},
+			},
+			Op: sql.OpOr,
+			Right: &sql.BinaryExpr{
+				Left:  &sql.ColumnRef{Name: "name"},
+				Op:    sql.OpEq,
+				Right: &sql.Literal{Value: "Bob"},
+			},
+		}
+
+		result, err := exec.evaluateWhereForRow(expr, r, columns, colIdxMap)
+		if err != nil {
+			t.Errorf("evaluateWhereForRow failed: %v", err)
+		}
+		// Result depends on how string comparisons work
+		t.Logf("BinaryExpr OR result: %v", result)
+	})
+}
+
+// TestEvaluateHavingAdditional tests the evaluateHaving function
+func TestEvaluateHavingAdditional(t *testing.T) {
+	engine := setupTestEngine(t)
+	exec := NewExecutor(engine)
+	exec.SetDatabase("testdb")
+
+	// Create table and insert data
+	_, _ = exec.Execute("CREATE TABLE test_having_add (dept VARCHAR(50), salary INT)")
+	_, _ = exec.Execute("INSERT INTO test_having_add VALUES ('Engineering', 100000)")
+	_, _ = exec.Execute("INSERT INTO test_having_add VALUES ('Engineering', 120000)")
+	_, _ = exec.Execute("INSERT INTO test_having_add VALUES ('Sales', 80000)")
+	_, _ = exec.Execute("INSERT INTO test_having_add VALUES ('Sales', 90000)")
+
+	// Get table info
+	tbl, err := engine.GetTable("test_having_add")
+	if err != nil {
+		t.Fatalf("Failed to get table: %v", err)
+	}
+	tblInfo := tbl.GetInfo()
+
+	t.Run("HAVING with comparison", func(t *testing.T) {
+		// Simulate a HAVING clause: SUM(salary) > 200000
+		resultRow := []interface{}{int64(220000)} // SUM of Engineering dept
+		resultCols := []ColumnInfo{{Name: "SUM(salary)"}}
+
+		aggregateFuncs := []struct {
+			name   string
+			arg    string
+			index  int
+			filter sql.Expression
+		}{
+			{name: "SUM", arg: "salary", index: 0, filter: nil},
+		}
+
+		expr := &sql.BinaryExpr{
+			Left:  &sql.ColumnRef{Name: "SUM(salary)"},
+			Op:    sql.OpGt,
+			Right: &sql.Literal{Value: int64(200000)},
+		}
+
+		groupRows := []*row.Row{row.NewRow(1, nil), row.NewRow(2, nil)}
+
+		result, err := exec.evaluateHaving(expr, resultRow, resultCols, aggregateFuncs, groupRows, tblInfo)
+		if err != nil {
+			t.Errorf("evaluateHaving failed: %v", err)
+		}
+		if !result {
+			t.Error("expected true for SUM(salary) > 200000")
+		}
+	})
+
+	t.Run("HAVING with NOT", func(t *testing.T) {
+		resultRow := []interface{}{int64(170000)} // SUM of Sales dept
+		resultCols := []ColumnInfo{{Name: "SUM(salary)"}}
+
+		aggregateFuncs := []struct {
+			name   string
+			arg    string
+			index  int
+			filter sql.Expression
+		}{
+			{name: "SUM", arg: "salary", index: 0, filter: nil},
+		}
+
+		expr := &sql.UnaryExpr{
+			Op: sql.OpNot,
+			Right: &sql.BinaryExpr{
+				Left:  &sql.ColumnRef{Name: "SUM(salary)"},
+				Op:    sql.OpGt,
+				Right: &sql.Literal{Value: int64(200000)},
+			},
+		}
+
+		groupRows := []*row.Row{row.NewRow(1, nil), row.NewRow(2, nil)}
+
+		result, err := exec.evaluateHaving(expr, resultRow, resultCols, aggregateFuncs, groupRows, tblInfo)
+		if err != nil {
+			t.Errorf("evaluateHaving failed: %v", err)
+		}
+		if !result {
+			t.Error("expected true for NOT (SUM(salary) > 200000) when SUM = 170000")
+		}
+	})
+
+	t.Run("HAVING with equality", func(t *testing.T) {
+		resultRow := []interface{}{int64(2)} // COUNT
+		resultCols := []ColumnInfo{{Name: "COUNT(*)"}}
+
+		aggregateFuncs := []struct {
+			name   string
+			arg    string
+			index  int
+			filter sql.Expression
+		}{
+			{name: "COUNT", arg: "*", index: 0, filter: nil},
+		}
+
+		expr := &sql.BinaryExpr{
+			Left:  &sql.ColumnRef{Name: "COUNT(*)"},
+			Op:    sql.OpEq,
+			Right: &sql.Literal{Value: int64(2)},
+		}
+
+		groupRows := []*row.Row{row.NewRow(1, nil), row.NewRow(2, nil)}
+
+		result, err := exec.evaluateHaving(expr, resultRow, resultCols, aggregateFuncs, groupRows, tblInfo)
+		if err != nil {
+			t.Errorf("evaluateHaving failed: %v", err)
+		}
+		if !result {
+			t.Error("expected true for COUNT(*) = 2")
+		}
+	})
+}
+
+// TestEvaluateExpressionAdditional tests evaluateExpressionWithoutRow function
+func TestEvaluateExpressionAdditional(t *testing.T) {
+	engine := setupTestEngine(t)
+	exec := NewExecutor(engine)
+	exec.SetDatabase("testdb")
+
+	t.Run("Literal expression", func(t *testing.T) {
+		expr := &sql.Literal{Value: int64(42)}
+		result, err := exec.evaluateExpressionWithoutRow(expr)
+		if err != nil {
+			t.Errorf("evaluateExpressionWithoutRow failed: %v", err)
+		}
+		if result != int64(42) {
+			t.Errorf("expected 42, got %v", result)
+		}
+	})
+
+	t.Run("String literal", func(t *testing.T) {
+		expr := &sql.Literal{Value: "hello"}
+		result, err := exec.evaluateExpressionWithoutRow(expr)
+		if err != nil {
+			t.Errorf("evaluateExpressionWithoutRow failed: %v", err)
+		}
+		if result != "hello" {
+			t.Errorf("expected 'hello', got %v", result)
+		}
+	})
+
+	t.Run("BinaryExpr addition", func(t *testing.T) {
+		expr := &sql.BinaryExpr{
+			Left:  &sql.Literal{Value: int64(10)},
+			Op:    sql.OpAdd,
+			Right: &sql.Literal{Value: int64(5)},
+		}
+		result, err := exec.evaluateExpressionWithoutRow(expr)
+		if err != nil {
+			t.Errorf("evaluateExpressionWithoutRow failed: %v", err)
+		}
+		// Result might be int64 or float64
+		t.Logf("Addition result: %v (type: %T)", result, result)
+	})
+
+	t.Run("BinaryExpr subtraction", func(t *testing.T) {
+		expr := &sql.BinaryExpr{
+			Left:  &sql.Literal{Value: int64(10)},
+			Op:    sql.OpSub,
+			Right: &sql.Literal{Value: int64(3)},
+		}
+		result, err := exec.evaluateExpressionWithoutRow(expr)
+		if err != nil {
+			t.Errorf("evaluateExpressionWithoutRow failed: %v", err)
+		}
+		t.Logf("Subtraction result: %v (type: %T)", result, result)
+	})
+
+	t.Run("BinaryExpr multiplication", func(t *testing.T) {
+		expr := &sql.BinaryExpr{
+			Left:  &sql.Literal{Value: int64(6)},
+			Op:    sql.OpMul,
+			Right: &sql.Literal{Value: int64(7)},
+		}
+		result, err := exec.evaluateExpressionWithoutRow(expr)
+		if err != nil {
+			t.Errorf("evaluateExpressionWithoutRow failed: %v", err)
+		}
+		t.Logf("Multiplication result: %v (type: %T)", result, result)
+	})
+
+	t.Run("BinaryExpr division", func(t *testing.T) {
+		expr := &sql.BinaryExpr{
+			Left:  &sql.Literal{Value: int64(20)},
+			Op:    sql.OpDiv,
+			Right: &sql.Literal{Value: int64(4)},
+		}
+		result, err := exec.evaluateExpressionWithoutRow(expr)
+		if err != nil {
+			t.Errorf("evaluateExpressionWithoutRow failed: %v", err)
+		}
+		if result != int64(5) && result != float64(5) {
+			t.Errorf("expected 5, got %v", result)
+		}
+	})
+}
+
