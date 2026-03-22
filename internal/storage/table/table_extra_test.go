@@ -1,6 +1,9 @@
 package table_test
 
 import (
+	"fmt"
+	"strings"
+	"sync"
 	"testing"
 
 	"github.com/topxeq/xxsql/internal/storage/row"
@@ -837,5 +840,267 @@ func TestTableUpdateWithIndex(t *testing.T) {
 	}
 	if affected != 1 {
 		t.Errorf("Affected rows: got %d, want 1", affected)
+	}
+}
+
+// TestTableGetPage tests getPage functionality
+func TestTableGetPage(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	columns := []*types.ColumnInfo{
+		{Name: "id", Type: types.TypeInt, PrimaryKey: true},
+		{Name: "name", Type: types.TypeVarchar, Size: 50},
+	}
+
+	tbl, err := table.OpenTable(tmpDir, "getpage_test", columns)
+	if err != nil {
+		t.Fatalf("OpenTable failed: %v", err)
+	}
+	defer tbl.Close()
+
+	// Insert some data to create pages
+	for i := 1; i <= 100; i++ {
+		_, err := tbl.Insert([]types.Value{
+			types.NewIntValue(int64(i)),
+			types.NewStringValue(fmt.Sprintf("name%d", i), types.TypeVarchar),
+		})
+		if err != nil {
+			t.Fatalf("Insert %d failed: %v", i, err)
+		}
+	}
+
+	// Scan to verify data
+	rows, err := tbl.Scan()
+	if err != nil {
+		t.Errorf("Scan failed: %v", err)
+	}
+	if len(rows) != 100 {
+		t.Errorf("Scan count: got %d, want 100", len(rows))
+	}
+}
+
+// TestTableMultiplePageOperations tests operations across multiple pages
+func TestTableMultiplePageOperations(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	columns := []*types.ColumnInfo{
+		{Name: "id", Type: types.TypeInt, PrimaryKey: true},
+		{Name: "data", Type: types.TypeVarchar, Size: 1000},
+	}
+
+	tbl, err := table.OpenTable(tmpDir, "multipage_test", columns)
+	if err != nil {
+		t.Fatalf("OpenTable failed: %v", err)
+	}
+	defer tbl.Close()
+
+	// Insert large data to span multiple pages
+	largeData := strings.Repeat("x", 500)
+	for i := 1; i <= 50; i++ {
+		_, err := tbl.Insert([]types.Value{
+			types.NewIntValue(int64(i)),
+			types.NewStringValue(largeData, types.TypeVarchar),
+		})
+		if err != nil {
+			t.Fatalf("Insert %d failed: %v", i, err)
+		}
+	}
+
+	// Delete some rows
+	affected, err := tbl.Delete(func(r *row.Row) bool {
+		return r.Values[0].AsInt()%2 == 0
+	})
+	if err != nil {
+		t.Errorf("Delete failed: %v", err)
+	}
+	if affected != 25 {
+		t.Errorf("Delete affected: got %d, want 25", affected)
+	}
+}
+
+// TestTableConcurrentAccess tests concurrent table operations
+func TestTableConcurrentAccess(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	columns := []*types.ColumnInfo{
+		{Name: "id", Type: types.TypeInt, PrimaryKey: true},
+		{Name: "value", Type: types.TypeInt},
+	}
+
+	tbl, err := table.OpenTable(tmpDir, "concurrent_test", columns)
+	if err != nil {
+		t.Fatalf("OpenTable failed: %v", err)
+	}
+	defer tbl.Close()
+
+	// Concurrent inserts
+	var wg sync.WaitGroup
+	errCh := make(chan error, 10)
+
+	for i := 0; i < 10; i++ {
+		wg.Add(1)
+		go func(base int) {
+			defer wg.Done()
+			for j := 0; j < 10; j++ {
+				_, err := tbl.Insert([]types.Value{
+					types.NewIntValue(int64(base*10 + j + 1)),
+					types.NewIntValue(int64(j)),
+				})
+				if err != nil {
+					errCh <- err
+				}
+			}
+		}(i)
+	}
+
+	wg.Wait()
+	close(errCh)
+
+	for err := range errCh {
+		t.Errorf("Concurrent insert error: %v", err)
+	}
+
+	// Verify count
+	rows, err := tbl.Scan()
+	if err != nil {
+		t.Errorf("Scan failed: %v", err)
+	}
+	if len(rows) != 100 {
+		t.Errorf("Final count: got %d, want 100", len(rows))
+	}
+}
+
+// TestTableIndexRangeScan tests index range scanning
+func TestTableIndexRangeScan(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	columns := []*types.ColumnInfo{
+		{Name: "id", Type: types.TypeInt, PrimaryKey: true},
+		{Name: "score", Type: types.TypeInt},
+	}
+
+	tbl, err := table.OpenTable(tmpDir, "range_scan_test", columns)
+	if err != nil {
+		t.Fatalf("OpenTable failed: %v", err)
+	}
+	defer tbl.Close()
+
+	// Create index on score
+	err = tbl.CreateIndex("idx_score", []string{"score"}, false)
+	if err != nil {
+		t.Fatalf("CreateIndex failed: %v", err)
+	}
+
+	// Insert data
+	for i := 1; i <= 20; i++ {
+		_, err := tbl.Insert([]types.Value{
+			types.NewIntValue(int64(i)),
+			types.NewIntValue(int64(i * 10)),
+		})
+		if err != nil {
+			t.Fatalf("Insert %d failed: %v", i, err)
+		}
+	}
+
+	// Scan and filter
+	rows, err := tbl.Scan()
+	if err != nil {
+		t.Errorf("Scan failed: %v", err)
+	}
+	count := 0
+	for _, r := range rows {
+		if r.Values[1].AsInt() >= 100 {
+			count++
+		}
+	}
+	if count != 11 {
+		t.Errorf("Conditional scan count: got %d, want 11", count)
+	}
+}
+
+// TestTableNullValues tests NULL value handling
+func TestTableNullValues(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	columns := []*types.ColumnInfo{
+		{Name: "id", Type: types.TypeInt, PrimaryKey: true},
+		{Name: "name", Type: types.TypeVarchar, Size: 50, Nullable: true},
+		{Name: "score", Type: types.TypeInt, Nullable: true},
+	}
+
+	tbl, err := table.OpenTable(tmpDir, "null_test", columns)
+	if err != nil {
+		t.Fatalf("OpenTable failed: %v", err)
+	}
+	defer tbl.Close()
+
+	// Insert with NULL values
+	_, err = tbl.Insert([]types.Value{
+		types.NewIntValue(1),
+		types.NewNullValue(),
+		types.NewIntValue(100),
+	})
+	if err != nil {
+		t.Fatalf("Insert with NULL failed: %v", err)
+	}
+
+	_, err = tbl.Insert([]types.Value{
+		types.NewIntValue(2),
+		types.NewStringValue("test", types.TypeVarchar),
+		types.NewNullValue(),
+	})
+	if err != nil {
+		t.Fatalf("Insert with NULL failed: %v", err)
+	}
+
+	// Scan and verify
+	rows, err := tbl.Scan()
+	if err != nil {
+		t.Errorf("Scan failed: %v", err)
+	}
+	if len(rows) != 2 {
+		t.Errorf("Scan count: got %d, want 2", len(rows))
+	}
+}
+
+// TestTableReopen tests reopening a table
+func TestTableReopenExtra(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	columns := []*types.ColumnInfo{
+		{Name: "id", Type: types.TypeInt, PrimaryKey: true},
+		{Name: "value", Type: types.TypeVarchar, Size: 50},
+	}
+
+	// Create and populate table
+	tbl, err := table.OpenTable(tmpDir, "reopen_test", columns)
+	if err != nil {
+		t.Fatalf("OpenTable failed: %v", err)
+	}
+
+	for i := 1; i <= 10; i++ {
+		_, err := tbl.Insert([]types.Value{
+			types.NewIntValue(int64(i)),
+			types.NewStringValue(fmt.Sprintf("value%d", i), types.TypeVarchar),
+		})
+		if err != nil {
+			t.Fatalf("Insert %d failed: %v", i, err)
+		}
+	}
+	tbl.Close()
+
+	// Reopen and verify
+	tbl2, err := table.OpenTable(tmpDir, "reopen_test", columns)
+	if err != nil {
+		t.Fatalf("Reopen failed: %v", err)
+	}
+	defer tbl2.Close()
+
+	rows, err := tbl2.Scan()
+	if err != nil {
+		t.Errorf("Scan after reopen failed: %v", err)
+	}
+	if len(rows) != 10 {
+		t.Errorf("Count after reopen: got %d, want 10", len(rows))
 	}
 }
