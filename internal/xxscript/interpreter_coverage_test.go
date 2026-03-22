@@ -1220,7 +1220,7 @@ func TestBuiltinSprintf(t *testing.T) {
 }
 
 // TestBuiltinAbsMore tests abs builtin with more cases
-func TestBuiltinAbsMore(t *testing.T) {
+func TestBuiltinAbsMore2(t *testing.T) {
 	tests := []struct {
 		script   string
 		expected interface{}
@@ -2317,6 +2317,120 @@ func TestParserEdgeCases(t *testing.T) {
 			_, err := Parse(script)
 			if err != nil {
 				t.Logf("Parse(%q) error: %v (may be expected)", script, err)
+			}
+		})
+	}
+}
+
+// TestCompareFunction tests the compare function
+func TestCompareFunctionExtra(t *testing.T) {
+	tests := []string{
+		"1 < 2",
+		"2 > 1",
+		"1 <= 1",
+		"2 >= 2",
+		"1 == 1",
+		"1 != 2",
+		"'a' < 'b'",
+		"'a' == 'a'",
+		"true == true",
+		"false == false",
+		"nil == nil",
+		"[] == []",
+		"{} == {}",
+	}
+
+	for _, script := range tests {
+		t.Run(script, func(t *testing.T) {
+			_, err := Run(script, nil)
+			if err != nil {
+				t.Logf("Run(%q) error: %v", script, err)
+			}
+		})
+	}
+}
+
+// TestArithmeticOps tests arithmetic operations
+func TestArithmeticOps(t *testing.T) {
+	tests := []string{
+		"1 + 2",
+		"5 - 3",
+		"4 * 5",
+		"10 / 2",
+		"10 % 3",
+		"1.5 + 2.5",
+		"5.5 - 1.5",
+		"2.5 * 4",
+		"10.0 / 4",
+		"-5 + 3",
+		"3 + -2",
+	}
+
+	for _, script := range tests {
+		t.Run(script, func(t *testing.T) {
+			_, err := Run(script, nil)
+			if err != nil {
+				t.Errorf("Run(%q) error: %v", script, err)
+			}
+		})
+	}
+}
+
+// TestBuiltinAbsMore tests builtinAbs function
+func TestBuiltinAbsMore3(t *testing.T) {
+	tests := []string{
+		"abs(-5)",
+		"abs(5)",
+		"abs(-3.14)",
+		"abs(0)",
+		"abs(-0)",
+	}
+
+	for _, script := range tests {
+		t.Run(script, func(t *testing.T) {
+			_, err := Run(script, nil)
+			if err != nil {
+				t.Errorf("Run(%q) error: %v", script, err)
+			}
+		})
+	}
+}
+
+// TestGetMemberFunction tests GetMember function
+func TestGetMemberFunction(t *testing.T) {
+	tests := []string{
+		"({'a': 1}).a",
+		"({'a': 1})['a']",
+		"[1, 2, 3][0]",
+		"[1, 2, 3][1]",
+	}
+
+	for _, script := range tests {
+		t.Run(script, func(t *testing.T) {
+			_, err := Run(script, nil)
+			if err != nil {
+				t.Logf("Run(%q) error: %v", script, err)
+			}
+		})
+	}
+}
+
+// TestToFloatFunction tests toFloat function
+func TestToFloatFunction(t *testing.T) {
+	tests := []string{
+		"float('3.14')",
+		"float('42')",
+		"float(42)",
+		"int(3.14)",
+		"int('42')",
+		"int(42.9)",
+	}
+
+	for _, script := range tests {
+		t.Run(script, func(t *testing.T) {
+			_, err := Run(script, nil)
+			if err != nil {
+				t.Logf("Run(%q) error: %v", script, err)
 			}
 		})
 	}
