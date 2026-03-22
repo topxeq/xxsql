@@ -8191,3 +8191,324 @@ func TestCompareValuesMoreTypes(t *testing.T) {
 		}
 	})
 }
+
+// TestGetFrameBounds tests getFrameBounds function
+func TestGetFrameBounds(t *testing.T) {
+	e := NewExecutor(nil)
+
+	t.Run("nil frame", func(t *testing.T) {
+		start, end := e.getFrameBounds(nil, 10, 5)
+		if start != 0 || end != 9 {
+			t.Errorf("getFrameBounds(nil, 10, 5) = (%d, %d), want (0, 9)", start, end)
+		}
+	})
+
+	t.Run("UNBOUNDED PRECEDING to CURRENT ROW", func(t *testing.T) {
+		frame := &sql.FrameSpec{
+			Start: sql.FrameBound{Type: "UNBOUNDED PRECEDING"},
+			End:   sql.FrameBound{Type: "CURRENT ROW"},
+		}
+		start, end := e.getFrameBounds(frame, 10, 5)
+		if start != 0 || end != 5 {
+			t.Errorf("getFrameBounds = (%d, %d), want (0, 5)", start, end)
+		}
+	})
+
+	t.Run("CURRENT ROW to UNBOUNDED FOLLOWING", func(t *testing.T) {
+		frame := &sql.FrameSpec{
+			Start: sql.FrameBound{Type: "CURRENT ROW"},
+			End:   sql.FrameBound{Type: "UNBOUNDED FOLLOWING"},
+		}
+		start, end := e.getFrameBounds(frame, 10, 5)
+		if start != 5 || end != 9 {
+			t.Errorf("getFrameBounds = (%d, %d), want (5, 9)", start, end)
+		}
+	})
+
+	t.Run("PRECEDING start", func(t *testing.T) {
+		frame := &sql.FrameSpec{
+			Start: sql.FrameBound{Type: "PRECEDING", Offset: 2},
+			End:   sql.FrameBound{Type: "CURRENT ROW"},
+		}
+		start, end := e.getFrameBounds(frame, 10, 5)
+		if start != 3 || end != 5 {
+			t.Errorf("getFrameBounds = (%d, %d), want (3, 5)", start, end)
+		}
+	})
+
+	t.Run("PRECEDING start with underflow", func(t *testing.T) {
+		frame := &sql.FrameSpec{
+			Start: sql.FrameBound{Type: "PRECEDING", Offset: 10},
+			End:   sql.FrameBound{Type: "CURRENT ROW"},
+		}
+		start, end := e.getFrameBounds(frame, 10, 5)
+		if start != 0 || end != 5 {
+			t.Errorf("getFrameBounds = (%d, %d), want (0, 5)", start, end)
+		}
+	})
+
+	t.Run("FOLLOWING start", func(t *testing.T) {
+		frame := &sql.FrameSpec{
+			Start: sql.FrameBound{Type: "FOLLOWING", Offset: 2},
+			End:   sql.FrameBound{Type: "UNBOUNDED FOLLOWING"},
+		}
+		start, end := e.getFrameBounds(frame, 10, 5)
+		if start != 7 || end != 9 {
+			t.Errorf("getFrameBounds = (%d, %d), want (7, 9)", start, end)
+		}
+	})
+
+	t.Run("FOLLOWING start with overflow", func(t *testing.T) {
+		frame := &sql.FrameSpec{
+			Start: sql.FrameBound{Type: "FOLLOWING", Offset: 10},
+			End:   sql.FrameBound{Type: "UNBOUNDED FOLLOWING"},
+		}
+		start, end := e.getFrameBounds(frame, 10, 5)
+		if start != 9 || end != 9 {
+			t.Errorf("getFrameBounds = (%d, %d), want (9, 9)", start, end)
+		}
+	})
+
+	t.Run("PRECEDING end", func(t *testing.T) {
+		frame := &sql.FrameSpec{
+			Start: sql.FrameBound{Type: "UNBOUNDED PRECEDING"},
+			End:   sql.FrameBound{Type: "PRECEDING", Offset: 2},
+		}
+		start, end := e.getFrameBounds(frame, 10, 5)
+		if start != 0 || end != 3 {
+			t.Errorf("getFrameBounds = (%d, %d), want (0, 3)", start, end)
+		}
+	})
+
+	t.Run("FOLLOWING end", func(t *testing.T) {
+		frame := &sql.FrameSpec{
+			Start: sql.FrameBound{Type: "UNBOUNDED PRECEDING"},
+			End:   sql.FrameBound{Type: "FOLLOWING", Offset: 2},
+		}
+		start, end := e.getFrameBounds(frame, 10, 5)
+		if start != 0 || end != 7 {
+			t.Errorf("getFrameBounds = (%d, %d), want (0, 7)", start, end)
+		}
+	})
+
+	t.Run("UNBOUNDED FOLLOWING start (edge case)", func(t *testing.T) {
+		frame := &sql.FrameSpec{
+			Start: sql.FrameBound{Type: "UNBOUNDED FOLLOWING"},
+			End:   sql.FrameBound{Type: "UNBOUNDED FOLLOWING"},
+		}
+		start, end := e.getFrameBounds(frame, 10, 5)
+		if start != 9 || end != 9 {
+			t.Errorf("getFrameBounds = (%d, %d), want (9, 9)", start, end)
+		}
+	})
+
+	t.Run("UNBOUNDED PRECEDING end (edge case)", func(t *testing.T) {
+		frame := &sql.FrameSpec{
+			Start: sql.FrameBound{Type: "UNBOUNDED PRECEDING"},
+			End:   sql.FrameBound{Type: "UNBOUNDED PRECEDING"},
+		}
+		start, end := e.getFrameBounds(frame, 10, 5)
+		if start != 0 || end != 0 {
+			t.Errorf("getFrameBounds = (%d, %d), want (0, 0)", start, end)
+		}
+	})
+
+	t.Run("start > end adjustment", func(t *testing.T) {
+		frame := &sql.FrameSpec{
+			Start: sql.FrameBound{Type: "FOLLOWING", Offset: 5},
+			End:   sql.FrameBound{Type: "PRECEDING", Offset: 5},
+		}
+		start, end := e.getFrameBounds(frame, 10, 5)
+		// start would be 10, end would be 0, so start should be adjusted to 0
+		if start != end {
+			t.Errorf("getFrameBounds = (%d, %d), start should equal end", start, end)
+		}
+	})
+}
+
+// TestCompareValuesMoreOperators tests compareValues with more operators
+func TestCompareValuesMoreOperators(t *testing.T) {
+	e := NewExecutor(nil)
+
+	t.Run("GLOB operator", func(t *testing.T) {
+		result, err := e.compareValues("test.txt", sql.OpGlob, "*.txt")
+		if err != nil {
+			t.Errorf("compareValues returned error: %v", err)
+		}
+		if !result {
+			t.Errorf("'test.txt' GLOB '*.txt' should be true")
+		}
+
+		result, err = e.compareValues("test.doc", sql.OpGlob, "*.txt")
+		if err != nil {
+			t.Errorf("compareValues returned error: %v", err)
+		}
+		if result {
+			t.Errorf("'test.doc' GLOB '*.txt' should be false")
+		}
+	})
+
+	t.Run("NotGlob operator", func(t *testing.T) {
+		result, err := e.compareValues("test.txt", sql.OpNotGlob, "*.txt")
+		if err != nil {
+			t.Errorf("compareValues returned error: %v", err)
+		}
+		if result {
+			t.Errorf("'test.txt' NOT GLOB '*.txt' should be false")
+		}
+	})
+}
+
+// TestEvaluateIfExprMore tests evaluateIfExpr with more cases
+func TestEvaluateIfExprMore(t *testing.T) {
+	e := NewExecutor(nil)
+
+	t.Run("if true then else", func(t *testing.T) {
+		ifExpr := &sql.IfExpr{
+			Condition: &sql.Literal{Value: true, Type: sql.LiteralBool},
+			ThenExpr:  &sql.Literal{Value: "yes", Type: sql.LiteralString},
+			ElseExpr:  &sql.Literal{Value: "no", Type: sql.LiteralString},
+		}
+		result, err := e.evaluateIfExpr(ifExpr, nil)
+		if err != nil {
+			t.Errorf("evaluateIfExpr returned error: %v", err)
+		}
+		if result != "yes" {
+			t.Errorf("if true then 'yes' else 'no' = %v, want 'yes'", result)
+		}
+	})
+
+	t.Run("if false then else", func(t *testing.T) {
+		ifExpr := &sql.IfExpr{
+			Condition: &sql.Literal{Value: false, Type: sql.LiteralBool},
+			ThenExpr:  &sql.Literal{Value: "yes", Type: sql.LiteralString},
+			ElseExpr:  &sql.Literal{Value: "no", Type: sql.LiteralString},
+		}
+		result, err := e.evaluateIfExpr(ifExpr, nil)
+		if err != nil {
+			t.Errorf("evaluateIfExpr returned error: %v", err)
+		}
+		if result != "no" {
+			t.Errorf("if false then 'yes' else 'no' = %v, want 'no'", result)
+		}
+	})
+
+	t.Run("nested if expr", func(t *testing.T) {
+		outerIf := &sql.IfExpr{
+			Condition: &sql.Literal{Value: true, Type: sql.LiteralBool},
+			ThenExpr: &sql.IfExpr{
+				Condition: &sql.Literal{Value: false, Type: sql.LiteralBool},
+				ThenExpr:  &sql.Literal{Value: "inner_yes", Type: sql.LiteralString},
+				ElseExpr:  &sql.Literal{Value: "inner_no", Type: sql.LiteralString},
+			},
+			ElseExpr: &sql.Literal{Value: "outer_no", Type: sql.LiteralString},
+		}
+		result, err := e.evaluateIfExpr(outerIf, nil)
+		if err != nil {
+			t.Errorf("evaluateIfExpr returned error: %v", err)
+		}
+		if result != "inner_no" {
+			t.Errorf("nested if = %v, want 'inner_no'", result)
+		}
+	})
+}
+
+// TestCompareValuesWithCollationMore tests compareValuesWithCollation
+func TestCompareValuesWithCollationMore(t *testing.T) {
+	e := NewExecutor(nil)
+
+	t.Run("NOCASE collation", func(t *testing.T) {
+		result, err := e.compareValuesWithCollation("HELLO", sql.OpEq, "hello", "NOCASE")
+		if err != nil {
+			t.Errorf("compareValuesWithCollation returned error: %v", err)
+		}
+		if !result {
+			t.Errorf("'HELLO' = 'hello' with NOCASE should be true")
+		}
+	})
+
+	t.Run("RTRIM collation", func(t *testing.T) {
+		result, err := e.compareValuesWithCollation("hello  ", sql.OpEq, "hello", "RTRIM")
+		if err != nil {
+			t.Errorf("compareValuesWithCollation returned error: %v", err)
+		}
+		if !result {
+			t.Errorf("'hello  ' = 'hello' with RTRIM should be true")
+		}
+	})
+
+	t.Run("BINARY collation (default)", func(t *testing.T) {
+		result, err := e.compareValuesWithCollation("Hello", sql.OpEq, "hello", "BINARY")
+		if err != nil {
+			t.Errorf("compareValuesWithCollation returned error: %v", err)
+		}
+		if result {
+			t.Errorf("'Hello' = 'hello' with BINARY should be false")
+		}
+	})
+
+	t.Run("LIKE with NOCASE", func(t *testing.T) {
+		result, err := e.compareValuesWithCollation("HELLO WORLD", sql.OpLike, "hello%", "NOCASE")
+		if err != nil {
+			t.Errorf("compareValuesWithCollation returned error: %v", err)
+		}
+		if !result {
+			t.Errorf("'HELLO WORLD' LIKE 'hello%%' with NOCASE should be true")
+		}
+	})
+}
+
+
+// TestEvaluateExpressionWithParamsMore tests evaluateExpressionWithParams with more cases
+func TestEvaluateExpressionWithParamsMore(t *testing.T) {
+	e := NewExecutor(nil)
+
+	t.Run("unary expression", func(t *testing.T) {
+		expr := &sql.UnaryExpr{
+			Op:    sql.OpNeg,
+			Right: &sql.Literal{Value: int64(5), Type: sql.LiteralNumber},
+		}
+		result, err := e.evaluateExpressionWithParams(expr, nil)
+		if err != nil {
+			t.Errorf("evaluateExpressionWithParams returned error: %v", err)
+		}
+		if result != int64(-5) {
+			t.Errorf("unary minus 5 = %v, want -5", result)
+		}
+	})
+
+	t.Run("binary expression with params", func(t *testing.T) {
+		expr := &sql.BinaryExpr{
+			Left:  &sql.ColumnRef{Name: "x"},
+			Op:    sql.OpAdd,
+			Right: &sql.Literal{Value: int64(10), Type: sql.LiteralNumber},
+		}
+		params := map[string]interface{}{"x": int64(5)}
+		result, err := e.evaluateExpressionWithParams(expr, params)
+		if err != nil {
+			t.Errorf("evaluateExpressionWithParams returned error: %v", err)
+		}
+		// Result may be float64 from binary operations
+		if result != int64(15) && result != float64(15) {
+			t.Errorf("x + 10 with x=5 = %v (type %T), want 15", result, result)
+		}
+	})
+
+	t.Run("nested function call", func(t *testing.T) {
+		innerCall := &sql.FunctionCall{
+			Name: "UPPER",
+			Args: []sql.Expression{&sql.Literal{Value: "hello", Type: sql.LiteralString}},
+		}
+		outerCall := &sql.FunctionCall{
+			Name: "LOWER",
+			Args: []sql.Expression{innerCall},
+		}
+		result, err := e.evaluateExpressionWithParams(outerCall, nil)
+		if err != nil {
+			t.Errorf("evaluateExpressionWithParams returned error: %v", err)
+		}
+		if result != "hello" {
+			t.Errorf("LOWER(UPPER('hello')) = %v, want 'hello'", result)
+		}
+	})
+}
