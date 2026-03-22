@@ -647,3 +647,71 @@ func TestJsonEqual(t *testing.T) {
 		}
 	}
 }
+
+// TestCompareEqual tests the compareEqual function
+func TestCompareEqual(t *testing.T) {
+	tests := []struct {
+		a, b     interface{}
+		expected bool
+	}{
+		{nil, nil, true},
+		{nil, 1, false},
+		{1, nil, false},
+		{1, 1, true},
+		{1, 2, false},
+		{"hello", "hello", true},
+		{int64(42), int64(42), true},
+		{float64(3.14), float64(3.14), true},
+	}
+
+	for _, tt := range tests {
+		result := compareEqual(tt.a, tt.b)
+		if result != tt.expected {
+			t.Errorf("compareEqual(%v, %v) = %v, want %v", tt.a, tt.b, result, tt.expected)
+		}
+	}
+}
+
+// TestCollationCompare tests the collationCompare function
+func TestCollationCompare(t *testing.T) {
+	tests := []struct {
+		a, b      string
+		collation string
+		expected  int
+	}{
+		{"abc", "abc", "BINARY", 0},
+		{"abc", "abd", "BINARY", -1},
+		{"abd", "abc", "BINARY", 1},
+		{"abc", "ABC", "NOCASE", 0},
+		{"abc  ", "abc", "RTRIM", 0},
+	}
+
+	for _, tt := range tests {
+		result := collationCompare(tt.a, tt.b, tt.collation)
+		if result != tt.expected {
+			t.Errorf("collationCompare(%q, %q, %q) = %d, want %d", tt.a, tt.b, tt.collation, result, tt.expected)
+		}
+	}
+}
+
+// TestBytesEqual tests the bytesEqual function
+func TestBytesEqual(t *testing.T) {
+	tests := []struct {
+		a, b     []byte
+		expected bool
+	}{
+		{[]byte("abc"), []byte("abc"), true},
+		{[]byte("abc"), []byte("abd"), false},
+		{[]byte{}, []byte{}, true},
+		{nil, nil, true},
+		{[]byte("a"), nil, false},
+		{nil, []byte("a"), false},
+	}
+
+	for _, tt := range tests {
+		result := (*Executor)(nil).bytesEqual(tt.a, tt.b)
+		if result != tt.expected {
+			t.Errorf("bytesEqual(%v, %v) = %v, want %v", tt.a, tt.b, result, tt.expected)
+		}
+	}
+}
