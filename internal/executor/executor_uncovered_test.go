@@ -11775,3 +11775,157 @@ func TestHasAggregateFunctions(t *testing.T) {
 	})
 }
 
+// TestEvaluateFunctionMore tests more cases of evaluateFunction
+func TestEvaluateFunctionMore(t *testing.T) {
+	exec := &Executor{}
+
+	// Create test columns and row
+	colInfo := &types.ColumnInfo{Name: "data", Type: types.TypeVarchar}
+	columnMap := map[string]*types.ColumnInfo{"data": colInfo}
+	columnOrder := []*types.ColumnInfo{colInfo}
+	testRow := &row.Row{
+		ID:     1,
+		Values: []types.Value{types.NewStringValue("test", types.TypeVarchar)},
+	}
+
+	t.Run("HEX with string", func(t *testing.T) {
+		fc := &sql.FunctionCall{
+			Name: "HEX",
+			Args: []sql.Expression{&sql.Literal{Value: "hello"}},
+		}
+		result, err := exec.evaluateFunction(fc, testRow, columnMap, columnOrder)
+		if err != nil {
+			t.Errorf("unexpected error: %v", err)
+		}
+		if result != "68656c6c6f" {
+			t.Errorf("expected '68656c6c6f', got %v", result)
+		}
+	})
+
+	t.Run("HEX with int", func(t *testing.T) {
+		fc := &sql.FunctionCall{
+			Name: "HEX",
+			Args: []sql.Expression{&sql.Literal{Value: int64(255)}},
+		}
+		result, err := exec.evaluateFunction(fc, testRow, columnMap, columnOrder)
+		if err != nil {
+			t.Errorf("unexpected error: %v", err)
+		}
+		if result != "ff" {
+			t.Errorf("expected 'ff', got %v", result)
+		}
+	})
+
+	t.Run("HEX with bytes", func(t *testing.T) {
+		fc := &sql.FunctionCall{
+			Name: "HEX",
+			Args: []sql.Expression{&sql.Literal{Value: []byte{0xAB, 0xCD}}},
+		}
+		result, err := exec.evaluateFunction(fc, testRow, columnMap, columnOrder)
+		if err != nil {
+			t.Errorf("unexpected error: %v", err)
+		}
+		if result != "abcd" {
+			t.Errorf("expected 'abcd', got %v", result)
+		}
+	})
+
+	t.Run("HEX no args", func(t *testing.T) {
+		fc := &sql.FunctionCall{Name: "HEX", Args: []sql.Expression{}}
+		_, err := exec.evaluateFunction(fc, testRow, columnMap, columnOrder)
+		if err == nil {
+			t.Error("expected error for HEX with no args")
+		}
+	})
+
+	t.Run("HEX with nil", func(t *testing.T) {
+		fc := &sql.FunctionCall{
+			Name: "HEX",
+			Args: []sql.Expression{&sql.Literal{Value: nil}},
+		}
+		result, err := exec.evaluateFunction(fc, testRow, columnMap, columnOrder)
+		if err != nil {
+			t.Errorf("unexpected error: %v", err)
+		}
+		if result != nil {
+			t.Errorf("expected nil, got %v", result)
+		}
+	})
+
+	t.Run("UNHEX with string", func(t *testing.T) {
+		fc := &sql.FunctionCall{
+			Name: "UNHEX",
+			Args: []sql.Expression{&sql.Literal{Value: "48656c6c6f"}},
+		}
+		result, err := exec.evaluateFunction(fc, testRow, columnMap, columnOrder)
+		if err != nil {
+			t.Errorf("unexpected error: %v", err)
+		}
+		bytes, ok := result.([]byte)
+		if !ok {
+			t.Errorf("expected []byte, got %T", result)
+		}
+		if string(bytes) != "Hello" {
+			t.Errorf("expected 'Hello', got %s", bytes)
+		}
+	})
+
+	t.Run("UNHEX no args", func(t *testing.T) {
+		fc := &sql.FunctionCall{Name: "UNHEX", Args: []sql.Expression{}}
+		_, err := exec.evaluateFunction(fc, testRow, columnMap, columnOrder)
+		if err == nil {
+			t.Error("expected error for UNHEX with no args")
+		}
+	})
+
+	t.Run("UNHEX with nil", func(t *testing.T) {
+		fc := &sql.FunctionCall{
+			Name: "UNHEX",
+			Args: []sql.Expression{&sql.Literal{Value: nil}},
+		}
+		result, err := exec.evaluateFunction(fc, testRow, columnMap, columnOrder)
+		if err != nil {
+			t.Errorf("unexpected error: %v", err)
+		}
+		if result != nil {
+			t.Errorf("expected nil, got %v", result)
+		}
+	})
+
+	t.Run("LENGTH with string", func(t *testing.T) {
+		fc := &sql.FunctionCall{
+			Name: "LENGTH",
+			Args: []sql.Expression{&sql.Literal{Value: "hello"}},
+		}
+		result, err := exec.evaluateFunction(fc, testRow, columnMap, columnOrder)
+		if err != nil {
+			t.Errorf("unexpected error: %v", err)
+		}
+		if result != int64(5) {
+			t.Errorf("expected 5, got %v", result)
+		}
+	})
+
+	t.Run("OCTET_LENGTH with string", func(t *testing.T) {
+		fc := &sql.FunctionCall{
+			Name: "OCTET_LENGTH",
+			Args: []sql.Expression{&sql.Literal{Value: "test"}},
+		}
+		result, err := exec.evaluateFunction(fc, testRow, columnMap, columnOrder)
+		if err != nil {
+			t.Errorf("unexpected error: %v", err)
+		}
+		if result != int64(4) {
+			t.Errorf("expected 4, got %v", result)
+		}
+	})
+
+	t.Run("LENGTH no args", func(t *testing.T) {
+		fc := &sql.FunctionCall{Name: "LENGTH", Args: []sql.Expression{}}
+		_, err := exec.evaluateFunction(fc, testRow, columnMap, columnOrder)
+		if err == nil {
+			t.Error("expected error for LENGTH with no args")
+		}
+	})
+}
+
