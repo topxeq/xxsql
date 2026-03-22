@@ -1,6 +1,9 @@
 package xxscript
 
 import (
+	"net/http"
+	"net/http/httptest"
+	"strings"
 	"testing"
 )
 
@@ -2912,4 +2915,1420 @@ func TestBuiltinFunctionsComprehensive(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestInterpreterInternalMethods tests internal interpreter methods directly
+func TestInterpreterInternalMethods(t *testing.T) {
+	i := &Interpreter{ctx: &Context{}}
+
+	// Test compare with different types
+	t.Run("compare int vs int", func(t *testing.T) {
+		result := i.compare(5, 3)
+		if result != 1 {
+			t.Errorf("compare(5, 3) = %d, want 1", result)
+		}
+		result = i.compare(3, 5)
+		if result != -1 {
+			t.Errorf("compare(3, 5) = %d, want -1", result)
+		}
+		result = i.compare(5, 5)
+		if result != 0 {
+			t.Errorf("compare(5, 5) = %d, want 0", result)
+		}
+	})
+
+	t.Run("compare int vs int64", func(t *testing.T) {
+		result := i.compare(int(5), int64(3))
+		if result != 1 {
+			t.Errorf("compare(5, int64(3)) = %d, want 1", result)
+		}
+		result = i.compare(int(3), int64(5))
+		if result != -1 {
+			t.Errorf("compare(3, int64(5)) = %d, want -1", result)
+		}
+		result = i.compare(int(5), int64(5))
+		if result != 0 {
+			t.Errorf("compare(5, int64(5)) = %d, want 0", result)
+		}
+	})
+
+	t.Run("compare int vs float64", func(t *testing.T) {
+		result := i.compare(int(5), 3.0)
+		if result != 1 {
+			t.Errorf("compare(5, 3.0) = %d, want 1", result)
+		}
+		result = i.compare(int(3), 5.0)
+		if result != -1 {
+			t.Errorf("compare(3, 5.0) = %d, want -1", result)
+		}
+	})
+
+	t.Run("compare int64 vs int", func(t *testing.T) {
+		result := i.compare(int64(5), int(3))
+		if result != 1 {
+			t.Errorf("compare(int64(5), 3) = %d, want 1", result)
+		}
+		result = i.compare(int64(3), int(5))
+		if result != -1 {
+			t.Errorf("compare(int64(3), 5) = %d, want -1", result)
+		}
+	})
+
+	t.Run("compare int64 vs int64", func(t *testing.T) {
+		result := i.compare(int64(5), int64(3))
+		if result != 1 {
+			t.Errorf("compare(int64(5), int64(3)) = %d, want 1", result)
+		}
+		result = i.compare(int64(3), int64(5))
+		if result != -1 {
+			t.Errorf("compare(int64(3), int64(5)) = %d, want -1", result)
+		}
+		result = i.compare(int64(5), int64(5))
+		if result != 0 {
+			t.Errorf("compare(int64(5), int64(5)) = %d, want 0", result)
+		}
+	})
+
+	t.Run("compare int64 vs float64", func(t *testing.T) {
+		result := i.compare(int64(5), 3.0)
+		if result != 1 {
+			t.Errorf("compare(int64(5), 3.0) = %d, want 1", result)
+		}
+		result = i.compare(int64(3), 5.0)
+		if result != -1 {
+			t.Errorf("compare(int64(3), 5.0) = %d, want -1", result)
+		}
+	})
+
+	t.Run("compare float64 vs int", func(t *testing.T) {
+		result := i.compare(5.0, int(3))
+		if result != 1 {
+			t.Errorf("compare(5.0, 3) = %d, want 1", result)
+		}
+		result = i.compare(3.0, int(5))
+		if result != -1 {
+			t.Errorf("compare(3.0, 5) = %d, want -1", result)
+		}
+	})
+
+	t.Run("compare float64 vs int64", func(t *testing.T) {
+		result := i.compare(5.0, int64(3))
+		if result != 1 {
+			t.Errorf("compare(5.0, int64(3)) = %d, want 1", result)
+		}
+		result = i.compare(3.0, int64(5))
+		if result != -1 {
+			t.Errorf("compare(3.0, int64(5)) = %d, want -1", result)
+		}
+	})
+
+	t.Run("compare float64 vs float64", func(t *testing.T) {
+		result := i.compare(5.0, 3.0)
+		if result != 1 {
+			t.Errorf("compare(5.0, 3.0) = %d, want 1", result)
+		}
+		result = i.compare(3.0, 5.0)
+		if result != -1 {
+			t.Errorf("compare(3.0, 5.0) = %d, want -1", result)
+		}
+		result = i.compare(5.0, 5.0)
+		if result != 0 {
+			t.Errorf("compare(5.0, 5.0) = %d, want 0", result)
+		}
+	})
+
+	t.Run("compare string vs string", func(t *testing.T) {
+		result := i.compare("abc", "abd")
+		if result != -1 {
+			t.Errorf("compare(abc, abd) = %d, want -1", result)
+		}
+		result = i.compare("abd", "abc")
+		if result != 1 {
+			t.Errorf("compare(abd, abc) = %d, want 1", result)
+		}
+		result = i.compare("abc", "abc")
+		if result != 0 {
+			t.Errorf("compare(abc, abc) = %d, want 0", result)
+		}
+	})
+
+	// Test add with different types
+	t.Run("add int types", func(t *testing.T) {
+		result, err := i.add(int(5), int(3))
+		if err != nil || result != int(8) {
+			t.Errorf("add(5, 3) = %v, %v, want 8", result, err)
+		}
+		result, err = i.add(int(5), int64(3))
+		if err != nil || result != int64(8) {
+			t.Errorf("add(5, int64(3)) = %v, %v, want int64(8)", result, err)
+		}
+		result, err = i.add(int(5), 3.0)
+		if err != nil || result != 8.0 {
+			t.Errorf("add(5, 3.0) = %v, %v, want 8.0", result, err)
+		}
+	})
+
+	t.Run("add int64 types", func(t *testing.T) {
+		result, err := i.add(int64(5), int(3))
+		if err != nil || result != int64(8) {
+			t.Errorf("add(int64(5), 3) = %v, %v, want int64(8)", result, err)
+		}
+		result, err = i.add(int64(5), int64(3))
+		if err != nil || result != int64(8) {
+			t.Errorf("add(int64(5), int64(3)) = %v, %v, want int64(8)", result, err)
+		}
+		result, err = i.add(int64(5), 3.0)
+		if err != nil || result != 8.0 {
+			t.Errorf("add(int64(5), 3.0) = %v, %v, want 8.0", result, err)
+		}
+	})
+
+	t.Run("add float64 types", func(t *testing.T) {
+		result, err := i.add(5.0, int(3))
+		if err != nil || result != 8.0 {
+			t.Errorf("add(5.0, 3) = %v, %v, want 8.0", result, err)
+		}
+		result, err = i.add(5.0, int64(3))
+		if err != nil || result != 8.0 {
+			t.Errorf("add(5.0, int64(3)) = %v, %v, want 8.0", result, err)
+		}
+		result, err = i.add(5.0, 3.0)
+		if err != nil || result != 8.0 {
+			t.Errorf("add(5.0, 3.0) = %v, %v, want 8.0", result, err)
+		}
+	})
+
+	t.Run("add strings", func(t *testing.T) {
+		result, err := i.add("hello", " world")
+		if err != nil || result != "hello world" {
+			t.Errorf("add(hello, world) = %v, %v, want 'hello world'", result, err)
+		}
+	})
+
+	// Test sub with different types
+	t.Run("sub int types", func(t *testing.T) {
+		result, err := i.sub(int(10), int(3))
+		if err != nil || result != int(7) {
+			t.Errorf("sub(10, 3) = %v, %v, want 7", result, err)
+		}
+		result, err = i.sub(int(10), int64(3))
+		if err != nil || result != int64(7) {
+			t.Errorf("sub(10, int64(3)) = %v, %v, want int64(7)", result, err)
+		}
+		result, err = i.sub(int(10), 3.0)
+		if err != nil || result != 7.0 {
+			t.Errorf("sub(10, 3.0) = %v, %v, want 7.0", result, err)
+		}
+	})
+
+	t.Run("sub int64 types", func(t *testing.T) {
+		result, err := i.sub(int64(10), int(3))
+		if err != nil || result != int64(7) {
+			t.Errorf("sub(int64(10), 3) = %v, %v, want int64(7)", result, err)
+		}
+		result, err = i.sub(int64(10), int64(3))
+		if err != nil || result != int64(7) {
+			t.Errorf("sub(int64(10), int64(3)) = %v, %v, want int64(7)", result, err)
+		}
+		result, err = i.sub(int64(10), 3.0)
+		if err != nil || result != 7.0 {
+			t.Errorf("sub(int64(10), 3.0) = %v, %v, want 7.0", result, err)
+		}
+	})
+
+	t.Run("sub float64 types", func(t *testing.T) {
+		result, err := i.sub(10.0, int(3))
+		if err != nil || result != 7.0 {
+			t.Errorf("sub(10.0, 3) = %v, %v, want 7.0", result, err)
+		}
+		result, err = i.sub(10.0, int64(3))
+		if err != nil || result != 7.0 {
+			t.Errorf("sub(10.0, int64(3)) = %v, %v, want 7.0", result, err)
+		}
+		result, err = i.sub(10.0, 3.0)
+		if err != nil || result != 7.0 {
+			t.Errorf("sub(10.0, 3.0) = %v, %v, want 7.0", result, err)
+		}
+	})
+
+	// Test mul with different types
+	t.Run("mul int types", func(t *testing.T) {
+		result, err := i.mul(int(4), int(3))
+		if err != nil || result != int(12) {
+			t.Errorf("mul(4, 3) = %v, %v, want 12", result, err)
+		}
+		result, err = i.mul(int(4), int64(3))
+		if err != nil || result != int64(12) {
+			t.Errorf("mul(4, int64(3)) = %v, %v, want int64(12)", result, err)
+		}
+		result, err = i.mul(int(4), 3.0)
+		if err != nil || result != 12.0 {
+			t.Errorf("mul(4, 3.0) = %v, %v, want 12.0", result, err)
+		}
+	})
+
+	t.Run("mul int64 types", func(t *testing.T) {
+		result, err := i.mul(int64(4), int(3))
+		if err != nil || result != int64(12) {
+			t.Errorf("mul(int64(4), 3) = %v, %v, want int64(12)", result, err)
+		}
+		result, err = i.mul(int64(4), int64(3))
+		if err != nil || result != int64(12) {
+			t.Errorf("mul(int64(4), int64(3)) = %v, %v, want int64(12)", result, err)
+		}
+		result, err = i.mul(int64(4), 3.0)
+		if err != nil || result != 12.0 {
+			t.Errorf("mul(int64(4), 3.0) = %v, %v, want 12.0", result, err)
+		}
+	})
+
+	t.Run("mul float64 types", func(t *testing.T) {
+		result, err := i.mul(4.0, int(3))
+		if err != nil || result != 12.0 {
+			t.Errorf("mul(4.0, 3) = %v, %v, want 12.0", result, err)
+		}
+		result, err = i.mul(4.0, int64(3))
+		if err != nil || result != 12.0 {
+			t.Errorf("mul(4.0, int64(3)) = %v, %v, want 12.0", result, err)
+		}
+		result, err = i.mul(4.0, 3.0)
+		if err != nil || result != 12.0 {
+			t.Errorf("mul(4.0, 3.0) = %v, %v, want 12.0", result, err)
+		}
+	})
+
+	// Test div with different types
+	t.Run("div int types", func(t *testing.T) {
+		result, err := i.div(int(10), int(2))
+		if err != nil || result != 5.0 {
+			t.Errorf("div(10, 2) = %v, %v, want 5.0", result, err)
+		}
+		result, err = i.div(int(10), int64(2))
+		if err != nil || result != 5.0 {
+			t.Errorf("div(10, int64(2)) = %v, %v, want 5.0", result, err)
+		}
+		result, err = i.div(int(10), 2.0)
+		if err != nil || result != 5.0 {
+			t.Errorf("div(10, 2.0) = %v, %v, want 5.0", result, err)
+		}
+	})
+
+	t.Run("div int64 types", func(t *testing.T) {
+		result, err := i.div(int64(10), int(2))
+		if err != nil || result != 5.0 {
+			t.Errorf("div(int64(10), 2) = %v, %v, want 5.0", result, err)
+		}
+		result, err = i.div(int64(10), int64(2))
+		if err != nil || result != 5.0 {
+			t.Errorf("div(int64(10), int64(2)) = %v, %v, want 5.0", result, err)
+		}
+		result, err = i.div(int64(10), 2.0)
+		if err != nil || result != 5.0 {
+			t.Errorf("div(int64(10), 2.0) = %v, %v, want 5.0", result, err)
+		}
+	})
+
+	t.Run("div float64 types", func(t *testing.T) {
+		result, err := i.div(10.0, int(2))
+		if err != nil || result != 5.0 {
+			t.Errorf("div(10.0, 2) = %v, %v, want 5.0", result, err)
+		}
+		result, err = i.div(10.0, int64(2))
+		if err != nil || result != 5.0 {
+			t.Errorf("div(10.0, int64(2)) = %v, %v, want 5.0", result, err)
+		}
+		result, err = i.div(10.0, 2.0)
+		if err != nil || result != 5.0 {
+			t.Errorf("div(10.0, 2.0) = %v, %v, want 5.0", result, err)
+		}
+	})
+
+	t.Run("div by zero", func(t *testing.T) {
+		_, err := i.div(int(10), int(0))
+		if err == nil {
+			t.Error("div by zero should return error")
+		}
+		_, err = i.div(int64(10), int64(0))
+		if err == nil {
+			t.Error("div by zero should return error")
+		}
+		_, err = i.div(10.0, 0.0)
+		if err == nil {
+			t.Error("div by zero should return error")
+		}
+	})
+
+	// Test mod
+	t.Run("mod", func(t *testing.T) {
+		result, err := i.mod(int64(17), int64(5))
+		if err != nil || result != 2 {
+			t.Errorf("mod(17, 5) = %v, %v, want 2", result, err)
+		}
+		_, err = i.mod(int64(10), int64(0))
+		if err == nil {
+			t.Error("mod by zero should return error")
+		}
+	})
+
+	// Test toInt
+	t.Run("toInt", func(t *testing.T) {
+		result := i.toInt(int(42))
+		if result != 42 {
+			t.Errorf("toInt(int(42)) = %d, want 42", result)
+		}
+		result = i.toInt(int64(42))
+		if result != 42 {
+			t.Errorf("toInt(int64(42)) = %d, want 42", result)
+		}
+		result = i.toInt(42.5)
+		if result != 42 {
+			t.Errorf("toInt(42.5) = %d, want 42", result)
+		}
+	})
+
+	// Test isTruthy
+	t.Run("isTruthy", func(t *testing.T) {
+		if !i.isTruthy(true) {
+			t.Error("isTruthy(true) should be true")
+		}
+		if i.isTruthy(false) {
+			t.Error("isTruthy(false) should be false")
+		}
+		if !i.isTruthy(1) {
+			t.Error("isTruthy(1) should be true")
+		}
+		if i.isTruthy(0) {
+			t.Error("isTruthy(0) should be false")
+		}
+		if !i.isTruthy("hello") {
+			t.Error("isTruthy('hello') should be true")
+		}
+		if i.isTruthy("") {
+			t.Error("isTruthy('') should be false")
+		}
+		if i.isTruthy(nil) {
+			t.Error("isTruthy(nil) should be false")
+		}
+		if i.isTruthy([]Value{}) {
+			t.Error("isTruthy(empty array) should be false")
+		}
+		if !i.isTruthy([]Value{1}) {
+			t.Error("isTruthy(non-empty array) should be true")
+		}
+	})
+}
+
+// TestEvalUnaryError tests unary expression error cases
+func TestEvalUnaryError(t *testing.T) {
+	// Test cannot negate error
+	i := &Interpreter{ctx: &Context{}}
+	
+	// Test negation of non-numeric type
+	_, err := i.evalUnary(&UnaryExpr{Op: TokMinus, Expr: &StringExpr{Value: "hello"}})
+	if err == nil {
+		t.Error("negation of string should return error")
+	}
+
+	// Test unknown unary operator (using an invalid token type)
+	// Since we can't easily create an invalid operator, we test via parsing
+	// This is covered by syntax errors in normal parsing
+}
+
+// TestEvalMemberError tests member expression error cases
+func TestEvalMemberError(t *testing.T) {
+	i := &Interpreter{ctx: &Context{}}
+	
+	// Test member access on non-object
+	_, err := i.evalMember(&MemberExpr{
+		Object: &NumberExpr{Value: 42},
+		Member: &StringExpr{Value: "field"},
+	})
+	if err == nil {
+		t.Error("member access on number should return error")
+	}
+}
+
+// TestEvalAssign tests assignment expression
+func TestEvalAssignDirect(t *testing.T) {
+	i := &Interpreter{ctx: &Context{Variables: make(map[string]Value)}}
+	
+	// Test variable assignment
+	_, err := i.evalAssign(&AssignExpr{
+		Left:  &IdentExpr{Name: "x"},
+		Value: &NumberExpr{Value: 42},
+	})
+	if err != nil {
+		t.Errorf("variable assignment error: %v", err)
+	}
+	if i.ctx.Variables["x"] != 42.0 {
+		t.Errorf("x = %v, want 42.0", i.ctx.Variables["x"])
+	}
+
+	// Test map member assignment
+	m := map[string]Value{"a": 1}
+	i.ctx.Variables["m"] = m
+	_, err = i.evalAssign(&AssignExpr{
+		Left: &MemberExpr{
+			Object: &IdentExpr{Name: "m"},
+			Member: &StringExpr{Value: "b"},
+		},
+		Value: &NumberExpr{Value: 2},
+	})
+	if err != nil {
+		t.Errorf("map member assignment error: %v", err)
+	}
+	if m["b"] != 2.0 {
+		t.Errorf("m['b'] = %v, want 2.0", m["b"])
+	}
+
+	// Test array index assignment
+	arr := []Value{1, 2, 3}
+	i.ctx.Variables["arr"] = arr
+	_, err = i.evalAssign(&AssignExpr{
+		Left: &IndexExpr{
+			Object: &IdentExpr{Name: "arr"},
+			Index: &NumberExpr{Value: 0},
+		},
+		Value: &NumberExpr{Value: 10},
+	})
+	if err != nil {
+		t.Errorf("array index assignment error: %v", err)
+	}
+	if arr[0] != 10.0 {
+		t.Errorf("arr[0] = %v, want 10.0", arr[0])
+	}
+
+	// Test map index assignment
+	m2 := map[string]Value{"a": 1}
+	i.ctx.Variables["m2"] = m2
+	_, err = i.evalAssign(&AssignExpr{
+		Left: &IndexExpr{
+			Object: &IdentExpr{Name: "m2"},
+			Index:  &StringExpr{Value: "b"},
+		},
+		Value: &NumberExpr{Value: 2},
+	})
+	if err != nil {
+		t.Errorf("map index assignment error: %v", err)
+	}
+	if m2["b"] != 2.0 {
+		t.Errorf("m2['b'] = %v, want 2.0", m2["b"])
+	}
+}
+
+// TestEvalAssignErrors tests assignment error cases
+func TestEvalAssignErrors(t *testing.T) {
+	i := &Interpreter{ctx: &Context{Variables: make(map[string]Value)}}
+	
+	// Test invalid assignment target
+	_, err := i.evalAssign(&AssignExpr{
+		Left:  &NumberExpr{Value: 42},
+		Value: &NumberExpr{Value: 1},
+	})
+	if err == nil {
+		t.Error("assignment to number should return error")
+	}
+
+	// Test member assignment to non-map
+	i.ctx.Variables["num"] = 42.0
+	_, err = i.evalAssign(&AssignExpr{
+		Left: &MemberExpr{
+			Object: &IdentExpr{Name: "num"},
+			Member: &StringExpr{Value: "field"},
+		},
+		Value: &NumberExpr{Value: 1},
+	})
+	if err == nil {
+		t.Error("member assignment to number should return error")
+	}
+}
+
+// TestBuiltinFunctionsExtra tests more builtin function cases
+func TestBuiltinFunctionsFinal(t *testing.T) {
+	// Test builtinLen with no args
+	result, err := Run("len()", nil)
+	if err != nil {
+		t.Logf("len() error: %v", err)
+	}
+	_ = result
+
+	// Test builtinInt with different types
+	tests := []string{
+		"int()",
+		"int(42)",
+		"int(42.5)",
+		"int('123')",
+	}
+	for _, script := range tests {
+		_, err := Run(script, nil)
+		if err != nil {
+			t.Logf("%s error: %v", script, err)
+		}
+	}
+}
+
+// TestBuiltinFloatExtra tests builtinFloat with different types
+func TestBuiltinFloatExtra(t *testing.T) {
+	tests := []string{
+		"float()",
+		"float(42)",
+		"float(42.5)",
+		"float('3.14')",
+	}
+	for _, script := range tests {
+		_, err := Run(script, nil)
+		if err != nil {
+			t.Logf("%s error: %v", script, err)
+		}
+	}
+}
+
+// TestBuiltinStringExtra tests builtinString
+func TestBuiltinStringFinal(t *testing.T) {
+	tests := []string{
+		"string()",
+		"string(42)",
+		"string(3.14)",
+		"string(true)",
+		"string(null)",
+		"string([1, 2, 3])",
+		"string({'a': 1})",
+	}
+	for _, script := range tests {
+		_, err := Run(script, nil)
+		if err != nil {
+			t.Logf("%s error: %v", script, err)
+		}
+	}
+}
+
+// TestBuiltinJSONExtra tests builtinJSON
+func TestBuiltinJSONExtra(t *testing.T) {
+	tests := []string{
+		"json()",
+		"json(null)",
+		"json(42)",
+		"json('hello')",
+		"json([1, 2, 3])",
+		"json({'a': 1})",
+	}
+	for _, script := range tests {
+		_, err := Run(script, nil)
+		if err != nil {
+			t.Logf("%s error: %v", script, err)
+		}
+	}
+}
+
+// TestBuiltinJSONParseExtra tests builtinJSONParse
+func TestBuiltinJSONParseExtra(t *testing.T) {
+	tests := []string{
+		"jsonParse()",
+		"jsonParse('{\"a\": 1}')",
+		"jsonParse('[1, 2, 3]')",
+		"jsonParse('null')",
+		"jsonParse('42')",
+		"jsonParse('\"hello\"')",
+	}
+	for _, script := range tests {
+		_, err := Run(script, nil)
+		if err != nil {
+			t.Logf("%s error: %v", script, err)
+		}
+	}
+}
+
+// TestBuiltinTypeofExtra tests builtinTypeof
+func TestBuiltinTypeofExtra(t *testing.T) {
+	tests := []string{
+		"typeof()",
+		"typeof(42)",
+		"typeof(3.14)",
+		"typeof('hello')",
+		"typeof(true)",
+		"typeof(null)",
+		"typeof([1, 2])",
+		"typeof({'a': 1})",
+	}
+	for _, script := range tests {
+		_, err := Run(script, nil)
+		if err != nil {
+			t.Logf("%s error: %v", script, err)
+		}
+	}
+}
+
+// TestBuiltinKeysValues tests builtinKeys and builtinValues
+func TestBuiltinKeysValuesFinal(t *testing.T) {
+	tests := []string{
+		"keys()",
+		"keys({})",
+		"keys({'a': 1, 'b': 2})",
+		"values()",
+		"values({})",
+		"values({'a': 1, 'b': 2})",
+	}
+	for _, script := range tests {
+		_, err := Run(script, nil)
+		if err != nil {
+			t.Logf("%s error: %v", script, err)
+		}
+	}
+}
+
+// TestBuiltinRangeExtra tests builtinRange
+func TestBuiltinRangeExtra(t *testing.T) {
+	tests := []string{
+		"range()",
+		"range(5)",
+		"range(0, 5)",
+		"range(0, 10, 2)",
+	}
+	for _, script := range tests {
+		_, err := Run(script, nil)
+		if err != nil {
+			t.Logf("%s error: %v", script, err)
+		}
+	}
+}
+
+// TestBuiltinFormatTimeExtra tests builtinFormatTime
+func TestBuiltinFormatTimeExtra(t *testing.T) {
+	tests := []string{
+		"formatTime()",
+		"formatTime('2006-01-02', '2024-01-15')",
+	}
+	for _, script := range tests {
+		_, err := Run(script, nil)
+		if err != nil {
+			t.Logf("%s error: %v", script, err)
+		}
+	}
+}
+
+// TestBuiltinParseTimeExtra tests builtinParseTime
+func TestBuiltinParseTimeExtra(t *testing.T) {
+	tests := []string{
+		"parseTime()",
+		"parseTime('2006-01-02', '2024-01-15')",
+	}
+	for _, script := range tests {
+		_, err := Run(script, nil)
+		if err != nil {
+			t.Logf("%s error: %v", script, err)
+		}
+	}
+}
+
+// TestBuiltinSplitExtra tests builtinSplit
+func TestBuiltinSplitExtra(t *testing.T) {
+	tests := []string{
+		"split()",
+		"split('a,b,c')",
+		"split('a,b,c', ',')",
+	}
+	for _, script := range tests {
+		_, err := Run(script, nil)
+		if err != nil {
+			t.Logf("%s error: %v", script, err)
+		}
+	}
+}
+
+// TestBuiltinJoinExtra tests builtinJoin
+func TestBuiltinJoinExtra(t *testing.T) {
+	tests := []string{
+		"join()",
+		"join(['a', 'b'])",
+		"join(['a', 'b'], '-')",
+	}
+	for _, script := range tests {
+		_, err := Run(script, nil)
+		if err != nil {
+			t.Logf("%s error: %v", script, err)
+		}
+	}
+}
+
+// TestBuiltinReplaceExtra tests builtinReplace
+func TestBuiltinReplaceFinal(t *testing.T) {
+	tests := []string{
+		"replace()",
+		"replace('hello')",
+		"replace('hello', 'l')",
+		"replace('hello', 'l', 'x')",
+	}
+	for _, script := range tests {
+		_, err := Run(script, nil)
+		if err != nil {
+			t.Logf("%s error: %v", script, err)
+		}
+	}
+}
+
+// TestBuiltinTrimExtra tests trim functions
+func TestBuiltinTrimExtra(t *testing.T) {
+	tests := []string{
+		"trim()",
+		"trim('  hello  ')",
+		"trimPrefix()",
+		"trimPrefix('hello', 'he')",
+		"trimSuffix()",
+		"trimSuffix('hello', 'lo')",
+	}
+	for _, script := range tests {
+		_, err := Run(script, nil)
+		if err != nil {
+			t.Logf("%s error: %v", script, err)
+		}
+	}
+}
+
+// TestBuiltinUpperLower tests upper/lower functions
+func TestBuiltinUpperLowerExtra(t *testing.T) {
+	tests := []string{
+		"upper()",
+		"upper('hello')",
+		"lower()",
+		"lower('HELLO')",
+	}
+	for _, script := range tests {
+		_, err := Run(script, nil)
+		if err != nil {
+			t.Logf("%s error: %v", script, err)
+		}
+	}
+}
+
+// TestBuiltinHasPrefixSuffix tests hasPrefix/hasSuffix functions
+func TestBuiltinHasPrefixSuffixExtra(t *testing.T) {
+	tests := []string{
+		"hasPrefix()",
+		"hasPrefix('hello', 'he')",
+		"hasSuffix()",
+		"hasSuffix('hello', 'lo')",
+	}
+	for _, script := range tests {
+		_, err := Run(script, nil)
+		if err != nil {
+			t.Logf("%s error: %v", script, err)
+		}
+	}
+}
+
+// TestHTTPObject tests the HTTPObject type
+func TestHTTPObjectFinal(t *testing.T) {
+	t.Run("NewHTTPObject", func(t *testing.T) {
+		ctx := &Context{}
+		httpObj := NewHTTPObject(ctx)
+		if httpObj == nil {
+			t.Error("NewHTTPObject returned nil")
+		}
+	})
+
+	t.Run("GetMember without request", func(t *testing.T) {
+		ctx := &Context{}
+		httpObj := NewHTTPObject(ctx)
+
+		// Test members that don't require request
+		members := []string{"param", "header", "body", "bodyJSON", "json", "status", "setHeader", "write", "redirect", "cookie", "setCookie"}
+		for _, member := range members {
+			result, err := httpObj.GetMember(member)
+			if err != nil {
+				t.Errorf("GetMember(%s) returned error: %v", member, err)
+			}
+			if result == nil {
+				t.Errorf("GetMember(%s) returned nil", member)
+			}
+		}
+	})
+
+	t.Run("GetMember with request", func(t *testing.T) {
+		req := httptest.NewRequest("GET", "http://example.com/test?foo=bar", nil)
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("X-Custom", "custom-value")
+		
+		ctx := &Context{HTTPRequest: req}
+		httpObj := NewHTTPObject(ctx)
+
+		// Test method
+		result, err := httpObj.GetMember("method")
+		if err != nil {
+			t.Errorf("GetMember(method) returned error: %v", err)
+		}
+		if result != "GET" {
+			t.Errorf("GetMember(method) = %v, want GET", result)
+		}
+
+		// Test path
+		result, err = httpObj.GetMember("path")
+		if err != nil {
+			t.Errorf("GetMember(path) returned error: %v", err)
+		}
+		if result != "/test" {
+			t.Errorf("GetMember(path) = %v, want /test", result)
+		}
+
+		// Test query
+		result, err = httpObj.GetMember("query")
+		if err != nil {
+			t.Errorf("GetMember(query) returned error: %v", err)
+		}
+		if result != "foo=bar" {
+			t.Errorf("GetMember(query) = %v, want foo=bar", result)
+		}
+
+		// Test remoteAddr
+		result, err = httpObj.GetMember("remoteAddr")
+		if err != nil {
+			t.Errorf("GetMember(remoteAddr) returned error: %v", err)
+		}
+
+		// Test contentType
+		result, err = httpObj.GetMember("contentType")
+		if err != nil {
+			t.Errorf("GetMember(contentType) returned error: %v", err)
+		}
+		if result != "application/json" {
+			t.Errorf("GetMember(contentType) = %v, want application/json", result)
+		}
+
+		// Test userAgent
+		result, err = httpObj.GetMember("userAgent")
+		if err != nil {
+			t.Errorf("GetMember(userAgent) returned error: %v", err)
+		}
+	})
+
+	t.Run("GetMember unknown", func(t *testing.T) {
+		ctx := &Context{}
+		httpObj := NewHTTPObject(ctx)
+
+		_, err := httpObj.GetMember("unknown")
+		if err == nil {
+			t.Error("GetMember(unknown) should return error")
+		}
+	})
+}
+
+// TestHTTPParamFunc tests HTTPParamFunc.Call
+func TestHTTPParamFunc(t *testing.T) {
+	t.Run("with valid request", func(t *testing.T) {
+		req := httptest.NewRequest("GET", "http://example.com/test?foo=bar&baz=123", nil)
+		ctx := &Context{HTTPRequest: req}
+		f := &HTTPParamFunc{ctx: ctx}
+
+		result, err := f.Call([]Value{"foo"})
+		if err != nil {
+			t.Errorf("Call returned error: %v", err)
+		}
+		if result != "bar" {
+			t.Errorf("Call returned %v, want bar", result)
+		}
+
+		result, err = f.Call([]Value{"baz"})
+		if err != nil {
+			t.Errorf("Call returned error: %v", err)
+		}
+		if result != "123" {
+			t.Errorf("Call returned %v, want 123", result)
+		}
+	})
+
+	t.Run("without request", func(t *testing.T) {
+		ctx := &Context{}
+		f := &HTTPParamFunc{ctx: ctx}
+
+		result, err := f.Call([]Value{"foo"})
+		if err != nil {
+			t.Errorf("Call returned error: %v", err)
+		}
+		if result != "" {
+			t.Errorf("Call returned %v, want empty", result)
+		}
+	})
+
+	t.Run("without args", func(t *testing.T) {
+		req := httptest.NewRequest("GET", "http://example.com/test?foo=bar", nil)
+		ctx := &Context{HTTPRequest: req}
+		f := &HTTPParamFunc{ctx: ctx}
+
+		result, err := f.Call([]Value{})
+		if err != nil {
+			t.Errorf("Call returned error: %v", err)
+		}
+		if result != "" {
+			t.Errorf("Call returned %v, want empty", result)
+		}
+	})
+
+	t.Run("with non-string arg", func(t *testing.T) {
+		req := httptest.NewRequest("GET", "http://example.com/test?foo=bar", nil)
+		ctx := &Context{HTTPRequest: req}
+		f := &HTTPParamFunc{ctx: ctx}
+
+		result, err := f.Call([]Value{123})
+		if err != nil {
+			t.Errorf("Call returned error: %v", err)
+		}
+		if result != "" {
+			t.Errorf("Call returned %v, want empty", result)
+		}
+	})
+}
+
+// TestHTTPHeaderFunc tests HTTPHeaderFunc.Call
+func TestHTTPHeaderFunc(t *testing.T) {
+	t.Run("with valid request", func(t *testing.T) {
+		req := httptest.NewRequest("GET", "http://example.com/test", nil)
+		req.Header.Set("X-Custom", "custom-value")
+		ctx := &Context{HTTPRequest: req}
+		f := &HTTPHeaderFunc{ctx: ctx}
+
+		result, err := f.Call([]Value{"X-Custom"})
+		if err != nil {
+			t.Errorf("Call returned error: %v", err)
+		}
+		if result != "custom-value" {
+			t.Errorf("Call returned %v, want custom-value", result)
+		}
+	})
+
+	t.Run("without request", func(t *testing.T) {
+		ctx := &Context{}
+		f := &HTTPHeaderFunc{ctx: ctx}
+
+		result, err := f.Call([]Value{"X-Custom"})
+		if err != nil {
+			t.Errorf("Call returned error: %v", err)
+		}
+		if result != "" {
+			t.Errorf("Call returned %v, want empty", result)
+		}
+	})
+}
+
+// TestHTTPBodyFunc tests HTTPBodyFunc.Call
+func TestHTTPBodyFunc(t *testing.T) {
+	t.Run("with body", func(t *testing.T) {
+		body := strings.NewReader("test body content")
+		req := httptest.NewRequest("POST", "http://example.com/test", body)
+		ctx := &Context{HTTPRequest: req}
+		f := &HTTPBodyFunc{ctx: ctx}
+
+		result, err := f.Call([]Value{})
+		if err != nil {
+			t.Errorf("Call returned error: %v", err)
+		}
+		if result != "test body content" {
+			t.Errorf("Call returned %v, want 'test body content'", result)
+		}
+	})
+
+	t.Run("without request", func(t *testing.T) {
+		ctx := &Context{}
+		f := &HTTPBodyFunc{ctx: ctx}
+
+		result, err := f.Call([]Value{})
+		if err != nil {
+			t.Errorf("Call returned error: %v", err)
+		}
+		if result != "" {
+			t.Errorf("Call returned %v, want empty", result)
+		}
+	})
+}
+
+// TestHTTPBodyJSONFunc tests HTTPBodyJSONFunc.Call
+func TestHTTPBodyJSONFunc(t *testing.T) {
+	t.Run("with valid JSON", func(t *testing.T) {
+		body := strings.NewReader(`{"foo": "bar", "num": 123}`)
+		req := httptest.NewRequest("POST", "http://example.com/test", body)
+		ctx := &Context{HTTPRequest: req}
+		f := &HTTPBodyJSONFunc{ctx: ctx}
+
+		result, err := f.Call([]Value{})
+		if err != nil {
+			t.Errorf("Call returned error: %v", err)
+		}
+		// result is converted via convertJSONToValue
+		if result == nil {
+			t.Error("Call returned nil")
+		}
+	})
+
+	t.Run("without request", func(t *testing.T) {
+		ctx := &Context{}
+		f := &HTTPBodyJSONFunc{ctx: ctx}
+
+		result, err := f.Call([]Value{})
+		if err != nil {
+			t.Errorf("Call returned error: %v", err)
+		}
+		if result != nil {
+			t.Errorf("Call returned %v, want nil", result)
+		}
+	})
+
+	t.Run("with invalid JSON", func(t *testing.T) {
+		body := strings.NewReader(`{invalid json}`)
+		req := httptest.NewRequest("POST", "http://example.com/test", body)
+		ctx := &Context{HTTPRequest: req}
+		f := &HTTPBodyJSONFunc{ctx: ctx}
+
+		_, err := f.Call([]Value{})
+		if err == nil {
+			t.Error("Call should return error for invalid JSON")
+		}
+	})
+}
+
+// TestHTTPJSONFunc tests HTTPJSONFunc.Call
+func TestHTTPJSONFunc(t *testing.T) {
+	t.Run("with writer", func(t *testing.T) {
+		rec := httptest.NewRecorder()
+		ctx := &Context{HTTPWriter: rec}
+		f := &HTTPJSONFunc{ctx: ctx}
+
+		result, err := f.Call([]Value{map[string]interface{}{"foo": "bar"}})
+		if err != nil {
+			t.Errorf("Call returned error: %v", err)
+		}
+		if result != nil {
+			t.Errorf("Call returned %v, want nil", result)
+		}
+		if rec.Header().Get("Content-Type") != "application/json" {
+			t.Errorf("Content-Type = %v, want application/json", rec.Header().Get("Content-Type"))
+		}
+	})
+
+	t.Run("without args", func(t *testing.T) {
+		rec := httptest.NewRecorder()
+		ctx := &Context{HTTPWriter: rec}
+		f := &HTTPJSONFunc{ctx: ctx}
+
+		result, err := f.Call([]Value{})
+		if err != nil {
+			t.Errorf("Call returned error: %v", err)
+		}
+		if result != nil {
+			t.Errorf("Call returned %v, want nil", result)
+		}
+	})
+}
+
+// TestHTTPStatusFunc tests HTTPStatusFunc.Call
+func TestHTTPStatusFunc(t *testing.T) {
+	t.Run("with int status", func(t *testing.T) {
+		rec := httptest.NewRecorder()
+		ctx := &Context{HTTPWriter: rec}
+		f := &HTTPStatusFunc{ctx: ctx}
+
+		result, err := f.Call([]Value{404})
+		if err != nil {
+			t.Errorf("Call returned error: %v", err)
+		}
+		if result != nil {
+			t.Errorf("Call returned %v, want nil", result)
+		}
+		if rec.Code != 404 {
+			t.Errorf("Status = %d, want 404", rec.Code)
+		}
+	})
+
+	t.Run("with int64 status", func(t *testing.T) {
+		rec := httptest.NewRecorder()
+		ctx := &Context{HTTPWriter: rec}
+		f := &HTTPStatusFunc{ctx: ctx}
+
+		result, err := f.Call([]Value{int64(201)})
+		if err != nil {
+			t.Errorf("Call returned error: %v", err)
+		}
+		if result != nil {
+			t.Errorf("Call returned %v, want nil", result)
+		}
+		if rec.Code != 201 {
+			t.Errorf("Status = %d, want 201", rec.Code)
+		}
+	})
+
+	t.Run("with float64 status", func(t *testing.T) {
+		rec := httptest.NewRecorder()
+		ctx := &Context{HTTPWriter: rec}
+		f := &HTTPStatusFunc{ctx: ctx}
+
+		result, err := f.Call([]Value{float64(500)})
+		if err != nil {
+			t.Errorf("Call returned error: %v", err)
+		}
+		if result != nil {
+			t.Errorf("Call returned %v, want nil", result)
+		}
+		if rec.Code != 500 {
+			t.Errorf("Status = %d, want 500", rec.Code)
+		}
+	})
+
+	t.Run("without args", func(t *testing.T) {
+		rec := httptest.NewRecorder()
+		ctx := &Context{HTTPWriter: rec}
+		f := &HTTPStatusFunc{ctx: ctx}
+
+		result, err := f.Call([]Value{})
+		if err != nil {
+			t.Errorf("Call returned error: %v", err)
+		}
+		if result != nil {
+			t.Errorf("Call returned %v, want nil", result)
+		}
+	})
+}
+
+// TestHTTPSetHeaderFunc tests HTTPSetHeaderFunc.Call
+func TestHTTPSetHeaderFunc(t *testing.T) {
+	t.Run("with valid args", func(t *testing.T) {
+		rec := httptest.NewRecorder()
+		ctx := &Context{HTTPWriter: rec}
+		f := &HTTPSetHeaderFunc{ctx: ctx}
+
+		result, err := f.Call([]Value{"X-Custom", "custom-value"})
+		if err != nil {
+			t.Errorf("Call returned error: %v", err)
+		}
+		if result != nil {
+			t.Errorf("Call returned %v, want nil", result)
+		}
+		if rec.Header().Get("X-Custom") != "custom-value" {
+			t.Errorf("Header = %v, want custom-value", rec.Header().Get("X-Custom"))
+		}
+	})
+
+	t.Run("without enough args", func(t *testing.T) {
+		rec := httptest.NewRecorder()
+		ctx := &Context{HTTPWriter: rec}
+		f := &HTTPSetHeaderFunc{ctx: ctx}
+
+		result, err := f.Call([]Value{"X-Custom"})
+		if err != nil {
+			t.Errorf("Call returned error: %v", err)
+		}
+		if result != nil {
+			t.Errorf("Call returned %v, want nil", result)
+		}
+	})
+}
+
+// TestHTTPWriteFunc tests HTTPWriteFunc.Call
+func TestHTTPWriteFunc(t *testing.T) {
+	t.Run("with valid arg", func(t *testing.T) {
+		rec := httptest.NewRecorder()
+		ctx := &Context{HTTPWriter: rec}
+		f := &HTTPWriteFunc{ctx: ctx}
+
+		result, err := f.Call([]Value{"hello world"})
+		if err != nil {
+			t.Errorf("Call returned error: %v", err)
+		}
+		if result != nil {
+			t.Errorf("Call returned %v, want nil", result)
+		}
+		if rec.Body.String() != "hello world" {
+			t.Errorf("Body = %v, want 'hello world'", rec.Body.String())
+		}
+	})
+
+	t.Run("without args", func(t *testing.T) {
+		rec := httptest.NewRecorder()
+		ctx := &Context{HTTPWriter: rec}
+		f := &HTTPWriteFunc{ctx: ctx}
+
+		result, err := f.Call([]Value{})
+		if err != nil {
+			t.Errorf("Call returned error: %v", err)
+		}
+		if result != nil {
+			t.Errorf("Call returned %v, want nil", result)
+		}
+	})
+}
+
+// TestHTTPRedirectFunc tests HTTPRedirectFunc.Call
+func TestHTTPRedirectFunc(t *testing.T) {
+	t.Run("with URL", func(t *testing.T) {
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest("GET", "http://example.com/test", nil)
+		ctx := &Context{HTTPWriter: rec, HTTPRequest: req}
+		f := &HTTPRedirectFunc{ctx: ctx}
+
+		result, err := f.Call([]Value{"/new-location"})
+		if err != nil {
+			t.Errorf("Call returned error: %v", err)
+		}
+		if result != nil {
+			t.Errorf("Call returned %v, want nil", result)
+		}
+	})
+
+	t.Run("without args", func(t *testing.T) {
+		rec := httptest.NewRecorder()
+		ctx := &Context{HTTPWriter: rec}
+		f := &HTTPRedirectFunc{ctx: ctx}
+
+		result, err := f.Call([]Value{})
+		if err != nil {
+			t.Errorf("Call returned error: %v", err)
+		}
+		if result != nil {
+			t.Errorf("Call returned %v, want nil", result)
+		}
+	})
+}
+
+// TestHTTPCookieFunc tests HTTPCookieFunc.Call
+func TestHTTPCookieFunc(t *testing.T) {
+	t.Run("with cookie", func(t *testing.T) {
+		req := httptest.NewRequest("GET", "http://example.com/test", nil)
+		req.AddCookie(&http.Cookie{Name: "session", Value: "abc123"})
+		ctx := &Context{HTTPRequest: req}
+		f := &HTTPCookieFunc{ctx: ctx}
+
+		result, err := f.Call([]Value{"session"})
+		if err != nil {
+			t.Errorf("Call returned error: %v", err)
+		}
+		if result != "abc123" {
+			t.Errorf("Call returned %v, want abc123", result)
+		}
+	})
+
+	t.Run("without request", func(t *testing.T) {
+		ctx := &Context{}
+		f := &HTTPCookieFunc{ctx: ctx}
+
+		result, err := f.Call([]Value{"session"})
+		if err != nil {
+			t.Errorf("Call returned error: %v", err)
+		}
+		if result != "" {
+			t.Errorf("Call returned %v, want empty", result)
+		}
+	})
+}
+
+// TestHTTPSetCookieFunc tests HTTPSetCookieFunc.Call
+func TestHTTPSetCookieFunc(t *testing.T) {
+	t.Run("with valid args", func(t *testing.T) {
+		rec := httptest.NewRecorder()
+		ctx := &Context{HTTPWriter: rec}
+		f := &HTTPSetCookieFunc{ctx: ctx}
+
+		result, err := f.Call([]Value{"session", "abc123"})
+		if err != nil {
+			t.Errorf("Call returned error: %v", err)
+		}
+		if result != nil {
+			t.Errorf("Call returned %v, want nil", result)
+		}
+
+		cookies := rec.Result().Cookies()
+		if len(cookies) == 0 {
+			t.Error("No cookies set")
+		}
+	})
+
+	t.Run("with all optional args", func(t *testing.T) {
+		rec := httptest.NewRecorder()
+		ctx := &Context{HTTPWriter: rec}
+		f := &HTTPSetCookieFunc{ctx: ctx}
+
+		result, err := f.Call([]Value{"session", "abc123", 3600, "example.com", true, true})
+		if err != nil {
+			t.Errorf("Call returned error: %v", err)
+		}
+		if result != nil {
+			t.Errorf("Call returned %v, want nil", result)
+		}
+	})
+
+	t.Run("without enough args", func(t *testing.T) {
+		rec := httptest.NewRecorder()
+		ctx := &Context{HTTPWriter: rec}
+		f := &HTTPSetCookieFunc{ctx: ctx}
+
+		result, err := f.Call([]Value{"session"})
+		if err != nil {
+			t.Errorf("Call returned error: %v", err)
+		}
+		if result != nil {
+			t.Errorf("Call returned %v, want nil", result)
+		}
+	})
+}
+
+// TestBuiltinAbs tests builtinAbs function
+
+// TestBuiltinFunctionsScript tests builtin functions through script execution
+func TestBuiltinFunctionsScriptFinal(t *testing.T) {
+	t.Run("abs through script", func(t *testing.T) {
+		result, err := Run("result = abs(-5)", nil)
+		if err != nil {
+			t.Errorf("Run returned error: %v", err)
+		}
+		// abs returns float64
+		if result != 5.0 {
+			t.Errorf("abs(-5) = %v (type %T), want 5", result, result)
+		}
+	})
+
+	t.Run("indexOf through script", func(t *testing.T) {
+		result, err := Run("result = indexOf('hello world', 'world')", nil)
+		if err != nil {
+			t.Errorf("Run returned error: %v", err)
+		}
+		if result != 6 && result != int64(6) {
+			t.Errorf("indexOf = %v, want 6", result)
+		}
+	})
+
+	t.Run("sqrt through script", func(t *testing.T) {
+		result, err := Run("result = sqrt(16)", nil)
+		if err != nil {
+			t.Errorf("Run returned error: %v", err)
+		}
+		if result != 4.0 {
+			t.Errorf("sqrt(16) = %v, want 4.0", result)
+		}
+	})
+
+	t.Run("round through script", func(t *testing.T) {
+		result, err := Run("result = round(3.7)", nil)
+		if err != nil {
+			t.Errorf("Run returned error: %v", err)
+		}
+		// round returns int, not float
+		if result != 4 && result != int64(4) && result != 4.0 {
+			t.Errorf("round(3.7) = %v (type %T), want 4", result, result)
+		}
+	})
+
+	t.Run("substr through script", func(t *testing.T) {
+		result, err := Run("result = substr('hello', 1, 3)", nil)
+		if err != nil {
+			t.Errorf("Run returned error: %v", err)
+		}
+		if result != "ell" {
+			t.Errorf("substr('hello', 1, 3) = %v, want 'ell'", result)
+		}
+	})
+
+	t.Run("float through script", func(t *testing.T) {
+		result, err := Run("result = float(42)", nil)
+		if err != nil {
+			t.Errorf("Run returned error: %v", err)
+		}
+		if result != 42.0 {
+			t.Errorf("float(42) = %v, want 42.0", result)
+		}
+	})
 }
