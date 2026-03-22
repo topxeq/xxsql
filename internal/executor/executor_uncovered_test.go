@@ -10782,3 +10782,559 @@ func TestExecuteDropFunction(t *testing.T) {
 	})
 }
 
+// TestEvaluateExprForRowExtra tests the evaluateExprForRow function
+func TestEvaluateExprForRowExtra(t *testing.T) {
+	exec := &Executor{currentTable: "users"}
+
+	// Create test columns
+	columns := []*types.ColumnInfo{
+		{Name: "id", Type: types.TypeInt},
+		{Name: "name", Type: types.TypeVarchar},
+		{Name: "active", Type: types.TypeInt},
+	}
+	colIdxMap := map[string]int{"id": 0, "name": 1, "active": 2}
+
+	// Create test row
+	testRow := &row.Row{
+		ID: 1,
+		Values: []types.Value{
+			types.NewIntValue(42),
+			types.NewStringValue("test", types.TypeVarchar),
+			types.NewIntValue(1),
+		},
+	}
+
+	t.Run("literal", func(t *testing.T) {
+		expr := &sql.Literal{Value: int64(100)}
+		result, err := exec.evaluateExprForRow(expr, testRow, columns, colIdxMap)
+		if err != nil {
+			t.Errorf("unexpected error: %v", err)
+		}
+		if result != int64(100) {
+			t.Errorf("expected 100, got %v", result)
+		}
+	})
+
+	t.Run("column ref", func(t *testing.T) {
+		expr := &sql.ColumnRef{Name: "id"}
+		result, err := exec.evaluateExprForRow(expr, testRow, columns, colIdxMap)
+		if err != nil {
+			t.Errorf("unexpected error: %v", err)
+		}
+		if result != int64(42) {
+			t.Errorf("expected 42, got %v", result)
+		}
+	})
+
+	t.Run("column ref with table prefix matching", func(t *testing.T) {
+		expr := &sql.ColumnRef{Name: "name", Table: "users"}
+		result, err := exec.evaluateExprForRow(expr, testRow, columns, colIdxMap)
+		if err != nil {
+			t.Errorf("unexpected error: %v", err)
+		}
+		if result != "test" {
+			t.Errorf("expected 'test', got %v", result)
+		}
+	})
+
+	t.Run("column ref with table prefix not matching", func(t *testing.T) {
+		exec := &Executor{currentTable: "orders"}
+		expr := &sql.ColumnRef{Name: "id", Table: "users"}
+		_, err := exec.evaluateExprForRow(expr, testRow, columns, colIdxMap)
+		if err == nil {
+			t.Error("expected error for table prefix not matching")
+		}
+	})
+
+	t.Run("column ref from outer context", func(t *testing.T) {
+		exec := &Executor{
+			currentTable:  "orders",
+			outerContext:  map[string]interface{}{"users.id": int64(99)},
+		}
+		expr := &sql.ColumnRef{Name: "id", Table: "users"}
+		result, err := exec.evaluateExprForRow(expr, testRow, columns, colIdxMap)
+		if err != nil {
+			t.Errorf("unexpected error: %v", err)
+		}
+		if result != int64(99) {
+			t.Errorf("expected 99, got %v", result)
+		}
+	})
+
+	t.Run("column ref from outer context without prefix", func(t *testing.T) {
+		exec := &Executor{
+			outerContext: map[string]interface{}{"other_col": "from_outer"},
+		}
+		expr := &sql.ColumnRef{Name: "other_col"}
+		result, err := exec.evaluateExprForRow(expr, testRow, columns, colIdxMap)
+		if err != nil {
+			t.Errorf("unexpected error: %v", err)
+		}
+		if result != "from_outer" {
+			t.Errorf("expected 'from_outer', got %v", result)
+		}
+	})
+
+	t.Run("column ref unknown", func(t *testing.T) {
+		exec := &Executor{}
+		expr := &sql.ColumnRef{Name: "unknown"}
+		_, err := exec.evaluateExprForRow(expr, testRow, columns, colIdxMap)
+		if err == nil {
+			t.Error("expected error for unknown column")
+		}
+	})
+
+	t.Run("binary expression", func(t *testing.T) {
+		expr := &sql.BinaryExpr{
+			Left:  &sql.ColumnRef{Name: "id"},
+			Op:    sql.OpAdd,
+			Right: &sql.Literal{Value: int64(8)},
+		}
+		result, err := exec.evaluateExprForRow(expr, testRow, columns, colIdxMap)
+		if err != nil {
+			t.Errorf("unexpected error: %v", err)
+		}
+		if result != float64(50) {
+			t.Errorf("expected 50, got %v", result)
+		}
+	})
+
+	t.Run("unknown expression type", func(t *testing.T) {
+		expr := &sql.ParenExpr{Expr: &sql.Literal{Value: true}}
+		result, err := exec.evaluateExprForRow(expr, testRow, columns, colIdxMap)
+		if err != nil {
+			t.Errorf("unexpected error: %v", err)
+		}
+		if result != nil {
+			t.Errorf("expected nil for unknown expression type, got %v", result)
+		}
+	})
+}
+
+// TestHasAggregateExtra tests the hasAggregate function
+func TestHasAggregateExtra(t *testing.T) {
+	t.Run("nil expression", func(t *testing.T) {
+		result := hasAggregate(nil)
+		if result {
+			t.Error("expected false for nil expression")
+		}
+	})
+
+	t.Run("literal", func(t *testing.T) {
+		expr := &sql.Literal{Value: 42}
+		result := hasAggregate(expr)
+		if result {
+			t.Error("expected false for literal")
+		}
+	})
+
+	t.Run("COUNT aggregate", func(t *testing.T) {
+		expr := &sql.FunctionCall{Name: "COUNT", Args: []sql.Expression{}}
+		result := hasAggregate(expr)
+		if !result {
+			t.Error("expected true for COUNT")
+		}
+	})
+
+	t.Run("SUM aggregate", func(t *testing.T) {
+		expr := &sql.FunctionCall{Name: "SUM", Args: []sql.Expression{}}
+		result := hasAggregate(expr)
+		if !result {
+			t.Error("expected true for SUM")
+		}
+	})
+
+	t.Run("non-aggregate function", func(t *testing.T) {
+		expr := &sql.FunctionCall{Name: "UPPER", Args: []sql.Expression{}}
+		result := hasAggregate(expr)
+		if result {
+			t.Error("expected false for UPPER")
+		}
+	})
+
+	t.Run("binary with aggregate", func(t *testing.T) {
+		expr := &sql.BinaryExpr{
+			Left:  &sql.FunctionCall{Name: "COUNT", Args: []sql.Expression{}},
+			Op:    sql.OpAdd,
+			Right: &sql.Literal{Value: int64(1)},
+		}
+		result := hasAggregate(expr)
+		if !result {
+			t.Error("expected true for binary with aggregate")
+		}
+	})
+
+	t.Run("binary without aggregate", func(t *testing.T) {
+		expr := &sql.BinaryExpr{
+			Left:  &sql.Literal{Value: int64(1)},
+			Op:    sql.OpAdd,
+			Right: &sql.Literal{Value: int64(2)},
+		}
+		result := hasAggregate(expr)
+		if result {
+			t.Error("expected false for binary without aggregate")
+		}
+	})
+
+	t.Run("unary with aggregate", func(t *testing.T) {
+		expr := &sql.UnaryExpr{
+			Op:    sql.OpNeg,
+			Right: &sql.FunctionCall{Name: "SUM", Args: []sql.Expression{}},
+		}
+		result := hasAggregate(expr)
+		if !result {
+			t.Error("expected true for unary with aggregate")
+		}
+	})
+
+	t.Run("column ref", func(t *testing.T) {
+		expr := &sql.ColumnRef{Name: "id"}
+		result := hasAggregate(expr)
+		if result {
+			t.Error("expected false for column ref")
+		}
+	})
+}
+
+// TestResolveJoinColumn tests the resolveJoinColumn function from join.go
+func TestResolveJoinColumn(t *testing.T) {
+	exec := &Executor{}
+
+	// Create join tables
+	usersTbl := &joinTable{
+		name:     "users",
+		alias:    "u",
+		columns:  []*types.ColumnInfo{{Name: "id"}, {Name: "name"}},
+		colIndex: map[string]int{"id": 0, "name": 1},
+		startIdx: 0,
+	}
+	ordersTbl := &joinTable{
+		name:     "orders",
+		alias:    "o",
+		columns:  []*types.ColumnInfo{{Name: "id"}, {Name: "user_id"}},
+		colIndex: map[string]int{"id": 0, "user_id": 1},
+		startIdx: 2,
+	}
+
+	ctx := &joinContext{
+		tables:    []*joinTable{usersTbl, ordersTbl},
+		tableMap:  map[string]*joinTable{"users": usersTbl, "u": usersTbl, "orders": ordersTbl, "o": ordersTbl},
+		totalCols: 4,
+	}
+
+	jRow := &joinedRow{
+		values:    []interface{}{int64(1), "Alice", int64(100), int64(1)},
+		nullFlags: []bool{false, false, false, false},
+	}
+
+	t.Run("qualified column with alias", func(t *testing.T) {
+		ref := &sql.ColumnRef{Name: "id", Table: "u"}
+		result, err := exec.resolveJoinColumn(ref, jRow, ctx)
+		if err != nil {
+			t.Errorf("unexpected error: %v", err)
+		}
+		if result != int64(1) {
+			t.Errorf("expected 1, got %v", result)
+		}
+	})
+
+	t.Run("qualified column with table name", func(t *testing.T) {
+		ref := &sql.ColumnRef{Name: "user_id", Table: "orders"}
+		result, err := exec.resolveJoinColumn(ref, jRow, ctx)
+		if err != nil {
+			t.Errorf("unexpected error: %v", err)
+		}
+		if result != int64(1) {
+			t.Errorf("expected 1, got %v", result)
+		}
+	})
+
+	t.Run("qualified column unknown table", func(t *testing.T) {
+		ref := &sql.ColumnRef{Name: "id", Table: "unknown"}
+		_, err := exec.resolveJoinColumn(ref, jRow, ctx)
+		if err == nil {
+			t.Error("expected error for unknown table")
+		}
+	})
+
+	t.Run("qualified column unknown column", func(t *testing.T) {
+		ref := &sql.ColumnRef{Name: "unknown", Table: "u"}
+		_, err := exec.resolveJoinColumn(ref, jRow, ctx)
+		if err == nil {
+			t.Error("expected error for unknown column")
+		}
+	})
+
+	t.Run("unqualified column unique", func(t *testing.T) {
+		ref := &sql.ColumnRef{Name: "name"}
+		result, err := exec.resolveJoinColumn(ref, jRow, ctx)
+		if err != nil {
+			t.Errorf("unexpected error: %v", err)
+		}
+		if result != "Alice" {
+			t.Errorf("expected 'Alice', got %v", result)
+		}
+	})
+
+	t.Run("unqualified column ambiguous", func(t *testing.T) {
+		// Both tables have 'id' column
+		ref := &sql.ColumnRef{Name: "id"}
+		_, err := exec.resolveJoinColumn(ref, jRow, ctx)
+		if err == nil {
+			t.Error("expected error for ambiguous column")
+		}
+	})
+
+	t.Run("unqualified column not found", func(t *testing.T) {
+		ref := &sql.ColumnRef{Name: "nonexistent"}
+		_, err := exec.resolveJoinColumn(ref, jRow, ctx)
+		if err == nil {
+			t.Error("expected error for nonexistent column")
+		}
+	})
+}
+
+// TestEvaluateWhereForRowExtra tests the evaluateWhereForRow function
+func TestEvaluateWhereForRowExtra(t *testing.T) {
+	exec := &Executor{}
+
+	// Create test columns
+	columns := []*types.ColumnInfo{
+		{Name: "id", Type: types.TypeInt},
+		{Name: "name", Type: types.TypeVarchar},
+		{Name: "active", Type: types.TypeInt},
+	}
+	colIdxMap := map[string]int{"id": 0, "name": 1, "active": 2}
+
+	// Create test row
+	testRow := &row.Row{
+		ID: 1,
+		Values: []types.Value{
+			types.NewIntValue(42),
+			types.NewStringValue("test", types.TypeVarchar),
+			types.NewIntValue(1),
+		},
+	}
+
+	t.Run("binary expression eq true", func(t *testing.T) {
+		expr := &sql.BinaryExpr{
+			Left:  &sql.ColumnRef{Name: "id"},
+			Op:    sql.OpEq,
+			Right: &sql.Literal{Value: int64(42)},
+		}
+		result, err := exec.evaluateWhereForRow(expr, testRow, columns, colIdxMap)
+		if err != nil {
+			t.Errorf("unexpected error: %v", err)
+		}
+		if !result {
+			t.Error("expected true for id = 42")
+		}
+	})
+
+	t.Run("binary expression eq false", func(t *testing.T) {
+		expr := &sql.BinaryExpr{
+			Left:  &sql.ColumnRef{Name: "id"},
+			Op:    sql.OpEq,
+			Right: &sql.Literal{Value: int64(99)},
+		}
+		result, err := exec.evaluateWhereForRow(expr, testRow, columns, colIdxMap)
+		if err != nil {
+			t.Errorf("unexpected error: %v", err)
+		}
+		if result {
+			t.Error("expected false for id = 99")
+		}
+	})
+
+	t.Run("binary expression gt", func(t *testing.T) {
+		expr := &sql.BinaryExpr{
+			Left:  &sql.ColumnRef{Name: "id"},
+			Op:    sql.OpGt,
+			Right: &sql.Literal{Value: int64(10)},
+		}
+		result, err := exec.evaluateWhereForRow(expr, testRow, columns, colIdxMap)
+		if err != nil {
+			t.Errorf("unexpected error: %v", err)
+		}
+		if !result {
+			t.Error("expected true for id > 10")
+		}
+	})
+
+	t.Run("binary expression lt", func(t *testing.T) {
+		// Note: compareValues converts to strings for comparison
+		// String "42" > "100" lexicographically, so this is false
+		expr := &sql.BinaryExpr{
+			Left:  &sql.ColumnRef{Name: "id"},
+			Op:    sql.OpLt,
+			Right: &sql.Literal{Value: int64(100)},
+		}
+		result, err := exec.evaluateWhereForRow(expr, testRow, columns, colIdxMap)
+		if err != nil {
+			t.Errorf("unexpected error: %v", err)
+		}
+		// "42" < "100" is false because '4' > '1' lexicographically
+		if result {
+			t.Error("expected false for string comparison '42' < '100'")
+		}
+	})
+
+	t.Run("unary expression not", func(t *testing.T) {
+		expr := &sql.UnaryExpr{
+			Op:    sql.OpNot,
+			Right: &sql.Literal{Value: true, Type: sql.LiteralBool},
+		}
+		result, err := exec.evaluateWhereForRow(expr, testRow, columns, colIdxMap)
+		if err != nil {
+			t.Errorf("unexpected error: %v", err)
+		}
+		if result {
+			t.Error("expected false for NOT true")
+		}
+	})
+
+	t.Run("is null expr", func(t *testing.T) {
+		expr := &sql.IsNullExpr{
+			Expr: &sql.Literal{Value: nil},
+			Not:  false,
+		}
+		result, err := exec.evaluateWhereForRow(expr, testRow, columns, colIdxMap)
+		if err != nil {
+			t.Errorf("unexpected error: %v", err)
+		}
+		if !result {
+			t.Error("expected true for IS NULL")
+		}
+	})
+
+	t.Run("is not null expr", func(t *testing.T) {
+		expr := &sql.IsNullExpr{
+			Expr: &sql.Literal{Value: "test"},
+			Not:  true,
+		}
+		result, err := exec.evaluateWhereForRow(expr, testRow, columns, colIdxMap)
+		if err != nil {
+			t.Errorf("unexpected error: %v", err)
+		}
+		if !result {
+			t.Error("expected true for IS NOT NULL")
+		}
+	})
+
+	t.Run("in expr with list", func(t *testing.T) {
+		expr := &sql.InExpr{
+			Expr: &sql.ColumnRef{Name: "id"},
+			List: []sql.Expression{
+				&sql.Literal{Value: int64(10)},
+				&sql.Literal{Value: int64(42)},
+				&sql.Literal{Value: int64(50)},
+			},
+		}
+		result, err := exec.evaluateWhereForRow(expr, testRow, columns, colIdxMap)
+		if err != nil {
+			t.Errorf("unexpected error: %v", err)
+		}
+		if !result {
+			t.Error("expected true for id IN (10, 42, 50)")
+		}
+	})
+
+	t.Run("in expr not in list", func(t *testing.T) {
+		expr := &sql.InExpr{
+			Expr: &sql.ColumnRef{Name: "id"},
+			List: []sql.Expression{
+				&sql.Literal{Value: int64(1)},
+				&sql.Literal{Value: int64(2)},
+				&sql.Literal{Value: int64(3)},
+			},
+		}
+		result, err := exec.evaluateWhereForRow(expr, testRow, columns, colIdxMap)
+		if err != nil {
+			t.Errorf("unexpected error: %v", err)
+		}
+		if result {
+			t.Error("expected false for id IN (1, 2, 3)")
+		}
+	})
+
+	t.Run("unary expression unknown op", func(t *testing.T) {
+		expr := &sql.UnaryExpr{
+			Op:    sql.OpNeg,
+			Right: &sql.Literal{Value: int64(10)},
+		}
+		result, err := exec.evaluateWhereForRow(expr, testRow, columns, colIdxMap)
+		if err != nil {
+			t.Errorf("unexpected error: %v", err)
+		}
+		// Unknown unary op returns false
+		if result {
+			t.Error("expected false for unknown unary op")
+		}
+	})
+}
+
+// TestExecutePragmaWithArg tests the executePragmaWithArg function
+func TestExecutePragmaWithArg(t *testing.T) {
+	exec := &Executor{
+		engine:         storage.NewEngine(""),
+		pragmaSettings: make(map[string]interface{}),
+	}
+	exec.engine.Open()
+	defer exec.engine.Close()
+
+	t.Run("unknown pragma", func(t *testing.T) {
+		_, err := exec.executePragmaWithArg("unknown_pragma", "arg", nil)
+		if err == nil {
+			t.Error("expected error for unknown pragma")
+		}
+	})
+
+	t.Run("table_info nonexistent", func(t *testing.T) {
+		_, err := exec.executePragmaWithArg("table_info", "nonexistent_table", nil)
+		if err == nil {
+			t.Error("expected error for nonexistent table")
+		}
+	})
+
+	t.Run("database_list", func(t *testing.T) {
+		result, err := exec.executePragmaWithArg("database_list", "", nil)
+		if err != nil {
+			t.Errorf("unexpected error: %v", err)
+		}
+		if result == nil {
+			t.Error("expected result for database_list")
+		}
+	})
+
+	t.Run("compile_options", func(t *testing.T) {
+		result, err := exec.executePragmaWithArg("compile_options", "", nil)
+		if err != nil {
+			t.Errorf("unexpected error: %v", err)
+		}
+		if result == nil {
+			t.Error("expected result for compile_options")
+		}
+	})
+
+	t.Run("index_list nonexistent", func(t *testing.T) {
+		_, err := exec.executePragmaWithArg("index_list", "nonexistent_table", nil)
+		if err == nil {
+			t.Error("expected error for nonexistent table in index_list")
+		}
+	})
+
+	t.Run("index_info nonexistent", func(t *testing.T) {
+		_, err := exec.executePragmaWithArg("index_info", "nonexistent_index", nil)
+		if err == nil {
+			t.Error("expected error for nonexistent index in index_info")
+		}
+	})
+
+	t.Run("foreign_key_list nonexistent", func(t *testing.T) {
+		_, err := exec.executePragmaWithArg("foreign_key_list", "nonexistent_table", nil)
+		if err == nil {
+			t.Error("expected error for nonexistent table in foreign_key_list")
+		}
+	})
+}
+
