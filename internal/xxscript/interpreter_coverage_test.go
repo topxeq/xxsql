@@ -559,7 +559,7 @@ func TestTernaryOperator(t *testing.T) {
 }
 
 // TestCompareFunction tests the compare function with various types
-func TestCompareFunction(t *testing.T) {
+func TestCompareFunctionExtra(t *testing.T) {
 	tests := []struct {
 		script   string
 		expected interface{}
@@ -729,7 +729,7 @@ func TestDBObjectMethods(t *testing.T) {
 }
 
 // TestEvalCallFunction tests the evalCall function
-func TestEvalCallFunction(t *testing.T) {
+func TestEvalCallFunctionExtra(t *testing.T) {
 	// Test built-in function calls
 	result, err := Run(`len("hello")`, nil)
 	if err != nil {
@@ -2323,7 +2323,7 @@ func TestParserEdgeCases(t *testing.T) {
 }
 
 // TestCompareFunction tests the compare function
-func TestCompareFunctionExtra(t *testing.T) {
+func TestCompareFunctionFinal(t *testing.T) {
 	tests := []string{
 		"1 < 2",
 		"2 > 1",
@@ -2351,7 +2351,7 @@ func TestCompareFunctionExtra(t *testing.T) {
 }
 
 // TestArithmeticOps tests arithmetic operations
-func TestArithmeticOps(t *testing.T) {
+func TestArithmeticOpsExtra(t *testing.T) {
 	tests := []string{
 		"1 + 2",
 		"5 - 3",

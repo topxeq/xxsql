@@ -2279,3 +2279,452 @@ func TestExistsExprString(t *testing.T) {
 	}
 	_ = ee.String()
 }
+
+// TestUpsertClauseString tests UpsertClause.String
+func TestUpsertClauseString(t *testing.T) {
+	// Test DO NOTHING
+	u := &UpsertClause{
+		ConflictColumns: []string{"id"},
+		DoNothing:       true,
+	}
+	s := u.String()
+	if !contains(s, "ON CONFLICT") || !contains(s, "DO NOTHING") {
+		t.Errorf("UpsertClause.String() = %q, expected ON CONFLICT ... DO NOTHING", s)
+	}
+
+	// Test DO UPDATE
+	u = &UpsertClause{
+		ConflictColumns: []string{"id"},
+		DoUpdate:        true,
+		Assignments: []*Assignment{
+			{Column: "name", Value: &Literal{Value: "'updated'", Type: LiteralString}},
+		},
+	}
+	s = u.String()
+	if !contains(s, "DO UPDATE SET") {
+		t.Errorf("UpsertClause.String() = %q, expected DO UPDATE SET", s)
+	}
+
+	// Test DO UPDATE with WHERE
+	u = &UpsertClause{
+		ConflictColumns: []string{"id"},
+		DoUpdate:        true,
+		Assignments: []*Assignment{
+			{Column: "count", Value: &Literal{Value: "1", Type: LiteralNumber}},
+		},
+		Where: &BinaryExpr{Left: &ColumnRef{Name: "id"}, Op: OpGt, Right: &Literal{Value: "0", Type: LiteralNumber}},
+	}
+	s = u.String()
+	if !contains(s, "WHERE") {
+		t.Errorf("UpsertClause.String() = %q, expected WHERE clause", s)
+	}
+
+	// Test without conflict columns
+	u = &UpsertClause{
+		DoNothing: true,
+	}
+	s = u.String()
+	if !contains(s, "ON CONFLICT DO NOTHING") {
+		t.Errorf("UpsertClause.String() = %q, expected ON CONFLICT DO NOTHING", s)
+	}
+}
+
+// TestReturningClauseString tests ReturningClause.String
+func TestReturningClauseString(t *testing.T) {
+	// Test RETURNING *
+	r := &ReturningClause{All: true}
+	s := r.String()
+	if s != "RETURNING *" {
+		t.Errorf("ReturningClause.String() = %q, want RETURNING *", s)
+	}
+
+	// Test RETURNING with columns
+	r = &ReturningClause{
+		Columns: []Expression{
+			&ColumnRef{Name: "id"},
+			&ColumnRef{Name: "name"},
+		},
+	}
+	s = r.String()
+	if !contains(s, "id") || !contains(s, "name") {
+		t.Errorf("ReturningClause.String() = %q, expected columns id, name", s)
+	}
+}
+
+// TestInsertStmtString tests InsertStmt.String
+func TestInsertStmtStringFinal(t *testing.T) {
+	// Simple insert
+	i := &InsertStmt{
+		Table:   "users",
+		Columns: []string{"id", "name"},
+		Values: [][]Expression{
+			{&Literal{Value: "1", Type: LiteralNumber}, &Literal{Value: "'Alice'", Type: LiteralString}},
+		},
+	}
+	s := i.String()
+	if !contains(s, "INSERT INTO users") || !contains(s, "VALUES") {
+		t.Errorf("InsertStmt.String() = %q", s)
+	}
+
+	// Insert with ON CONFLICT
+	i = &InsertStmt{
+		Table:   "users",
+		Columns: []string{"id", "name"},
+		Values: [][]Expression{
+			{&Literal{Value: "1", Type: LiteralNumber}, &Literal{Value: "'Alice'", Type: LiteralString}},
+		},
+		OnConflict: &UpsertClause{DoNothing: true},
+	}
+	s = i.String()
+	if !contains(s, "ON CONFLICT") {
+		t.Errorf("InsertStmt.String() = %q, expected ON CONFLICT", s)
+	}
+
+	// Insert with RETURNING
+	i = &InsertStmt{
+		Table:     "users",
+		Columns:   []string{"id"},
+		Values:    [][]Expression{{&Literal{Value: "1", Type: LiteralNumber}}},
+		Returning: &ReturningClause{All: true},
+	}
+	s = i.String()
+	if !contains(s, "RETURNING") {
+		t.Errorf("InsertStmt.String() = %q, expected RETURNING", s)
+	}
+
+	// Insert with WITH clause
+	i = &InsertStmt{
+		WithClause: &WithClause{
+			CTEs: []CTEDefinition{
+				{Name: "cte", Query: &SelectStmt{Columns: []Expression{&Literal{Value: "1", Type: LiteralNumber}}}},
+			},
+		},
+		Table:   "users",
+		Columns: []string{"id"},
+		Values:  [][]Expression{{&Literal{Value: "1", Type: LiteralNumber}}},
+	}
+	s = i.String()
+	if !contains(s, "WITH") {
+		t.Errorf("InsertStmt.String() = %q, expected WITH clause", s)
+	}
+}
+
+// TestUpdateStmtString tests UpdateStmt.String
+func TestUpdateStmtStringFinal(t *testing.T) {
+	u := &UpdateStmt{
+		Table: "users",
+		Assignments: []*Assignment{
+			{Column: "name", Value: &Literal{Value: "'Bob'", Type: LiteralString}},
+		},
+		Where: &BinaryExpr{
+			Left:  &ColumnRef{Name: "id"},
+			Op:    OpEq,
+			Right: &Literal{Value: "1", Type: LiteralNumber},
+		},
+	}
+	s := u.String()
+	if !contains(s, "UPDATE users SET") || !contains(s, "WHERE") {
+		t.Errorf("UpdateStmt.String() = %q", s)
+	}
+
+	// Update with RETURNING
+	u = &UpdateStmt{
+		Table: "users",
+		Assignments: []*Assignment{
+			{Column: "count", Value: &Literal{Value: "0", Type: LiteralNumber}},
+		},
+		Returning: &ReturningClause{All: true},
+	}
+	s = u.String()
+	if !contains(s, "RETURNING") {
+		t.Errorf("UpdateStmt.String() = %q, expected RETURNING", s)
+	}
+}
+
+// TestDeleteStmtString tests DeleteStmt.String
+func TestDeleteStmtStringFinal(t *testing.T) {
+	d := &DeleteStmt{
+		Table: "users",
+		Where: &BinaryExpr{
+			Left:  &ColumnRef{Name: "id"},
+			Op:    OpEq,
+			Right: &Literal{Value: "1", Type: LiteralNumber},
+		},
+	}
+	s := d.String()
+	if !contains(s, "DELETE FROM users") || !contains(s, "WHERE") {
+		t.Errorf("DeleteStmt.String() = %q", s)
+	}
+
+	// Delete with RETURNING
+	d = &DeleteStmt{
+		Table:     "users",
+		Returning: &ReturningClause{All: true},
+	}
+	s = d.String()
+	if !contains(s, "RETURNING") {
+		t.Errorf("DeleteStmt.String() = %q, expected RETURNING", s)
+	}
+}
+
+// TestCreateIndexStmtString tests CreateIndexStmt.String
+func TestCreateIndexStmtStringFinal(t *testing.T) {
+	c := &CreateIndexStmt{
+		IndexName:   "idx_users_name",
+		TableName:   "users",
+		Columns:     []string{"name"},
+		Unique:      false,
+		IfNotExists: false,
+	}
+	s := c.String()
+	if !contains(s, "CREATE INDEX idx_users_name ON users") {
+		t.Errorf("CreateIndexStmt.String() = %q", s)
+	}
+
+	// Unique index
+	c = &CreateIndexStmt{
+		IndexName: "idx_users_id",
+		TableName: "users",
+		Columns:   []string{"id"},
+		Unique:    true,
+	}
+	s = c.String()
+	if !contains(s, "CREATE UNIQUE INDEX") {
+		t.Errorf("CreateIndexStmt.String() = %q, expected UNIQUE", s)
+	}
+
+	// IF NOT EXISTS
+	c = &CreateIndexStmt{
+		IndexName:   "idx_users_email",
+		TableName:   "users",
+		Columns:     []string{"email"},
+		IfNotExists: true,
+	}
+	s = c.String()
+	if !contains(s, "IF NOT EXISTS") {
+		t.Errorf("CreateIndexStmt.String() = %q, expected IF NOT EXISTS", s)
+	}
+}
+
+// TestDropIndexStmtString tests DropIndexStmt.String
+func TestDropIndexStmtStringFinal(t *testing.T) {
+	d := &DropIndexStmt{
+		IndexName: "idx_users_name",
+	}
+	s := d.String()
+	if !contains(s, "DROP INDEX idx_users_name") {
+		t.Errorf("DropIndexStmt.String() = %q", s)
+	}
+}
+
+// TestCreateTriggerStmtString tests CreateTriggerStmt.String
+func TestCreateTriggerStmtStringFinal(t *testing.T) {
+	c := &CreateTriggerStmt{
+		TriggerName: "tr_users_insert",
+		TableName:   "users",
+		Timing:      TriggerAfter,
+		Event:       TriggerInsert,
+		Body:        []Statement{},
+	}
+	s := c.String()
+	if !contains(s, "CREATE TRIGGER") {
+		t.Errorf("CreateTriggerStmt.String() = %q", s)
+	}
+}
+
+// TestDropTriggerStmtString tests DropTriggerStmt.String
+func TestDropTriggerStmtStringFinal(t *testing.T) {
+	d := &DropTriggerStmt{
+		TriggerName: "tr_users_insert",
+	}
+	s := d.String()
+	if !contains(s, "DROP TRIGGER") {
+		t.Errorf("DropTriggerStmt.String() = %q", s)
+	}
+}
+
+// TestAlterTableStmtString tests AlterTableStmt.String
+func TestAlterTableStmtStringFinal(t *testing.T) {
+	a := &AlterTableStmt{
+		TableName: "users",
+		Actions:   []AlterAction{&AddColumnAction{Column: &ColumnDef{Name: "email", Type: &DataType{Name: "VARCHAR", Size: 255}}}},
+	}
+	s := a.String()
+	if !contains(s, "ALTER TABLE users") {
+		t.Errorf("AlterTableStmt.String() = %q", s)
+	}
+}
+
+// TestAddColumnActionString tests AddColumnAction.String
+func TestAddColumnActionStringFinal(t *testing.T) {
+	a := &AddColumnAction{
+		Column: &ColumnDef{Name: "email", Type: &DataType{Name: "VARCHAR", Size: 255}},
+	}
+	s := a.String()
+	if !contains(s, "ADD COLUMN email") {
+		t.Errorf("AddColumnAction.String() = %q", s)
+	}
+}
+
+// TestDropColumnActionString tests DropColumnAction.String
+func TestDropColumnActionStringFinal(t *testing.T) {
+	d := &DropColumnAction{
+		ColumnName: "old_column",
+	}
+	s := d.String()
+	if !contains(s, "DROP COLUMN old_column") {
+		t.Errorf("DropColumnAction.String() = %q", s)
+	}
+}
+
+// TestRenameColumnActionString tests RenameColumnAction.String
+func TestRenameColumnActionStringFinal(t *testing.T) {
+	r := &RenameColumnAction{
+		OldName: "old_name",
+		NewName: "new_name",
+	}
+	s := r.String()
+	if !contains(s, "RENAME COLUMN old_name TO new_name") {
+		t.Errorf("RenameColumnAction.String() = %q", s)
+	}
+}
+
+// TestRenameTableActionString tests RenameTableAction.String
+func TestRenameTableActionStringFinal(t *testing.T) {
+	r := &RenameTableAction{
+		NewName: "new_table",
+	}
+	s := r.String()
+	if !contains(s, "RENAME TO new_table") {
+		t.Errorf("RenameTableAction.String() = %q", s)
+	}
+}
+
+// TestExplainStmtString tests ExplainStmt.String
+func TestExplainStmtStringFinal(t *testing.T) {
+	e := &ExplainStmt{
+		Statement: &SelectStmt{
+			Columns: []Expression{&ColumnRef{Name: "id"}},
+			From:    &FromClause{Table: &TableRef{Name: "users"}},
+		},
+	}
+	s := e.String()
+	if !contains(s, "EXPLAIN") {
+		t.Errorf("ExplainStmt.String() = %q", s)
+	}
+}
+
+// TestUseStmtString tests UseStmt.String
+func TestUseStmtStringFinal(t *testing.T) {
+	u := &UseStmt{Database: "testdb"}
+	s := u.String()
+	if s != "USE testdb" {
+		t.Errorf("UseStmt.String() = %q, want USE testdb", s)
+	}
+}
+
+// TestShowStmtString tests ShowStmt.String
+func TestShowStmtStringFinal(t *testing.T) {
+	ss := &ShowStmt{Type: "TABLES"}
+	s := ss.String()
+	if s != "SHOW TABLES" {
+		t.Errorf("ShowStmt.String() = %q, want SHOW TABLES", s)
+	}
+}
+
+// TestBeginStmtString tests BeginStmt.String
+func TestBeginStmtStringFinal(t *testing.T) {
+	b := &BeginStmt{}
+	s := b.String()
+	if !contains(s, "BEGIN") {
+		t.Errorf("BeginStmt.String() = %q, want BEGIN", s)
+	}
+}
+
+// TestCommitStmtString tests CommitStmt.String
+func TestCommitStmtStringFinal(t *testing.T) {
+	c := &CommitStmt{}
+	s := c.String()
+	if !contains(s, "COMMIT") {
+		t.Errorf("CommitStmt.String() = %q, want COMMIT", s)
+	}
+}
+
+// TestRollbackStmtString tests RollbackStmt.String
+func TestRollbackStmtStringFinal(t *testing.T) {
+	r := &RollbackStmt{}
+	s := r.String()
+	if !contains(s, "ROLLBACK") {
+		t.Errorf("RollbackStmt.String() = %q, want ROLLBACK", s)
+	}
+}
+
+// TestSavepointStmtString tests SavepointStmt.String
+func TestSavepointStmtStringFinal(t *testing.T) {
+	ss := &SavepointStmt{Name: "sp1"}
+	s := ss.String()
+	if !contains(s, "SAVEPOINT sp1") {
+		t.Errorf("SavepointStmt.String() = %q", s)
+	}
+}
+
+// TestCreateUserStmtString tests CreateUserStmt.String
+func TestCreateUserStmtStringFinal(t *testing.T) {
+	c := &CreateUserStmt{
+		Username:   "testuser",
+		Identified: "testpass",
+	}
+	s := c.String()
+	if !contains(s, "CREATE USER testuser") {
+		t.Errorf("CreateUserStmt.String() = %q", s)
+	}
+}
+
+// TestDropUserStmtString tests DropUserStmt.String
+func TestDropUserStmtStringFinal(t *testing.T) {
+	d := &DropUserStmt{Username: "testuser"}
+	s := d.String()
+	if !contains(s, "DROP USER testuser") {
+		t.Errorf("DropUserStmt.String() = %q", s)
+	}
+}
+
+// TestGrantStmtString tests GrantStmt.String
+func TestGrantStmtStringFinal(t *testing.T) {
+	g := &GrantStmt{
+		Privileges: []*Privilege{{Type: PrivSelect}, {Type: PrivInsert}},
+		Table:      "users",
+		To:         "testuser",
+	}
+	s := g.String()
+	if !contains(s, "GRANT") || !contains(s, "TO testuser") {
+		t.Errorf("GrantStmt.String() = %q", s)
+	}
+}
+
+// TestRevokeStmtString tests RevokeStmt.String
+func TestRevokeStmtStringFinal(t *testing.T) {
+	r := &RevokeStmt{
+		Privileges: []*Privilege{{Type: PrivSelect}},
+		Table:      "users",
+		From:       "testuser",
+	}
+	s := r.String()
+	if !contains(s, "REVOKE") || !contains(s, "FROM testuser") {
+		t.Errorf("RevokeStmt.String() = %q", s)
+	}
+}
+
+// helper function
+func contains(s, substr string) bool {
+	return len(s) >= len(substr) && (s == substr || len(s) > 0 && containsHelper(s, substr))
+}
+
+func containsHelper(s, substr string) bool {
+	for i := 0; i <= len(s)-len(substr); i++ {
+		if s[i:i+len(substr)] == substr {
+			return true
+		}
+	}
+	return false
+}

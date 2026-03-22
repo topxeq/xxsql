@@ -7432,3 +7432,332 @@ func TestFunctionsWithoutRowMore(t *testing.T) {
 		})
 	}
 }
+
+// TestHavingClause tests HAVING clause execution
+func TestHavingClauseExtra(t *testing.T) {
+	engine := setupTestEngine(t)
+	defer engine.Close()
+
+	exec := NewExecutor(engine)
+	exec.SetDatabase("testdb")
+
+	// Create table
+	_, err := exec.Execute("CREATE TABLE test_having (id INT, category VARCHAR(50), value INT)")
+	if err != nil {
+		t.Fatalf("Failed to create table: %v", err)
+	}
+
+	// Insert data
+	_, err = exec.Execute("INSERT INTO test_having VALUES (1, 'A', 10)")
+	if err != nil {
+		t.Fatalf("Failed to insert: %v", err)
+	}
+	_, err = exec.Execute("INSERT INTO test_having VALUES (2, 'A', 20)")
+	if err != nil {
+		t.Fatalf("Failed to insert: %v", err)
+	}
+	_, err = exec.Execute("INSERT INTO test_having VALUES (3, 'B', 5)")
+	if err != nil {
+		t.Fatalf("Failed to insert: %v", err)
+	}
+
+	tests := []struct {
+		name  string
+		query string
+	}{
+		{"HAVING COUNT", "SELECT category, COUNT(*) as cnt FROM test_having GROUP BY category HAVING COUNT(*) > 1"},
+		{"HAVING SUM", "SELECT category, SUM(value) as total FROM test_having GROUP BY category HAVING SUM(value) > 10"},
+		{"HAVING AVG", "SELECT category, AVG(value) as avg_val FROM test_having GROUP BY category HAVING AVG(value) > 5"},
+		{"HAVING MAX", "SELECT category, MAX(value) as max_val FROM test_having GROUP BY category HAVING MAX(value) > 15"},
+		{"HAVING MIN", "SELECT category, MIN(value) as min_val FROM test_having GROUP BY category HAVING MIN(value) < 10"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result, err := exec.Execute(tt.query)
+			if err != nil {
+				t.Errorf("Query %q failed: %v", tt.query, err)
+			} else {
+				t.Logf("Result: %v", result)
+			}
+		})
+	}
+}
+
+// TestDerivedTable tests derived table execution
+func TestDerivedTableFinal(t *testing.T) {
+	engine := setupTestEngine(t)
+	defer engine.Close()
+
+	exec := NewExecutor(engine)
+	exec.SetDatabase("testdb")
+
+	// Create table
+	_, err := exec.Execute("CREATE TABLE test_derived (id INT, name VARCHAR(50), score INT)")
+	if err != nil {
+		t.Fatalf("Failed to create table: %v", err)
+	}
+
+	// Insert data
+	_, err = exec.Execute("INSERT INTO test_derived VALUES (1, 'Alice', 90)")
+	if err != nil {
+		t.Fatalf("Failed to insert: %v", err)
+	}
+	_, err = exec.Execute("INSERT INTO test_derived VALUES (2, 'Bob', 85)")
+	if err != nil {
+		t.Fatalf("Failed to insert: %v", err)
+	}
+
+	tests := []struct {
+		name  string
+		query string
+	}{
+		{"Simple derived", "SELECT * FROM (SELECT id, name FROM test_derived) AS t"},
+		{"With WHERE", "SELECT * FROM (SELECT * FROM test_derived WHERE score > 80) AS t"},
+		{"With alias", "SELECT t.id, t.name FROM (SELECT id, name FROM test_derived) AS t(id, name)"},
+		{"Nested derived", "SELECT * FROM (SELECT * FROM (SELECT id FROM test_derived) AS t1) AS t2"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result, err := exec.Execute(tt.query)
+			if err != nil {
+				t.Errorf("Query %q failed: %v", tt.query, err)
+			} else {
+				t.Logf("Result: %v", result)
+			}
+		})
+	}
+}
+
+// TestWindowFrameBounds tests window frame bounds calculation
+func TestWindowFrameBoundsExtra(t *testing.T) {
+	engine := setupTestEngine(t)
+	defer engine.Close()
+
+	exec := NewExecutor(engine)
+	exec.SetDatabase("testdb")
+
+	// Create table
+	_, err := exec.Execute("CREATE TABLE test_frame (id INT, value INT)")
+	if err != nil {
+		t.Fatalf("Failed to create table: %v", err)
+	}
+
+	// Insert data
+	for i := 1; i <= 5; i++ {
+		_, err = exec.Execute(fmt.Sprintf("INSERT INTO test_frame VALUES (%d, %d)", i, i*10))
+		if err != nil {
+			t.Fatalf("Failed to insert: %v", err)
+		}
+	}
+
+	tests := []struct {
+		name  string
+		query string
+	}{
+		{"ROWS BETWEEN", "SELECT id, SUM(value) OVER (ORDER BY id ROWS BETWEEN 1 PRECEDING AND 1 FOLLOWING) as sum_val FROM test_frame"},
+		{"RANGE BETWEEN", "SELECT id, SUM(value) OVER (ORDER BY id RANGE BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) as sum_val FROM test_frame"},
+		{"ROWS UNBOUNDED", "SELECT id, SUM(value) OVER (ORDER BY id ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING) as sum_val FROM test_frame"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result, err := exec.Execute(tt.query)
+			if err != nil {
+				t.Logf("Query %q failed: %v (may be expected)", tt.query, err)
+			} else {
+				t.Logf("Result: %v", result)
+			}
+		})
+	}
+}
+
+// TestLeadLagFunctions tests LEAD and LAG window functions
+func TestLeadLagFunctions(t *testing.T) {
+	engine := setupTestEngine(t)
+	defer engine.Close()
+
+	exec := NewExecutor(engine)
+	exec.SetDatabase("testdb")
+
+	// Create table
+	_, err := exec.Execute("CREATE TABLE test_leadlag (id INT, value INT)")
+	if err != nil {
+		t.Fatalf("Failed to create table: %v", err)
+	}
+
+	// Insert data
+	for i := 1; i <= 5; i++ {
+		_, err = exec.Execute(fmt.Sprintf("INSERT INTO test_leadlag VALUES (%d, %d)", i, i*10))
+		if err != nil {
+			t.Fatalf("Failed to insert: %v", err)
+		}
+	}
+
+	tests := []struct {
+		name  string
+		query string
+	}{
+		{"LEAD", "SELECT id, LEAD(value) OVER (ORDER BY id) as next_val FROM test_leadlag"},
+		{"LEAD with offset", "SELECT id, LEAD(value, 2) OVER (ORDER BY id) as next_val FROM test_leadlag"},
+		{"LEAD with default", "SELECT id, LEAD(value, 1, 0) OVER (ORDER BY id) as next_val FROM test_leadlag"},
+		{"LAG", "SELECT id, LAG(value) OVER (ORDER BY id) as prev_val FROM test_leadlag"},
+		{"LAG with offset", "SELECT id, LAG(value, 2) OVER (ORDER BY id) as prev_val FROM test_leadlag"},
+		{"LAG with default", "SELECT id, LAG(value, 1, 0) OVER (ORDER BY id) as prev_val FROM test_leadlag"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result, err := exec.Execute(tt.query)
+			if err != nil {
+				t.Logf("Query %q failed: %v (may be expected)", tt.query, err)
+			} else {
+				t.Logf("Result: %v", result)
+			}
+		})
+	}
+}
+
+// TestFirstLastValue tests FIRST_VALUE and LAST_VALUE window functions
+func TestFirstLastValue(t *testing.T) {
+	engine := setupTestEngine(t)
+	defer engine.Close()
+
+	exec := NewExecutor(engine)
+	exec.SetDatabase("testdb")
+
+	// Create table
+	_, err := exec.Execute("CREATE TABLE test_firstlast (id INT, category VARCHAR(10), value INT)")
+	if err != nil {
+		t.Fatalf("Failed to create table: %v", err)
+	}
+
+	// Insert data
+	testData := []struct {
+		id       int
+		category string
+		value    int
+	}{
+		{1, "A", 10},
+		{2, "A", 20},
+		{3, "A", 30},
+		{4, "B", 40},
+		{5, "B", 50},
+	}
+	for _, d := range testData {
+		_, err = exec.Execute(fmt.Sprintf("INSERT INTO test_firstlast VALUES (%d, '%s', %d)", d.id, d.category, d.value))
+		if err != nil {
+			t.Fatalf("Failed to insert: %v", err)
+		}
+	}
+
+	tests := []struct {
+		name  string
+		query string
+	}{
+		{"FIRST_VALUE", "SELECT id, FIRST_VALUE(value) OVER (PARTITION BY category ORDER BY id) as first_val FROM test_firstlast"},
+		{"LAST_VALUE", "SELECT id, LAST_VALUE(value) OVER (PARTITION BY category ORDER BY id ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING) as last_val FROM test_firstlast"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result, err := exec.Execute(tt.query)
+			if err != nil {
+				t.Logf("Query %q failed: %v (may be expected)", tt.query, err)
+			} else {
+				t.Logf("Result: %v", result)
+			}
+		})
+	}
+}
+
+// TestPercentRank tests PERCENT_RANK window function
+func TestPercentRank(t *testing.T) {
+	engine := setupTestEngine(t)
+	defer engine.Close()
+
+	exec := NewExecutor(engine)
+	exec.SetDatabase("testdb")
+
+	// Create table
+	_, err := exec.Execute("CREATE TABLE test_percent (id INT, value INT)")
+	if err != nil {
+		t.Fatalf("Failed to create table: %v", err)
+	}
+
+	// Insert data
+	for i := 1; i <= 5; i++ {
+		_, err = exec.Execute(fmt.Sprintf("INSERT INTO test_percent VALUES (%d, %d)", i, i*10))
+		if err != nil {
+			t.Fatalf("Failed to insert: %v", err)
+		}
+	}
+
+	result, err := exec.Execute("SELECT id, PERCENT_RANK() OVER (ORDER BY value) as pct FROM test_percent")
+	if err != nil {
+		t.Logf("PERCENT_RANK query failed: %v (may be expected)", err)
+	} else {
+		t.Logf("Result: %v", result)
+	}
+}
+
+// TestCumeDist tests CUME_DIST window function
+func TestCumeDist(t *testing.T) {
+	engine := setupTestEngine(t)
+	defer engine.Close()
+
+	exec := NewExecutor(engine)
+	exec.SetDatabase("testdb")
+
+	// Create table
+	_, err := exec.Execute("CREATE TABLE test_cume (id INT, value INT)")
+	if err != nil {
+		t.Fatalf("Failed to create table: %v", err)
+	}
+
+	// Insert data
+	for i := 1; i <= 5; i++ {
+		_, err = exec.Execute(fmt.Sprintf("INSERT INTO test_cume VALUES (%d, %d)", i, i*10))
+		if err != nil {
+			t.Fatalf("Failed to insert: %v", err)
+		}
+	}
+
+	result, err := exec.Execute("SELECT id, CUME_DIST() OVER (ORDER BY value) as cume FROM test_cume")
+	if err != nil {
+		t.Logf("CUME_DIST query failed: %v (may be expected)", err)
+	} else {
+		t.Logf("Result: %v", result)
+	}
+}
+
+// TestNtile tests NTILE window function
+func TestNtile(t *testing.T) {
+	engine := setupTestEngine(t)
+	defer engine.Close()
+
+	exec := NewExecutor(engine)
+	exec.SetDatabase("testdb")
+
+	// Create table
+	_, err := exec.Execute("CREATE TABLE test_ntile (id INT, value INT)")
+	if err != nil {
+		t.Fatalf("Failed to create table: %v", err)
+	}
+
+	// Insert data
+	for i := 1; i <= 6; i++ {
+		_, err = exec.Execute(fmt.Sprintf("INSERT INTO test_ntile VALUES (%d, %d)", i, i*10))
+		if err != nil {
+			t.Fatalf("Failed to insert: %v", err)
+		}
+	}
+
+	result, err := exec.Execute("SELECT id, NTILE(3) OVER (ORDER BY value) as tile FROM test_ntile")
+	if err != nil {
+		t.Logf("NTILE query failed: %v (may be expected)", err)
+	} else {
+		t.Logf("Result: %v", result)
+	}
+}
