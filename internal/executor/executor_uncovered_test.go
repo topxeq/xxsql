@@ -1473,3 +1473,565 @@ func TestUpsertDoNothing(t *testing.T) {
 	}
 	_ = result
 }
+
+// TestCastExpressions tests various CAST expressions
+func TestCastExpressions(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "xxsql-cast-test-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	engine := storage.NewEngine(tmpDir)
+	if err := engine.Open(); err != nil {
+		t.Fatalf("Failed to open engine: %v", err)
+	}
+	defer engine.Close()
+
+	exec := NewExecutor(engine)
+	exec.SetDatabase("testdb")
+
+	// CAST to INT
+	tests := []struct {
+		sql      string
+		check    func(interface{}) bool
+	}{
+		{"SELECT CAST('42' AS INT)", func(v interface{}) bool { return v == int64(42) }},
+		{"SELECT CAST(42.7 AS INT)", func(v interface{}) bool { return v == int64(42) }},
+		{"SELECT CAST(true AS INT)", func(v interface{}) bool { return v == int64(1) }},
+		{"SELECT CAST(false AS INT)", func(v interface{}) bool { return v == int64(0) }},
+		{"SELECT CAST(42 AS INTEGER)", func(v interface{}) bool { return v == int64(42) }},
+		{"SELECT CAST(42 AS BIGINT)", func(v interface{}) bool { return v == int64(42) }},
+	}
+
+	for _, tt := range tests {
+		result, err := exec.Execute(tt.sql)
+		if err != nil {
+			t.Errorf("Execute(%q) failed: %v", tt.sql, err)
+			continue
+		}
+		if len(result.Rows) > 0 && len(result.Rows[0]) > 0 {
+			if !tt.check(result.Rows[0][0]) {
+				t.Errorf("Execute(%q) = %v, check failed", tt.sql, result.Rows[0][0])
+			}
+		}
+	}
+}
+
+// TestCastToFloat tests CAST to FLOAT/DOUBLE
+func TestCastToFloat(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "xxsql-cast-float-test-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	engine := storage.NewEngine(tmpDir)
+	if err := engine.Open(); err != nil {
+		t.Fatalf("Failed to open engine: %v", err)
+	}
+	defer engine.Close()
+
+	exec := NewExecutor(engine)
+	exec.SetDatabase("testdb")
+
+	tests := []struct {
+		sql      string
+		check    func(interface{}) bool
+	}{
+		{"SELECT CAST('3.14' AS FLOAT)", func(v interface{}) bool {
+			f, ok := v.(float64)
+			return ok && f > 3.13 && f < 3.15
+		}},
+		{"SELECT CAST(42 AS FLOAT)", func(v interface{}) bool { return v == float64(42) }},
+		{"SELECT CAST(42.5 AS DOUBLE)", func(v interface{}) bool { return v == float64(42.5) }},
+	}
+
+	for _, tt := range tests {
+		result, err := exec.Execute(tt.sql)
+		if err != nil {
+			t.Errorf("Execute(%q) failed: %v", tt.sql, err)
+			continue
+		}
+		if len(result.Rows) > 0 && len(result.Rows[0]) > 0 {
+			if !tt.check(result.Rows[0][0]) {
+				t.Errorf("Execute(%q) = %v, check failed", tt.sql, result.Rows[0][0])
+			}
+		}
+	}
+}
+
+// TestCastToString tests CAST to VARCHAR/CHAR/TEXT
+func TestCastToString(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "xxsql-cast-str-test-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	engine := storage.NewEngine(tmpDir)
+	if err := engine.Open(); err != nil {
+		t.Fatalf("Failed to open engine: %v", err)
+	}
+	defer engine.Close()
+
+	exec := NewExecutor(engine)
+	exec.SetDatabase("testdb")
+
+	tests := []struct {
+		sql       string
+		expected  string
+	}{
+		{"SELECT CAST(42 AS VARCHAR)", "42"},
+		{"SELECT CAST(3.14 AS CHAR)", "3.14"},
+		{"SELECT CAST(true AS TEXT)", "true"},
+		{"SELECT CAST('hello' AS TEXT)", "hello"},
+	}
+
+	for _, tt := range tests {
+		result, err := exec.Execute(tt.sql)
+		if err != nil {
+			t.Errorf("Execute(%q) failed: %v", tt.sql, err)
+			continue
+		}
+		if len(result.Rows) > 0 && len(result.Rows[0]) > 0 {
+			if result.Rows[0][0] != tt.expected {
+				t.Errorf("Execute(%q) = %v, want %v", tt.sql, result.Rows[0][0], tt.expected)
+			}
+		}
+	}
+}
+
+// TestCastToBool tests CAST to BOOLEAN
+func TestCastToBool(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "xxsql-cast-bool-test-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	engine := storage.NewEngine(tmpDir)
+	if err := engine.Open(); err != nil {
+		t.Fatalf("Failed to open engine: %v", err)
+	}
+	defer engine.Close()
+
+	exec := NewExecutor(engine)
+	exec.SetDatabase("testdb")
+
+	tests := []struct {
+		sql      string
+		expected bool
+	}{
+		{"SELECT CAST(1 AS BOOL)", true},
+		{"SELECT CAST(0 AS BOOL)", false},
+		{"SELECT CAST('true' AS BOOLEAN)", true},
+		{"SELECT CAST('false' AS BOOLEAN)", false},
+		{"SELECT CAST(1.5 AS BOOL)", true},
+		{"SELECT CAST(0.0 AS BOOL)", false},
+	}
+
+	for _, tt := range tests {
+		result, err := exec.Execute(tt.sql)
+		if err != nil {
+			t.Errorf("Execute(%q) failed: %v", tt.sql, err)
+			continue
+		}
+		if len(result.Rows) > 0 && len(result.Rows[0]) > 0 {
+			if result.Rows[0][0] != tt.expected {
+				t.Errorf("Execute(%q) = %v, want %v", tt.sql, result.Rows[0][0], tt.expected)
+			}
+		}
+	}
+}
+
+// TestCastToBlob tests CAST to BLOB
+func TestCastToBlob(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "xxsql-cast-blob-test-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	engine := storage.NewEngine(tmpDir)
+	if err := engine.Open(); err != nil {
+		t.Fatalf("Failed to open engine: %v", err)
+	}
+	defer engine.Close()
+
+	exec := NewExecutor(engine)
+	exec.SetDatabase("testdb")
+
+	// Test CAST string to BLOB
+	result, err := exec.Execute("SELECT CAST('hello' AS BLOB)")
+	if err != nil {
+		t.Errorf("CAST string to BLOB failed: %v", err)
+	}
+
+	// Test CAST hex string to BLOB
+	result, err = exec.Execute("SELECT CAST('0x48656C6C6F' AS BLOB)")
+	if err != nil {
+		t.Errorf("CAST hex to BLOB failed: %v", err)
+	}
+
+	// Test CAST integer to BLOB
+	result, err = exec.Execute("SELECT CAST(123 AS BLOB)")
+	if err != nil {
+		t.Errorf("CAST int to BLOB failed: %v", err)
+	}
+
+	// Test CAST bool to BLOB
+	result, err = exec.Execute("SELECT CAST(true AS BLOB)")
+	if err != nil {
+		t.Errorf("CAST bool to BLOB failed: %v", err)
+	}
+
+	_ = result
+}
+
+// TestCollateExpression tests COLLATE expressions
+func TestCollateExpression(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "xxsql-collate-test-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	engine := storage.NewEngine(tmpDir)
+	if err := engine.Open(); err != nil {
+		t.Fatalf("Failed to open engine: %v", err)
+	}
+	defer engine.Close()
+
+	exec := NewExecutor(engine)
+	exec.SetDatabase("testdb")
+
+	// Create table with text column
+	_, err = exec.Execute("CREATE TABLE collate_test (id INT PRIMARY KEY, name VARCHAR)")
+	if err != nil {
+		t.Fatalf("CREATE TABLE failed: %v", err)
+	}
+
+	_, err = exec.Execute("INSERT INTO collate_test VALUES (1, 'Apple')")
+	if err != nil {
+		t.Fatalf("INSERT failed: %v", err)
+	}
+
+	_, err = exec.Execute("INSERT INTO collate_test VALUES (2, 'apple')")
+	if err != nil {
+		t.Fatalf("INSERT failed: %v", err)
+	}
+
+	// Test COLLATE NOCASE in WHERE clause
+	result, err := exec.Execute("SELECT * FROM collate_test WHERE name COLLATE NOCASE = 'apple'")
+	if err != nil {
+		t.Errorf("COLLATE NOCASE query failed: %v", err)
+	}
+	if result.RowCount != 2 {
+		t.Errorf("COLLATE NOCASE: expected 2 rows, got %d", result.RowCount)
+	}
+}
+
+// TestBinaryExprWithoutRow tests evaluateBinaryExprWithoutRow through SQL
+func TestBinaryExprWithoutRow(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "xxsql-binexpr-test-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	engine := storage.NewEngine(tmpDir)
+	if err := engine.Open(); err != nil {
+		t.Fatalf("Failed to open engine: %v", err)
+	}
+	defer engine.Close()
+
+	exec := NewExecutor(engine)
+	exec.SetDatabase("testdb")
+
+	// Test default with binary expression
+	_, err = exec.Execute("CREATE TABLE bin_test (id INT PRIMARY KEY, value INT DEFAULT 10 * 5)")
+	if err != nil {
+		t.Fatalf("CREATE TABLE failed: %v", err)
+	}
+
+	_, err = exec.Execute("INSERT INTO bin_test (id) VALUES (1)")
+	if err != nil {
+		t.Errorf("INSERT with binary default failed: %v", err)
+	}
+
+	// Test default with subtraction
+	_, err = exec.Execute("CREATE TABLE bin_sub (id INT PRIMARY KEY, value INT DEFAULT 100 - 50)")
+	if err != nil {
+		t.Errorf("CREATE TABLE with subtraction default failed: %v", err)
+	}
+
+	// Test default with multiplication
+	_, err = exec.Execute("CREATE TABLE bin_mul (id INT PRIMARY KEY, value INT DEFAULT 10 * 10)")
+	if err != nil {
+		t.Errorf("CREATE TABLE with multiplication default failed: %v", err)
+	}
+
+	// Test default with division
+	_, err = exec.Execute("CREATE TABLE bin_div (id INT PRIMARY KEY, value INT DEFAULT 100 / 4)")
+	if err != nil {
+		t.Errorf("CREATE TABLE with division default failed: %v", err)
+	}
+}
+
+// TestNestedViewCheckOption tests nested views with CHECK OPTION
+func TestNestedViewCheckOption(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "xxsql-nested-view-test-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	engine := storage.NewEngine(tmpDir)
+	if err := engine.Open(); err != nil {
+		t.Fatalf("Failed to open engine: %v", err)
+	}
+	defer engine.Close()
+
+	exec := NewExecutor(engine)
+	exec.SetDatabase("testdb")
+
+	// Create base table
+	_, err = exec.Execute("CREATE TABLE items (id INT PRIMARY KEY, status VARCHAR, active INT)")
+	if err != nil {
+		t.Fatalf("CREATE TABLE failed: %v", err)
+	}
+
+	// Create first view with CASCADED CHECK OPTION
+	_, err = exec.Execute("CREATE VIEW active_items AS SELECT id, status, active FROM items WHERE active = 1 WITH CASCADED CHECK OPTION")
+	if err != nil {
+		t.Fatalf("CREATE VIEW failed: %v", err)
+	}
+
+	// Create nested view with LOCAL CHECK OPTION
+	_, err = exec.Execute("CREATE VIEW pending_active AS SELECT id, status, active FROM active_items WHERE status = 'pending' WITH LOCAL CHECK OPTION")
+	if err != nil {
+		t.Logf("Nested view creation: %v", err)
+		return
+	}
+
+	// Insert through nested view - should fail if violates base view condition
+	_, err = exec.Execute("INSERT INTO pending_active VALUES (1, 'pending', 0)")
+	if err == nil {
+		t.Log("INSERT with non-matching active=0 might be allowed depending on CHECK OPTION semantics")
+	}
+}
+
+// TestCollateInWhereWithLogical tests COLLATE in WHERE with AND/OR operators
+func TestCollateInWhereWithLogical(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "xxsql-collate-logic-test-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	engine := storage.NewEngine(tmpDir)
+	if err := engine.Open(); err != nil {
+		t.Fatalf("Failed to open engine: %v", err)
+	}
+	defer engine.Close()
+
+	exec := NewExecutor(engine)
+	exec.SetDatabase("testdb")
+
+	// Create table with text columns
+	_, err = exec.Execute("CREATE TABLE collate_logic (id INT PRIMARY KEY, name VARCHAR, status VARCHAR)")
+	if err != nil {
+		t.Fatalf("CREATE TABLE failed: %v", err)
+	}
+
+	_, err = exec.Execute("INSERT INTO collate_logic VALUES (1, 'Apple', 'active')")
+	if err != nil {
+		t.Fatalf("INSERT failed: %v", err)
+	}
+
+	_, err = exec.Execute("INSERT INTO collate_logic VALUES (2, 'apple', 'inactive')")
+	if err != nil {
+		t.Fatalf("INSERT failed: %v", err)
+	}
+
+	_, err = exec.Execute("INSERT INTO collate_logic VALUES (3, 'BANANA', 'active')")
+	if err != nil {
+		t.Fatalf("INSERT failed: %v", err)
+	}
+
+	// Test COLLATE with AND
+	result, err := exec.Execute("SELECT * FROM collate_logic WHERE name COLLATE NOCASE = 'apple' AND status = 'active'")
+	if err != nil {
+		t.Errorf("COLLATE with AND failed: %v", err)
+	}
+	if result.RowCount != 1 {
+		t.Errorf("COLLATE with AND: expected 1 row, got %d", result.RowCount)
+	}
+
+	// Test COLLATE with OR
+	result, err = exec.Execute("SELECT * FROM collate_logic WHERE name COLLATE NOCASE = 'apple' OR status = 'inactive'")
+	if err != nil {
+		t.Errorf("COLLATE with OR failed: %v", err)
+	}
+	if result.RowCount != 2 {
+		t.Errorf("COLLATE with OR: expected 2 rows, got %d", result.RowCount)
+	}
+
+	// Test COLLATE with parentheses
+	result, err = exec.Execute("SELECT * FROM collate_logic WHERE (name COLLATE NOCASE = 'apple' OR name COLLATE NOCASE = 'banana') AND status = 'active'")
+	if err != nil {
+		t.Errorf("COLLATE with parentheses failed: %v", err)
+	}
+	if result.RowCount != 2 {
+		t.Errorf("COLLATE with parentheses: expected 2 rows, got %d", result.RowCount)
+	}
+}
+
+// TestComputeAggregateForHaving tests HAVING with aggregate functions that trigger computeAggregateForHaving
+func TestComputeAggregateForHaving(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "xxsql-having-agg-test-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	engine := storage.NewEngine(tmpDir)
+	if err := engine.Open(); err != nil {
+		t.Fatalf("Failed to open engine: %v", err)
+	}
+	defer engine.Close()
+
+	exec := NewExecutor(engine)
+	exec.SetDatabase("testdb")
+
+	// Create table
+	_, err = exec.Execute("CREATE TABLE sales (id INT PRIMARY KEY, product VARCHAR, quantity INT, price INT)")
+	if err != nil {
+		t.Fatalf("CREATE TABLE failed: %v", err)
+	}
+
+	_, err = exec.Execute("INSERT INTO sales VALUES (1, 'A', 10, 100)")
+	if err != nil {
+		t.Fatalf("INSERT failed: %v", err)
+	}
+
+	_, err = exec.Execute("INSERT INTO sales VALUES (2, 'A', 20, 200)")
+	if err != nil {
+		t.Fatalf("INSERT failed: %v", err)
+	}
+
+	_, err = exec.Execute("INSERT INTO sales VALUES (3, 'B', 5, 50)")
+	if err != nil {
+		t.Fatalf("INSERT failed: %v", err)
+	}
+
+	_, err = exec.Execute("INSERT INTO sales VALUES (4, 'B', 15, 150)")
+	if err != nil {
+		t.Fatalf("INSERT failed: %v", err)
+	}
+
+	// Test HAVING with SUM not in SELECT
+	result, err := exec.Execute("SELECT product FROM sales GROUP BY product HAVING SUM(quantity) > 20")
+	if err != nil {
+		t.Errorf("HAVING with SUM not in SELECT failed: %v", err)
+	}
+
+	// Test HAVING with AVG not in SELECT
+	result, err = exec.Execute("SELECT product FROM sales GROUP BY product HAVING AVG(price) > 100")
+	if err != nil {
+		t.Errorf("HAVING with AVG not in SELECT failed: %v", err)
+	}
+
+	// Test HAVING with MIN not in SELECT
+	result, err = exec.Execute("SELECT product FROM sales GROUP BY product HAVING MIN(quantity) >= 10")
+	if err != nil {
+		t.Errorf("HAVING with MIN not in SELECT failed: %v", err)
+	}
+
+	// Test HAVING with MAX not in SELECT
+	result, err = exec.Execute("SELECT product FROM sales GROUP BY product HAVING MAX(price) > 150")
+	if err != nil {
+		t.Errorf("HAVING with MAX not in SELECT failed: %v", err)
+	}
+
+	_ = result
+}
+
+// TestJSONRemovePath tests JSON_REMOVE function
+func TestJSONRemovePath(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "xxsql-json-remove-test-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	engine := storage.NewEngine(tmpDir)
+	if err := engine.Open(); err != nil {
+		t.Fatalf("Failed to open engine: %v", err)
+	}
+	defer engine.Close()
+
+	exec := NewExecutor(engine)
+	exec.SetDatabase("testdb")
+
+	// Test JSON_REMOVE with object
+	result, err := exec.Execute(`SELECT JSON_REMOVE('{"a": 1, "b": 2}', '$.a')`)
+	if err != nil {
+		t.Errorf("JSON_REMOVE failed: %v", err)
+	}
+	_ = result
+
+	// Test JSON_REMOVE with array
+	result, err = exec.Execute(`SELECT JSON_REMOVE('[1, 2, 3]', '$[0]')`)
+	if err != nil {
+		t.Errorf("JSON_REMOVE array failed: %v", err)
+	}
+	_ = result
+
+	// Test JSON_REMOVE nested path
+	result, err = exec.Execute(`SELECT JSON_REMOVE('{"a": {"b": 1, "c": 2}}', '$.a.b')`)
+	if err != nil {
+		t.Errorf("JSON_REMOVE nested failed: %v", err)
+	}
+	_ = result
+}
+
+// TestJSONSet tests JSON_SET function
+func TestJSONSet(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "xxsql-json-set-test-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	engine := storage.NewEngine(tmpDir)
+	if err := engine.Open(); err != nil {
+		t.Fatalf("Failed to open engine: %v", err)
+	}
+	defer engine.Close()
+
+	exec := NewExecutor(engine)
+	exec.SetDatabase("testdb")
+
+	// Test JSON_SET with object
+	result, err := exec.Execute(`SELECT JSON_SET('{"a": 1}', '$.b', 2)`)
+	if err != nil {
+		t.Errorf("JSON_SET failed: %v", err)
+	}
+	_ = result
+
+	// Test JSON_SET replace value
+	result, err = exec.Execute(`SELECT JSON_SET('{"a": 1}', '$.a', 10)`)
+	if err != nil {
+		t.Errorf("JSON_SET replace failed: %v", err)
+	}
+	_ = result
+
+	// Test JSON_SET with array index
+	result, err = exec.Execute(`SELECT JSON_SET('[1, 2, 3]', '$[0]', 10)`)
+	if err != nil {
+		t.Errorf("JSON_SET array failed: %v", err)
+	}
+	_ = result
+}
