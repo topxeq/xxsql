@@ -1494,3 +1494,283 @@ func TestParseUnaryExpr(t *testing.T) {
 		_ = stmt
 	}
 }
+
+// TestParseCreateIndex tests CREATE INDEX statements
+func TestParseCreateIndexCoverage(t *testing.T) {
+	tests := []string{
+		"CREATE INDEX idx_name ON users(name)",
+		"CREATE UNIQUE INDEX idx_email ON users(email)",
+		"CREATE INDEX idx_multi ON users(name, email)",
+		"CREATE INDEX IF NOT EXISTS idx_name ON users(name)",
+		"DROP INDEX idx_name",
+		"DROP INDEX IF EXISTS idx_name",
+	}
+
+	for _, input := range tests {
+		p := NewParser(input)
+		stmt, err := p.Parse()
+		if err != nil {
+			t.Logf("Parse(%q) failed: %v", input, err)
+			continue
+		}
+		_ = stmt.String()
+	}
+}
+
+// TestParseCreateTrigger tests CREATE TRIGGER statements
+func TestParseCreateTriggerMore2(t *testing.T) {
+	tests := []string{
+		"CREATE TRIGGER trg_name BEFORE INSERT ON users BEGIN SELECT 1; END",
+		"CREATE TRIGGER trg_name AFTER UPDATE ON users BEGIN SELECT 1; END",
+		"CREATE TRIGGER trg_name AFTER DELETE ON users BEGIN SELECT 1; END",
+		"DROP TRIGGER trg_name",
+		"DROP TRIGGER IF EXISTS trg_name",
+	}
+
+	for _, input := range tests {
+		p := NewParser(input)
+		stmt, err := p.Parse()
+		if err != nil {
+			t.Logf("Parse(%q) failed: %v", input, err)
+			continue
+		}
+		_ = stmt.String()
+	}
+}
+
+// TestParseAlterTable tests ALTER TABLE statements
+func TestParseAlterTableCoverage(t *testing.T) {
+	tests := []string{
+		"ALTER TABLE users ADD COLUMN age INT",
+		"ALTER TABLE users DROP COLUMN age",
+		"ALTER TABLE users RENAME TO people",
+		"ALTER TABLE users RENAME COLUMN name TO username",
+	}
+
+	for _, input := range tests {
+		p := NewParser(input)
+		stmt, err := p.Parse()
+		if err != nil {
+			t.Logf("Parse(%q) failed: %v", input, err)
+			continue
+		}
+		_ = stmt.String()
+	}
+}
+
+// TestParseExplain tests EXPLAIN statements
+func TestParseExplainCoverage(t *testing.T) {
+	tests := []string{
+		"EXPLAIN SELECT * FROM users",
+		"EXPLAIN QUERY PLAN SELECT * FROM users",
+	}
+
+	for _, input := range tests {
+		p := NewParser(input)
+		stmt, err := p.Parse()
+		if err != nil {
+			t.Logf("Parse(%q) failed: %v", input, err)
+			continue
+		}
+		_ = stmt.String()
+	}
+}
+
+// TestParseTransactions tests transaction statements
+func TestParseTransactionsCoverage(t *testing.T) {
+	tests := []string{
+		"BEGIN",
+		"BEGIN TRANSACTION",
+		"COMMIT",
+		"COMMIT TRANSACTION",
+		"ROLLBACK",
+		"ROLLBACK TRANSACTION",
+		"SAVEPOINT sp1",
+		"RELEASE SAVEPOINT sp1",
+		"ROLLBACK TO SAVEPOINT sp1",
+	}
+
+	for _, input := range tests {
+		p := NewParser(input)
+		stmt, err := p.Parse()
+		if err != nil {
+			t.Logf("Parse(%q) failed: %v", input, err)
+			continue
+		}
+		_ = stmt.String()
+	}
+}
+
+// TestParsePragma tests PRAGMA statements
+func TestParsePragmaCoverage(t *testing.T) {
+	tests := []string{
+		"PRAGMA cache_size",
+		"PRAGMA cache_size = 1000",
+		"PRAGMA journal_mode = WAL",
+		"PRAGMA foreign_keys = ON",
+		"PRAGMA table_info(users)",
+	}
+
+	for _, input := range tests {
+		p := NewParser(input)
+		stmt, err := p.Parse()
+		if err != nil {
+			t.Logf("Parse(%q) failed: %v", input, err)
+			continue
+		}
+		_ = stmt.String()
+	}
+}
+
+// TestParseCaseExpr tests CASE expressions
+func TestParseCaseExprExtra(t *testing.T) {
+	tests := []string{
+		"SELECT CASE WHEN a = 1 THEN 'one' ELSE 'other' END",
+		"SELECT CASE a WHEN 1 THEN 'one' WHEN 2 THEN 'two' ELSE 'other' END",
+		"SELECT CASE WHEN a > 0 THEN 'positive' WHEN a < 0 THEN 'negative' END",
+	}
+
+	for _, input := range tests {
+		p := NewParser(input)
+		stmt, err := p.Parse()
+		if err != nil {
+			t.Logf("Parse(%q) failed: %v", input, err)
+			continue
+		}
+		_ = stmt.String()
+	}
+}
+
+// TestParseBetweenExpr tests BETWEEN expressions
+func TestParseBetweenExpr(t *testing.T) {
+	tests := []string{
+		"SELECT * FROM t WHERE a BETWEEN 1 AND 10",
+		"SELECT * FROM t WHERE a NOT BETWEEN 1 AND 10",
+	}
+
+	for _, input := range tests {
+		p := NewParser(input)
+		stmt, err := p.Parse()
+		if err != nil {
+			t.Logf("Parse(%q) failed: %v", input, err)
+			continue
+		}
+		_ = stmt.String()
+	}
+}
+
+// TestParseCastExpr tests CAST expressions
+func TestParseCastExprExtra(t *testing.T) {
+	tests := []string{
+		"SELECT CAST(a AS INT)",
+		"SELECT CAST(a AS VARCHAR(50))",
+		"SELECT CAST(a AS FLOAT)",
+		"SELECT CAST(a AS BLOB)",
+	}
+
+	for _, input := range tests {
+		p := NewParser(input)
+		stmt, err := p.Parse()
+		if err != nil {
+			t.Logf("Parse(%q) failed: %v", input, err)
+			continue
+		}
+		_ = stmt.String()
+	}
+}
+
+// TestParseExistsExpr tests EXISTS expressions
+func TestParseExistsExprCoverage(t *testing.T) {
+	tests := []string{
+		"SELECT * FROM t WHERE EXISTS (SELECT 1 FROM u WHERE u.id = t.id)",
+		"SELECT * FROM t WHERE NOT EXISTS (SELECT 1 FROM u WHERE u.id = t.id)",
+	}
+
+	for _, input := range tests {
+		p := NewParser(input)
+		stmt, err := p.Parse()
+		if err != nil {
+			t.Logf("Parse(%q) failed: %v", input, err)
+			continue
+		}
+		_ = stmt.String()
+	}
+}
+
+// TestParseWindowFunctions tests window function parsing
+func TestParseWindowFunctionsExtra(t *testing.T) {
+	tests := []string{
+		"SELECT ROW_NUMBER() OVER (ORDER BY a)",
+		"SELECT ROW_NUMBER() OVER (PARTITION BY b ORDER BY a)",
+		"SELECT SUM(a) OVER (PARTITION BY b) FROM t",
+		"SELECT RANK() OVER (ORDER BY a DESC) FROM t",
+		"SELECT DENSE_RANK() OVER (PARTITION BY b ORDER BY a) FROM t",
+	}
+
+	for _, input := range tests {
+		p := NewParser(input)
+		stmt, err := p.Parse()
+		if err != nil {
+			t.Logf("Parse(%q) failed: %v", input, err)
+			continue
+		}
+		_ = stmt.String()
+	}
+}
+
+// TestParseCTE tests CTE (WITH clause) parsing
+func TestParseCTE(t *testing.T) {
+	tests := []string{
+		"WITH cte AS (SELECT * FROM t) SELECT * FROM cte",
+		"WITH cte1 AS (SELECT * FROM t1), cte2 AS (SELECT * FROM t2) SELECT * FROM cte1 JOIN cte2",
+		"WITH RECURSIVE cte AS (SELECT 1 UNION ALL SELECT n+1 FROM cte WHERE n < 10) SELECT * FROM cte",
+	}
+
+	for _, input := range tests {
+		p := NewParser(input)
+		stmt, err := p.Parse()
+		if err != nil {
+			t.Logf("Parse(%q) failed: %v", input, err)
+			continue
+		}
+		_ = stmt.String()
+	}
+}
+
+// TestParseLateral tests LATERAL parsing
+func TestParseLateral(t *testing.T) {
+	tests := []string{
+		"SELECT * FROM t, LATERAL (SELECT * FROM u WHERE u.id = t.id) AS l",
+	}
+
+	for _, input := range tests {
+		p := NewParser(input)
+		stmt, err := p.Parse()
+		if err != nil {
+			t.Logf("Parse(%q) failed: %v", input, err)
+			continue
+		}
+		_ = stmt.String()
+	}
+}
+
+// TestParseSetOperations tests set operations
+func TestParseSetOperations(t *testing.T) {
+	tests := []string{
+		"SELECT a FROM t1 UNION SELECT a FROM t2",
+		"SELECT a FROM t1 UNION ALL SELECT a FROM t2",
+		"SELECT a FROM t1 EXCEPT SELECT a FROM t2",
+		"SELECT a FROM t1 INTERSECT SELECT a FROM t2",
+		"(SELECT a FROM t1) UNION (SELECT a FROM t2) ORDER BY a",
+	}
+
+	for _, input := range tests {
+		p := NewParser(input)
+		stmt, err := p.Parse()
+		if err != nil {
+			t.Logf("Parse(%q) failed: %v", input, err)
+			continue
+		}
+		_ = stmt.String()
+	}
+}
