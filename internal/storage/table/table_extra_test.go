@@ -470,3 +470,98 @@ func TestTempTableGetIndexForColumns(t *testing.T) {
 		t.Errorf("Match count: got %d, want 2", matchCount)
 	}
 }
+
+func TestIndexConditionScan(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	columns := []*types.ColumnInfo{
+		{Name: "id", Type: types.TypeInt, PrimaryKey: true},
+		{Name: "value", Type: types.TypeInt},
+	}
+
+	tbl, err := table.OpenTable(tmpDir, "idx_cond_test", columns)
+	if err != nil {
+		t.Fatalf("OpenTable failed: %v", err)
+	}
+	defer tbl.Close()
+
+	// Insert rows with values 1-10
+	for i := 1; i <= 10; i++ {
+		values := []types.Value{
+			types.NewIntValue(int64(i)),
+			types.NewIntValue(int64(i * 10)),
+		}
+		_, err := tbl.Insert(values)
+		if err != nil {
+			t.Fatalf("Insert %d failed: %v", i, err)
+		}
+	}
+
+	// Test equality scan
+	rowIDs, err := tbl.IndexConditionScan("PRIMARY", "=", types.NewIntValue(5))
+	if err != nil {
+		t.Fatalf("IndexConditionScan = failed: %v", err)
+	}
+	if len(rowIDs) != 1 {
+		t.Errorf("= scan: got %d rows, want 1", len(rowIDs))
+	}
+
+	// Test less than scan
+	rowIDs, err = tbl.IndexConditionScan("PRIMARY", "<", types.NewIntValue(5))
+	if err != nil {
+		t.Fatalf("IndexConditionScan < failed: %v", err)
+	}
+	if len(rowIDs) != 4 {
+		t.Errorf("< scan: got %d rows, want 4", len(rowIDs))
+	}
+
+	// Test less than or equal scan
+	rowIDs, err = tbl.IndexConditionScan("PRIMARY", "<=", types.NewIntValue(5))
+	if err != nil {
+		t.Fatalf("IndexConditionScan <= failed: %v", err)
+	}
+	if len(rowIDs) != 5 {
+		t.Errorf("<= scan: got %d rows, want 5", len(rowIDs))
+	}
+
+	// Test greater than scan
+	rowIDs, err = tbl.IndexConditionScan("PRIMARY", ">", types.NewIntValue(5))
+	if err != nil {
+		t.Fatalf("IndexConditionScan > failed: %v", err)
+	}
+	if len(rowIDs) != 5 {
+		t.Errorf("> scan: got %d rows, want 5", len(rowIDs))
+	}
+
+	// Test greater than or equal scan
+	rowIDs, err = tbl.IndexConditionScan("PRIMARY", ">=", types.NewIntValue(5))
+	if err != nil {
+		t.Fatalf("IndexConditionScan >= failed: %v", err)
+	}
+	if len(rowIDs) != 6 {
+		t.Errorf(">= scan: got %d rows, want 6", len(rowIDs))
+	}
+}
+
+func TestIndexConditionScanNonExistent(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	columns := []*types.ColumnInfo{
+		{Name: "id", Type: types.TypeInt, PrimaryKey: true},
+	}
+
+	tbl, err := table.OpenTable(tmpDir, "idx_cond_test2", columns)
+	if err != nil {
+		t.Fatalf("OpenTable failed: %v", err)
+	}
+	defer tbl.Close()
+
+	// Insert one row
+	tbl.Insert([]types.Value{types.NewIntValue(1)})
+
+	// Test non-existent index
+	_, err = tbl.IndexConditionScan("nonexistent", "=", types.NewIntValue(1))
+	if err == nil {
+		t.Error("Expected error for non-existent index")
+	}
+}
