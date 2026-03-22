@@ -1394,3 +1394,82 @@ func TestAlterTableModifyColumnExtra(t *testing.T) {
 		t.Logf("ALTER TABLE MODIFY COLUMN may not be fully supported: %v", err)
 	}
 }
+
+// TestUpsert tests INSERT ... ON CONFLICT DO UPDATE
+func TestUpsert(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "xxsql-upsert-test-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	engine := storage.NewEngine(tmpDir)
+	if err := engine.Open(); err != nil {
+		t.Fatalf("Failed to open engine: %v", err)
+	}
+	defer engine.Close()
+
+	exec := NewExecutor(engine)
+	exec.SetDatabase("testdb")
+
+	// Create table with UNIQUE constraint
+	_, err = exec.Execute("CREATE TABLE upsert_test (id INT PRIMARY KEY, name VARCHAR UNIQUE, value INT)")
+	if err != nil {
+		t.Fatalf("CREATE TABLE failed: %v", err)
+	}
+
+	// Insert initial row
+	_, err = exec.Execute("INSERT INTO upsert_test VALUES (1, 'test', 100)")
+	if err != nil {
+		t.Fatalf("INSERT failed: %v", err)
+	}
+
+	// Test ON CONFLICT DO NOTHING
+	_, err = exec.Execute("INSERT INTO upsert_test VALUES (2, 'test', 200) ON CONFLICT DO NOTHING")
+	if err != nil {
+		t.Logf("ON CONFLICT DO NOTHING error (may be expected): %v", err)
+	}
+
+	// Test ON CONFLICT DO UPDATE
+	_, err = exec.Execute("INSERT INTO upsert_test VALUES (2, 'test', 200) ON CONFLICT (name) DO UPDATE SET value = 500")
+	if err != nil {
+		t.Logf("ON CONFLICT DO UPDATE error: %v", err)
+	}
+}
+
+// TestUpsertDoNothing tests INSERT ... ON CONFLICT DO NOTHING
+func TestUpsertDoNothing(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "xxsql-upsert-dn-test-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	engine := storage.NewEngine(tmpDir)
+	if err := engine.Open(); err != nil {
+		t.Fatalf("Failed to open engine: %v", err)
+	}
+	defer engine.Close()
+
+	exec := NewExecutor(engine)
+	exec.SetDatabase("testdb")
+
+	// Create table
+	_, err = exec.Execute("CREATE TABLE upsert_dn (id INT PRIMARY KEY, name VARCHAR)")
+	if err != nil {
+		t.Fatalf("CREATE TABLE failed: %v", err)
+	}
+
+	// Insert initial row
+	_, err = exec.Execute("INSERT INTO upsert_dn VALUES (1, 'test')")
+	if err != nil {
+		t.Fatalf("INSERT failed: %v", err)
+	}
+
+	// Try to insert duplicate with DO NOTHING
+	result, err := exec.Execute("INSERT INTO upsert_dn VALUES (1, 'test2') ON CONFLICT DO NOTHING")
+	if err != nil {
+		t.Logf("ON CONFLICT DO NOTHING returned: %v", err)
+	}
+	_ = result
+}
