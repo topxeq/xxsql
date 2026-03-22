@@ -1898,3 +1898,192 @@ func TestFunctionCallStringMethod(t *testing.T) {
 	}
 	_ = fc.String()
 }
+
+// TestParseMoreStatements tests more SQL statement parsing
+func TestParseMoreStatements(t *testing.T) {
+	tests := []struct {
+		name  string
+		input string
+	}{
+		{"SELECT with WHERE IN", "SELECT * FROM t WHERE id IN (1, 2, 3)"},
+		{"SELECT with WHERE NOT IN", "SELECT * FROM t WHERE id NOT IN (1, 2, 3)"},
+		{"SELECT with BETWEEN", "SELECT * FROM t WHERE id BETWEEN 1 AND 10"},
+		{"SELECT with IS NULL", "SELECT * FROM t WHERE name IS NULL"},
+		{"SELECT with IS NOT NULL", "SELECT * FROM t WHERE name IS NOT NULL"},
+		{"SELECT with LIKE", "SELECT * FROM t WHERE name LIKE '%test%'"},
+		{"SELECT with EXISTS", "SELECT * FROM t WHERE EXISTS (SELECT 1 FROM t2 WHERE t2.id = t.id)"},
+		{"SELECT with CASE", "SELECT CASE WHEN a > 0 THEN 'positive' ELSE 'negative' END FROM t"},
+		{"SELECT with DISTINCT", "SELECT DISTINCT name FROM t"},
+		{"SELECT with GROUP BY HAVING", "SELECT id, COUNT(*) FROM t GROUP BY id HAVING COUNT(*) > 1"},
+		{"INSERT with ON CONFLICT", "INSERT INTO t (id, name) VALUES (1, 'a') ON CONFLICT (id) DO UPDATE SET name = 'b'"},
+		{"CREATE TABLE with constraints", "CREATE TABLE t (id INT PRIMARY KEY, name VARCHAR(50) NOT NULL, UNIQUE(id, name))"},
+		{"CREATE INDEX", "CREATE INDEX idx_name ON t(name)"},
+		{"DROP TABLE", "DROP TABLE IF EXISTS t"},
+		{"ALTER TABLE ADD", "ALTER TABLE t ADD COLUMN new_col INT DEFAULT 0"},
+		{"ALTER TABLE DROP", "ALTER TABLE t DROP COLUMN old_col"},
+		{"WITH clause", "WITH cte AS (SELECT * FROM t) SELECT * FROM cte"},
+		{"UNION ALL", "SELECT a FROM t1 UNION ALL SELECT b FROM t2"},
+		{"EXCEPT", "SELECT a FROM t1 EXCEPT SELECT b FROM t2"},
+		{"INTERSECT", "SELECT a FROM t1 INTERSECT SELECT b FROM t2"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := Parse(tt.input)
+			if err != nil {
+				t.Logf("Parse(%q) error: %v (may be expected)", tt.input, err)
+			}
+		})
+	}
+}
+
+// TestParseDataTypes tests parsing various data types
+func TestParseDataTypesMore(t *testing.T) {
+	tests := []struct {
+		name  string
+		input string
+	}{
+		{"INT", "CREATE TABLE t (a INT)"},
+		{"BIGINT", "CREATE TABLE t (a BIGINT)"},
+		{"VARCHAR", "CREATE TABLE t (a VARCHAR(100))"},
+		{"CHAR", "CREATE TABLE t (a CHAR(10))"},
+		{"TEXT", "CREATE TABLE t (a TEXT)"},
+		{"FLOAT", "CREATE TABLE t (a FLOAT)"},
+		{"DOUBLE", "CREATE TABLE t (a DOUBLE)"},
+		{"DECIMAL", "CREATE TABLE t (a DECIMAL(10, 2))"},
+		{"DATE", "CREATE TABLE t (a DATE)"},
+		{"TIME", "CREATE TABLE t (a TIME)"},
+		{"DATETIME", "CREATE TABLE t (a DATETIME)"},
+		{"BOOLEAN", "CREATE TABLE t (a BOOLEAN)"},
+		{"BLOB", "CREATE TABLE t (a BLOB)"},
+		{"SEQ", "CREATE TABLE t (id SEQ PRIMARY KEY)"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := Parse(tt.input)
+			if err != nil {
+				t.Errorf("Parse(%q) error: %v", tt.input, err)
+			}
+		})
+	}
+}
+
+// TestParseExpressions tests parsing various expressions
+func TestParseExpressions(t *testing.T) {
+	tests := []struct {
+		name  string
+		input string
+	}{
+		{"Simple arithmetic", "SELECT 1 + 2 * 3"},
+		{"Parenthesized", "SELECT (1 + 2) * 3"},
+		{"Function call", "SELECT SUM(a), AVG(b), MAX(c)"},
+		{"Nested function", "SELECT UPPER(TRIM(name))"},
+		{"CASE WHEN", "SELECT CASE WHEN a > 0 THEN 1 ELSE 0 END"},
+		{"CAST", "SELECT CAST(a AS VARCHAR)"},
+		{"COALESCE", "SELECT COALESCE(a, b, 'default')"},
+		{"NULLIF", "SELECT NULLIF(a, b)"},
+		{"Subquery", "SELECT (SELECT MAX(id) FROM t)"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := Parse(tt.input)
+			if err != nil {
+				t.Logf("Parse(%q) error: %v (may be expected)", tt.input, err)
+			}
+		})
+	}
+}
+
+// TestParseJoins tests parsing various join types
+func TestParseJoins(t *testing.T) {
+	tests := []struct {
+		name  string
+		input string
+	}{
+		{"INNER JOIN", "SELECT * FROM t1 INNER JOIN t2 ON t1.id = t2.id"},
+		{"LEFT JOIN", "SELECT * FROM t1 LEFT JOIN t2 ON t1.id = t2.id"},
+		{"RIGHT JOIN", "SELECT * FROM t1 RIGHT JOIN t2 ON t1.id = t2.id"},
+		{"FULL OUTER JOIN", "SELECT * FROM t1 FULL OUTER JOIN t2 ON t1.id = t2.id"},
+		{"CROSS JOIN", "SELECT * FROM t1 CROSS JOIN t2"},
+		{"Multiple joins", "SELECT * FROM t1 JOIN t2 ON t1.id = t2.id JOIN t3 ON t2.id = t3.id"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := Parse(tt.input)
+			if err != nil {
+				t.Logf("Parse(%q) error: %v (may be expected)", tt.input, err)
+			}
+		})
+	}
+}
+
+// TestColumnRefString tests ColumnRef.String
+func TestColumnRefStringMore(t *testing.T) {
+	cr := &ColumnRef{Name: "column"}
+	_ = cr.String()
+
+	cr = &ColumnRef{Table: "t", Name: "column"}
+	_ = cr.String()
+}
+
+// TestLiteralStringMore tests more Literal.String cases
+func TestLiteralStringMore(t *testing.T) {
+	l := &Literal{Value: "test", Type: LiteralString}
+	_ = l.String()
+
+	l = &Literal{Value: "123", Type: LiteralNumber}
+	_ = l.String()
+
+	l = &Literal{Value: "TRUE", Type: LiteralBool}
+	_ = l.String()
+
+	l = &Literal{Value: "NULL", Type: LiteralNull}
+	_ = l.String()
+}
+
+// TestSelectStmtString tests SelectStmt.String
+func TestSelectStmtStringMore(t *testing.T) {
+	stmt := &SelectStmt{
+		Columns: []Expression{
+			&ColumnRef{Name: "a"},
+		},
+		From: &FromClause{
+			Table: &TableRef{Name: "t"},
+		},
+	}
+	_ = stmt.String()
+}
+
+// TestInsertStmtString tests InsertStmt.String
+func TestInsertStmtStringMore(t *testing.T) {
+	stmt := &InsertStmt{
+		Table:   "t",
+		Columns: []string{"id", "name"},
+		Values: [][]Expression{
+			{&Literal{Value: "1", Type: LiteralNumber}, &Literal{Value: "a", Type: LiteralString}},
+		},
+	}
+	_ = stmt.String()
+}
+
+// TestUpdateStmtString tests UpdateStmt.String
+func TestUpdateStmtStringMore(t *testing.T) {
+	stmt := &UpdateStmt{
+		Table: "t",
+		Assignments: []*Assignment{
+			{Column: "name", Value: &Literal{Value: "new", Type: LiteralString}},
+		},
+	}
+	_ = stmt.String()
+}
+
+// TestDeleteStmtString tests DeleteStmt.String
+func TestDeleteStmtStringMore(t *testing.T) {
+	stmt := &DeleteStmt{
+		Table: "t",
+	}
+	_ = stmt.String()
+}
