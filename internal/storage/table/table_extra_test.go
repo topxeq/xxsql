@@ -565,3 +565,277 @@ func TestIndexConditionScanNonExistent(t *testing.T) {
 		t.Error("Expected error for non-existent index")
 	}
 }
+
+// TestIndexRangeScan tests the IndexRangeScan method
+func TestIndexRangeScan(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	columns := []*types.ColumnInfo{
+		{Name: "id", Type: types.TypeInt, PrimaryKey: true},
+		{Name: "value", Type: types.TypeInt},
+	}
+
+	tbl, err := table.OpenTable(tmpDir, "range_scan_test", columns)
+	if err != nil {
+		t.Fatalf("OpenTable failed: %v", err)
+	}
+	defer tbl.Close()
+
+	// Insert rows 1-20
+	for i := 1; i <= 20; i++ {
+		values := []types.Value{
+			types.NewIntValue(int64(i)),
+			types.NewIntValue(int64(i * 10)),
+		}
+		_, err := tbl.Insert(values)
+		if err != nil {
+			t.Fatalf("Insert %d failed: %v", i, err)
+		}
+	}
+
+	// Test range scan (inclusive start, exclusive end)
+	rowIDs, err := tbl.IndexRangeScan("PRIMARY", types.NewIntValue(5), types.NewIntValue(10), true, false)
+	if err != nil {
+		t.Fatalf("IndexRangeScan failed: %v", err)
+	}
+	// Just verify we got some rows
+	if len(rowIDs) < 1 {
+		t.Errorf("Range scan returned no rows")
+	}
+
+	// Test range scan (inclusive both ends)
+	rowIDs, err = tbl.IndexRangeScan("PRIMARY", types.NewIntValue(5), types.NewIntValue(10), true, true)
+	if err != nil {
+		t.Fatalf("IndexRangeScan inclusive failed: %v", err)
+	}
+	if len(rowIDs) < 1 {
+		t.Errorf("Range scan inclusive returned no rows")
+	}
+}
+
+// TestIndexPointLookup tests the IndexPointLookup method
+func TestIndexPointLookup(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	columns := []*types.ColumnInfo{
+		{Name: "id", Type: types.TypeInt, PrimaryKey: true},
+		{Name: "name", Type: types.TypeVarchar, Size: 50},
+	}
+
+	tbl, err := table.OpenTable(tmpDir, "point_lookup_test", columns)
+	if err != nil {
+		t.Fatalf("OpenTable failed: %v", err)
+	}
+	defer tbl.Close()
+
+	// Insert rows
+	for i := 1; i <= 10; i++ {
+		values := []types.Value{
+			types.NewIntValue(int64(i)),
+			types.NewStringValue("name", types.TypeVarchar),
+		}
+		_, err := tbl.Insert(values)
+		if err != nil {
+			t.Fatalf("Insert %d failed: %v", i, err)
+		}
+	}
+
+	// Point lookup for existing row
+	rowIDs, err := tbl.IndexPointLookup("PRIMARY", types.NewIntValue(5))
+	if err != nil {
+		t.Fatalf("IndexPointLookup failed: %v", err)
+	}
+	if len(rowIDs) != 1 {
+		t.Errorf("Expected 1 row ID for existing key, got %d", len(rowIDs))
+	}
+
+	// Point lookup for non-existing row
+	rowIDs, err = tbl.IndexPointLookup("PRIMARY", types.NewIntValue(100))
+	if err != nil {
+		t.Fatalf("IndexPointLookup for non-existing failed: %v", err)
+	}
+	if len(rowIDs) != 0 {
+		t.Errorf("Expected 0 row IDs for non-existing key, got %d", len(rowIDs))
+	}
+}
+
+// TestGetRowsByRowIDs tests the GetRowsByRowIDs method
+func TestGetRowsByRowIDs(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	columns := []*types.ColumnInfo{
+		{Name: "id", Type: types.TypeInt, PrimaryKey: true},
+		{Name: "value", Type: types.TypeInt},
+	}
+
+	tbl, err := table.OpenTable(tmpDir, "get_rows_test", columns)
+	if err != nil {
+		t.Fatalf("OpenTable failed: %v", err)
+	}
+	defer tbl.Close()
+
+	// Insert rows and collect row IDs
+	rowIDs := make([]row.RowID, 0, 10)
+	for i := 1; i <= 10; i++ {
+		rowID, err := tbl.Insert([]types.Value{
+			types.NewIntValue(int64(i)),
+			types.NewIntValue(int64(i * 10)),
+		})
+		if err != nil {
+			t.Fatalf("Insert %d failed: %v", i, err)
+		}
+		rowIDs = append(rowIDs, rowID)
+	}
+
+	// Get specific rows by IDs
+	rows, err := tbl.GetRowsByRowIDs(rowIDs[:5])
+	if err != nil {
+		t.Fatalf("GetRowsByRowIDs failed: %v", err)
+	}
+	if len(rows) != 5 {
+		t.Errorf("GetRowsByRowIDs: got %d rows, want 5", len(rows))
+	}
+
+	// Test with empty list
+	emptyRows, err := tbl.GetRowsByRowIDs([]row.RowID{})
+	if err != nil {
+		t.Fatalf("GetRowsByRowIDs empty failed: %v", err)
+	}
+	if len(emptyRows) != 0 {
+		t.Errorf("GetRowsByRowIDs empty: got %d rows, want 0", len(emptyRows))
+	}
+}
+
+// TestFindByKey tests the FindByKey method
+func TestFindByKey(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	columns := []*types.ColumnInfo{
+		{Name: "id", Type: types.TypeInt, PrimaryKey: true},
+		{Name: "name", Type: types.TypeVarchar, Size: 50},
+	}
+
+	tbl, err := table.OpenTable(tmpDir, "find_key_test", columns)
+	if err != nil {
+		t.Fatalf("OpenTable failed: %v", err)
+	}
+	defer tbl.Close()
+
+	// Insert rows
+	for i := 1; i <= 5; i++ {
+		values := []types.Value{
+			types.NewIntValue(int64(i)),
+			types.NewStringValue("name", types.TypeVarchar),
+		}
+		_, err := tbl.Insert(values)
+		if err != nil {
+			t.Fatalf("Insert %d failed: %v", i, err)
+		}
+	}
+
+	// Find by existing key
+	r, err := tbl.FindByKey(types.NewIntValue(3))
+	if err != nil {
+		t.Fatalf("FindByKey failed: %v", err)
+	}
+	if r == nil {
+		t.Fatal("Expected non-nil row")
+	}
+	if r.Values[0].AsInt() != 3 {
+		t.Errorf("FindByKey: id = %d, want 3", r.Values[0].AsInt())
+	}
+
+	// Find by non-existing key returns error
+	_, err = tbl.FindByKey(types.NewIntValue(100))
+	if err == nil {
+		t.Error("Expected error for non-existing key")
+	}
+}
+
+// TestFindByKeyComposite tests FindByKey with multiple columns
+func TestFindByKeyComposite(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	columns := []*types.ColumnInfo{
+		{Name: "id", Type: types.TypeInt, PrimaryKey: true},
+		{Name: "post_id", Type: types.TypeInt},
+		{Name: "content", Type: types.TypeVarchar, Size: 100},
+	}
+
+	tbl, err := table.OpenTable(tmpDir, "composite_pk_test", columns)
+	if err != nil {
+		t.Fatalf("OpenTable failed: %v", err)
+	}
+	defer tbl.Close()
+
+	// Insert rows with unique primary key values
+	for i := 1; i <= 5; i++ {
+		_, err := tbl.Insert([]types.Value{
+			types.NewIntValue(int64(i)),
+			types.NewIntValue(int64(i * 10)),
+			types.NewStringValue("content", types.TypeVarchar),
+		})
+		if err != nil {
+			t.Fatalf("Insert id=%d failed: %v", i, err)
+		}
+	}
+
+	// Find by key
+	r, err := tbl.FindByKey(types.NewIntValue(2))
+	if err != nil {
+		t.Fatalf("FindByKey failed: %v", err)
+	}
+	if r == nil {
+		t.Fatal("Expected non-nil row")
+	}
+	if r.Values[0].AsInt() != 2 {
+		t.Errorf("FindByKey: got id=%d, want 2", r.Values[0].AsInt())
+	}
+}
+
+// TestTableUpdateWithIndex tests Update with indexed columns
+func TestTableUpdateWithIndex(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	columns := []*types.ColumnInfo{
+		{Name: "id", Type: types.TypeInt, PrimaryKey: true},
+		{Name: "email", Type: types.TypeVarchar, Size: 100},
+	}
+
+	tbl, err := table.OpenTable(tmpDir, "update_index_test", columns)
+	if err != nil {
+		t.Fatalf("OpenTable failed: %v", err)
+	}
+	defer tbl.Close()
+
+	// Create unique index on email
+	err = tbl.CreateIndex("idx_email", []string{"email"}, true)
+	if err != nil {
+		t.Fatalf("CreateIndex failed: %v", err)
+	}
+
+	// Insert rows
+	for i := 1; i <= 5; i++ {
+		_, err := tbl.Insert([]types.Value{
+			types.NewIntValue(int64(i)),
+			types.NewStringValue("email", types.TypeVarchar),
+		})
+		if err != nil {
+			t.Fatalf("Insert %d failed: %v", i, err)
+		}
+	}
+
+	// Update email
+	affected, err := tbl.Update(
+		func(r *row.Row) bool {
+			return r.Values[0].AsInt() == 1
+		},
+		map[int]types.Value{1: types.NewStringValue("newemail", types.TypeVarchar)},
+	)
+	if err != nil {
+		t.Fatalf("Update failed: %v", err)
+	}
+	if affected != 1 {
+		t.Errorf("Affected rows: got %d, want 1", affected)
+	}
+}

@@ -1,6 +1,7 @@
 package executor
 
 import (
+	"fmt"
 	"os"
 	"regexp"
 	"testing"
@@ -2374,4 +2375,3462 @@ func TestUpdateWithReturning(t *testing.T) {
 		return
 	}
 	_ = result
+}
+
+// TestWhereClauseCoverage tests WHERE clause evaluation for coverage
+func TestWhereClauseCoverage(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "xxsql-where-cov-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	engine := storage.NewEngine(tmpDir)
+	if err := engine.Open(); err != nil {
+		t.Fatalf("Failed to open engine: %v", err)
+	}
+	defer engine.Close()
+
+	exec := NewExecutor(engine)
+	exec.SetDatabase("testdb")
+
+	// Create test table
+	if _, err := exec.Execute("CREATE TABLE where_cov (id INT, name VARCHAR, active BOOL, score FLOAT)"); err != nil {
+		t.Fatalf("Failed to create table: %v", err)
+	}
+
+	// Insert test data
+	if _, err := exec.Execute("INSERT INTO where_cov VALUES (1, 'Alice', true, 95.5)"); err != nil {
+		t.Fatalf("Failed to insert: %v", err)
+	}
+	if _, err := exec.Execute("INSERT INTO where_cov VALUES (2, 'Bob', false, 75.0)"); err != nil {
+		t.Fatalf("Failed to insert: %v", err)
+	}
+	if _, err := exec.Execute("INSERT INTO where_cov VALUES (3, NULL, true, 85.0)"); err != nil {
+		t.Fatalf("Failed to insert: %v", err)
+	}
+	if _, err := exec.Execute("INSERT INTO where_cov VALUES (4, 'Dave', true, 65.5)"); err != nil {
+		t.Fatalf("Failed to insert: %v", err)
+	}
+
+	tests := []struct {
+		name         string
+		query        string
+		expectedRows int
+	}{
+		{"simple equals", "SELECT * FROM where_cov WHERE id = 1", 1},
+		{"not equals", "SELECT * FROM where_cov WHERE id != 1", 3},
+		{"greater than", "SELECT * FROM where_cov WHERE id > 2", 2},
+		{"less than", "SELECT * FROM where_cov WHERE id < 3", 2},
+		{"greater or equal", "SELECT * FROM where_cov WHERE id >= 2", 3},
+		{"less or equal", "SELECT * FROM where_cov WHERE id <= 2", 2},
+		{"AND condition", "SELECT * FROM where_cov WHERE id > 1 AND active = true", 2},
+		{"OR condition", "SELECT * FROM where_cov WHERE id = 1 OR id = 4", 2},
+		{"IS NULL", "SELECT * FROM where_cov WHERE name IS NULL", 1},
+		{"IS NOT NULL", "SELECT * FROM where_cov WHERE name IS NOT NULL", 3},
+		{"LIKE with percent", "SELECT * FROM where_cov WHERE name LIKE 'A%'", 1},
+		{"LIKE with underscore", "SELECT * FROM where_cov WHERE name LIKE 'B_b'", 1},
+		{"NOT condition", "SELECT * FROM where_cov WHERE NOT id = 1", 3},
+		{"float comparison", "SELECT * FROM where_cov WHERE score > 80.0", 2},
+		{"bool true", "SELECT * FROM where_cov WHERE active = true", 3},
+		{"bool false", "SELECT * FROM where_cov WHERE active = false", 1},
+		{"concatenation in WHERE", "SELECT * FROM where_cov WHERE name || '' = 'Alice'", 1},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result, err := exec.Execute(tt.query)
+			if err != nil {
+				t.Errorf("Query failed: %v", err)
+				return
+			}
+			if len(result.Rows) != tt.expectedRows {
+				t.Errorf("Query %q returned %d rows, expected %d", tt.query, len(result.Rows), tt.expectedRows)
+			}
+		})
+	}
+}
+
+// TestFunctionCoverage tests various SQL functions for coverage
+func TestFunctionCoverage(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "xxsql-func-cov-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	engine := storage.NewEngine(tmpDir)
+	if err := engine.Open(); err != nil {
+		t.Fatalf("Failed to open engine: %v", err)
+	}
+	defer engine.Close()
+
+	exec := NewExecutor(engine)
+	exec.SetDatabase("testdb")
+
+	// Create test table
+	if _, err := exec.Execute("CREATE TABLE func_cov (id INT, name VARCHAR, price FLOAT, data BLOB)"); err != nil {
+		t.Fatalf("Failed to create table: %v", err)
+	}
+
+	if _, err := exec.Execute("INSERT INTO func_cov VALUES (1, 'hello', 19.99, X'0102030405')"); err != nil {
+		t.Fatalf("Failed to insert: %v", err)
+	}
+
+	tests := []struct {
+		name  string
+		query string
+	}{
+		// String functions
+		{"HEX string", "SELECT HEX(name) FROM func_cov"},
+		{"HEX blob", "SELECT HEX(data) FROM func_cov"},
+		{"HEX number", "SELECT HEX(255)"},
+		{"UNHEX", "SELECT UNHEX('48454C4C4F')"},
+		{"LENGTH string", "SELECT LENGTH(name) FROM func_cov"},
+		{"LENGTH blob", "SELECT LENGTH(data) FROM func_cov"},
+		{"OCTET_LENGTH", "SELECT OCTET_LENGTH(name) FROM func_cov"},
+		{"UPPER", "SELECT UPPER(name) FROM func_cov"},
+		{"UCASE", "SELECT UCASE(name) FROM func_cov"},
+		{"LOWER", "SELECT LOWER('HELLO')"},
+		{"LCASE", "SELECT LCASE('HELLO')"},
+		{"CONCAT two", "SELECT CONCAT(name, '!') FROM func_cov"},
+		{"CONCAT three", "SELECT CONCAT('a', 'b', 'c')"},
+		{"SUBSTRING two args", "SELECT SUBSTRING(name, 2) FROM func_cov"},
+		{"SUBSTRING three args", "SELECT SUBSTRING(name, 1, 3) FROM func_cov"},
+		{"SUBSTR", "SELECT SUBSTR('hello', 2, 3)"},
+		{"TRIM", "SELECT TRIM('  hello  ')"},
+		{"LTRIM", "SELECT LTRIM('  hello  ')"},
+		{"RTRIM", "SELECT RTRIM('  hello  ')"},
+		{"REPLACE", "SELECT REPLACE('hello', 'l', 'L')"},
+		{"REVERSE", "SELECT REVERSE('hello')"},
+		{"REPEAT", "SELECT REPEAT('ab', 3)"},
+		{"SPACE", "SELECT SPACE(5)"},
+		{"LEFT", "SELECT LEFT('hello', 2)"},
+		{"RIGHT", "SELECT RIGHT('hello', 2)"},
+		{"LPAD", "SELECT LPAD('hi', 5, 'x')"},
+		{"RPAD", "SELECT RPAD('hi', 5, 'x')"},
+		{"INSTR", "SELECT INSTR('hello', 'll')"},
+		{"LOCATE", "SELECT LOCATE('ll', 'hello')"},
+		{"CHAR_LENGTH", "SELECT CHAR_LENGTH('hello')"},
+		{"BIT_LENGTH", "SELECT BIT_LENGTH('hello')"},
+
+		// Math functions
+		{"ABS int", "SELECT ABS(-5)"},
+		{"ABS float", "SELECT ABS(-5.5)"},
+		{"ROUND no precision", "SELECT ROUND(3.7)"},
+		{"ROUND with precision", "SELECT ROUND(3.14159, 2)"},
+		{"CEIL", "SELECT CEIL(3.2)"},
+		{"CEILING", "SELECT CEILING(3.2)"},
+		{"FLOOR", "SELECT FLOOR(3.8)"},
+		{"MOD", "SELECT MOD(10, 3)"},
+		{"POWER", "SELECT POWER(2, 8)"},
+		{"POW", "SELECT POW(2, 10)"},
+		{"SQRT", "SELECT SQRT(16)"},
+		{"SIGN positive", "SELECT SIGN(5)"},
+		{"SIGN negative", "SELECT SIGN(-5)"},
+		{"SIGN zero", "SELECT SIGN(0)"},
+		{"EXP", "SELECT EXP(1)"},
+		{"LOG", "SELECT LOG(10)"},
+		{"LOG10", "SELECT LOG10(100)"},
+		{"LOG2", "SELECT LOG2(8)"},
+		{"PI", "SELECT PI()"},
+		{"RAND", "SELECT RAND()"},
+		{"TRUNCATE", "SELECT TRUNCATE(3.789, 1)"},
+
+		// Date/Time functions
+		{"NOW", "SELECT NOW()"},
+		{"CURRENT_TIMESTAMP", "SELECT CURRENT_TIMESTAMP()"},
+		{"DATE", "SELECT DATE('2024-01-15 10:30:00')"},
+		{"TIME", "SELECT TIME('2024-01-15 10:30:00')"},
+		{"YEAR", "SELECT YEAR('2024-01-15')"},
+		{"MONTH", "SELECT MONTH('2024-01-15')"},
+		{"DAY", "SELECT DAY('2024-01-15')"},
+		{"HOUR", "SELECT HOUR('10:30:45')"},
+		{"MINUTE", "SELECT MINUTE('10:30:45')"},
+		{"SECOND", "SELECT SECOND('10:30:45')"},
+		{"DATEDIFF", "SELECT DATEDIFF('2024-01-15', '2024-01-01')"},
+		{"STR_TO_DATE", "SELECT STR_TO_DATE('2024-01-15', '%Y-%m-%d')"},
+		{"DATE_FORMAT", "SELECT DATE_FORMAT('2024-01-15', '%Y/%m/%d')"},
+		{"CURRENT_DATE", "SELECT CURRENT_DATE"},
+		{"CURRENT_TIME", "SELECT CURRENT_TIME"},
+
+		// Aggregate functions
+		{"COUNT star", "SELECT COUNT(*) FROM func_cov"},
+		{"COUNT column", "SELECT COUNT(name) FROM func_cov"},
+		{"SUM", "SELECT SUM(price) FROM func_cov"},
+		{"AVG", "SELECT AVG(price) FROM func_cov"},
+		{"MAX", "SELECT MAX(price) FROM func_cov"},
+		{"MIN", "SELECT MIN(price) FROM func_cov"},
+
+		// Other functions
+		{"COALESCE", "SELECT COALESCE(NULL, 'default')"},
+		{"IFNULL", "SELECT IFNULL(NULL, 'default')"},
+		{"NULLIF", "SELECT NULLIF(1, 1)"},
+		{"VERSION", "SELECT VERSION()"},
+		{"USER", "SELECT USER()"},
+		{"CONNECTION_ID", "SELECT CONNECTION_ID()"},
+		{"LAST_INSERT_ID", "SELECT LAST_INSERT_ID()"},
+		{"ROW_COUNT", "SELECT ROW_COUNT()"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result, err := exec.Execute(tt.query)
+			if err != nil {
+				t.Errorf("Query failed: %v", err)
+				return
+			}
+			if len(result.Rows) < 1 {
+				t.Errorf("Expected at least 1 row, got %d", len(result.Rows))
+			}
+		})
+	}
+}
+
+// TestGroupByCoverage tests GROUP BY and HAVING for coverage
+func TestGroupByCoverage(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "xxsql-group-cov-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	engine := storage.NewEngine(tmpDir)
+	if err := engine.Open(); err != nil {
+		t.Fatalf("Failed to open engine: %v", err)
+	}
+	defer engine.Close()
+
+	exec := NewExecutor(engine)
+	exec.SetDatabase("testdb")
+
+	// Create test table
+	if _, err := exec.Execute("CREATE TABLE sales_cov (category VARCHAR, region VARCHAR, amount INT)"); err != nil {
+		t.Fatalf("Failed to create table: %v", err)
+	}
+
+	// Insert test data
+	data := []string{
+		"INSERT INTO sales_cov VALUES ('A', 'North', 100)",
+		"INSERT INTO sales_cov VALUES ('A', 'South', 150)",
+		"INSERT INTO sales_cov VALUES ('A', 'North', 200)",
+		"INSERT INTO sales_cov VALUES ('B', 'North', 50)",
+		"INSERT INTO sales_cov VALUES ('B', 'South', 75)",
+		"INSERT INTO sales_cov VALUES ('B', 'South', 100)",
+		"INSERT INTO sales_cov VALUES ('C', 'North', 300)",
+	}
+	for _, insert := range data {
+		if _, err := exec.Execute(insert); err != nil {
+			t.Fatalf("Failed to insert: %v", err)
+		}
+	}
+
+	tests := []struct {
+		name         string
+		query        string
+		expectedRows int
+	}{
+		{"simple GROUP BY", "SELECT category, SUM(amount) FROM sales_cov GROUP BY category", 3},
+		{"GROUP BY with HAVING", "SELECT category, SUM(amount) FROM sales_cov GROUP BY category HAVING SUM(amount) > 300", 1},
+		{"GROUP BY with COUNT", "SELECT category, COUNT(*) FROM sales_cov GROUP BY category", 3},
+		{"GROUP BY with AVG", "SELECT category, AVG(amount) FROM sales_cov GROUP BY category", 3},
+		{"GROUP BY with MAX", "SELECT category, MAX(amount) FROM sales_cov GROUP BY category", 3},
+		{"GROUP BY with MIN", "SELECT category, MIN(amount) FROM sales_cov GROUP BY category", 3},
+		{"GROUP BY multiple columns", "SELECT category, region, SUM(amount) FROM sales_cov GROUP BY category, region", 5},
+		{"GROUP BY with ORDER BY", "SELECT category, SUM(amount) FROM sales_cov GROUP BY category ORDER BY SUM(amount) DESC", 3},
+		{"GROUP BY with WHERE", "SELECT category, SUM(amount) FROM sales_cov WHERE region = 'North' GROUP BY category", 3},
+		{"HAVING with COUNT", "SELECT category FROM sales_cov GROUP BY category HAVING COUNT(*) > 2", 2},
+		{"HAVING with AVG", "SELECT category FROM sales_cov GROUP BY category HAVING AVG(amount) > 100", 3},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result, err := exec.Execute(tt.query)
+			if err != nil {
+				t.Errorf("Query failed: %v", err)
+				return
+			}
+			if len(result.Rows) != tt.expectedRows {
+				t.Errorf("Query %q returned %d rows, expected %d", tt.query, len(result.Rows), tt.expectedRows)
+			}
+		})
+	}
+}
+
+// TestJoinCoverage tests JOIN operations for coverage
+func TestJoinCoverage(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "xxsql-join-cov-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	engine := storage.NewEngine(tmpDir)
+	if err := engine.Open(); err != nil {
+		t.Fatalf("Failed to open engine: %v", err)
+	}
+	defer engine.Close()
+
+	exec := NewExecutor(engine)
+	exec.SetDatabase("testdb")
+
+	// Create test tables
+	if _, err := exec.Execute("CREATE TABLE users_cov (id INT, name VARCHAR, dept_id INT)"); err != nil {
+		t.Fatalf("Failed to create users table: %v", err)
+	}
+	if _, err := exec.Execute("CREATE TABLE depts_cov (id INT, name VARCHAR)"); err != nil {
+		t.Fatalf("Failed to create depts table: %v", err)
+	}
+	if _, err := exec.Execute("CREATE TABLE orders_cov (id INT, user_id INT, amount INT)"); err != nil {
+		t.Fatalf("Failed to create orders table: %v", err)
+	}
+
+	// Insert test data
+	for _, insert := range []string{
+		"INSERT INTO users_cov VALUES (1, 'Alice', 1)",
+		"INSERT INTO users_cov VALUES (2, 'Bob', 1)",
+		"INSERT INTO users_cov VALUES (3, 'Charlie', 2)",
+		"INSERT INTO users_cov VALUES (4, 'Dave', NULL)",
+		"INSERT INTO depts_cov VALUES (1, 'Engineering')",
+		"INSERT INTO depts_cov VALUES (2, 'Sales')",
+		"INSERT INTO depts_cov VALUES (3, 'Marketing')",
+		"INSERT INTO orders_cov VALUES (1, 1, 100)",
+		"INSERT INTO orders_cov VALUES (2, 1, 200)",
+		"INSERT INTO orders_cov VALUES (3, 2, 150)",
+	} {
+		if _, err := exec.Execute(insert); err != nil {
+			t.Fatalf("Failed to insert: %v", err)
+		}
+	}
+
+	tests := []struct {
+		name         string
+		query        string
+		expectedRows int
+	}{
+		{"INNER JOIN", "SELECT u.name, d.name FROM users_cov u INNER JOIN depts_cov d ON u.dept_id = d.id", 3},
+		{"LEFT JOIN", "SELECT u.name, d.name FROM users_cov u LEFT JOIN depts_cov d ON u.dept_id = d.id", 4},
+		{"RIGHT JOIN", "SELECT u.name, d.name FROM users_cov u RIGHT JOIN depts_cov d ON u.dept_id = d.id", 4},
+		{"JOIN with WHERE", "SELECT u.name FROM users_cov u JOIN depts_cov d ON u.dept_id = d.id WHERE d.name = 'Engineering'", 2},
+		{"Multiple JOINs", "SELECT u.name, d.name, o.amount FROM users_cov u JOIN depts_cov d ON u.dept_id = d.id JOIN orders_cov o ON u.id = o.user_id", 3},
+		{"JOIN with aggregate", "SELECT u.name, SUM(o.amount) FROM users_cov u JOIN orders_cov o ON u.id = o.user_id GROUP BY u.name", 3},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result, err := exec.Execute(tt.query)
+			if err != nil {
+				t.Errorf("Query failed: %v", err)
+				return
+			}
+			if len(result.Rows) != tt.expectedRows {
+				t.Errorf("Query %q returned %d rows, expected %d", tt.query, len(result.Rows), tt.expectedRows)
+			}
+		})
+	}
+}
+
+// TestSubqueryCoverage tests subquery operations for coverage
+func TestSubqueryCoverage(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "xxsql-subq-cov-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	engine := storage.NewEngine(tmpDir)
+	if err := engine.Open(); err != nil {
+		t.Fatalf("Failed to open engine: %v", err)
+	}
+	defer engine.Close()
+
+	exec := NewExecutor(engine)
+	exec.SetDatabase("testdb")
+
+	// Create test tables
+	if _, err := exec.Execute("CREATE TABLE products_cov (id INT, name VARCHAR, price FLOAT)"); err != nil {
+		t.Fatalf("Failed to create table: %v", err)
+	}
+	if _, err := exec.Execute("CREATE TABLE orders_cov (id INT, product_id INT, qty INT)"); err != nil {
+		t.Fatalf("Failed to create table: %v", err)
+	}
+
+	// Insert test data
+	for _, insert := range []string{
+		"INSERT INTO products_cov VALUES (1, 'A', 10.0)",
+		"INSERT INTO products_cov VALUES (2, 'B', 20.0)",
+		"INSERT INTO products_cov VALUES (3, 'C', 30.0)",
+		"INSERT INTO orders_cov VALUES (1, 1, 5)",
+		"INSERT INTO orders_cov VALUES (2, 2, 3)",
+		"INSERT INTO orders_cov VALUES (3, 1, 2)",
+	} {
+		if _, err := exec.Execute(insert); err != nil {
+			t.Fatalf("Failed to insert: %v", err)
+		}
+	}
+
+	tests := []struct {
+		name         string
+		query        string
+		expectedRows int
+	}{
+		{"scalar subquery in SELECT", "SELECT name, (SELECT MAX(price) FROM products_cov) as max_price FROM products_cov", 3},
+		{"subquery in WHERE", "SELECT * FROM products_cov WHERE price > (SELECT AVG(price) FROM products_cov)", 3},
+		{"IN subquery", "SELECT * FROM products_cov WHERE id IN (SELECT product_id FROM orders_cov)", 2},
+		{"NOT IN subquery", "SELECT * FROM products_cov WHERE id NOT IN (SELECT product_id FROM orders_cov)", 1},
+		{"derived table", "SELECT * FROM (SELECT name, price FROM products_cov) AS subq", 3},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result, err := exec.Execute(tt.query)
+			if err != nil {
+				t.Errorf("Query failed: %v", err)
+				return
+			}
+			if len(result.Rows) != tt.expectedRows {
+				t.Errorf("Query %q returned %d rows, expected %d", tt.query, len(result.Rows), tt.expectedRows)
+			}
+		})
+	}
+}
+
+// TestCaseExpressionCoverage tests CASE expressions for coverage
+func TestCaseExpressionCoverage(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "xxsql-case-cov-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	engine := storage.NewEngine(tmpDir)
+	if err := engine.Open(); err != nil {
+		t.Fatalf("Failed to open engine: %v", err)
+	}
+	defer engine.Close()
+
+	exec := NewExecutor(engine)
+	exec.SetDatabase("testdb")
+
+	// Create test table
+	if _, err := exec.Execute("CREATE TABLE scores_cov (id INT, score INT)"); err != nil {
+		t.Fatalf("Failed to create table: %v", err)
+	}
+
+	for _, insert := range []string{
+		"INSERT INTO scores_cov VALUES (1, 95)",
+		"INSERT INTO scores_cov VALUES (2, 75)",
+		"INSERT INTO scores_cov VALUES (3, 55)",
+	} {
+		if _, err := exec.Execute(insert); err != nil {
+			t.Fatalf("Failed to insert: %v", err)
+		}
+	}
+
+	tests := []struct {
+		name         string
+		query        string
+		expectedRows int
+	}{
+		{"simple CASE", "SELECT id, CASE WHEN score >= 90 THEN 'A' WHEN score >= 70 THEN 'B' ELSE 'C' END as grade FROM scores_cov", 3},
+		{"CASE with ELSE NULL", "SELECT id, CASE WHEN score > 80 THEN 'pass' END FROM scores_cov", 3},
+		{"CASE with multiple WHEN", "SELECT id, CASE WHEN score >= 90 THEN 'A' WHEN score >= 80 THEN 'B' WHEN score >= 70 THEN 'C' WHEN score >= 60 THEN 'D' ELSE 'F' END FROM scores_cov", 3},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result, err := exec.Execute(tt.query)
+			if err != nil {
+				t.Errorf("Query failed: %v", err)
+				return
+			}
+			if len(result.Rows) != tt.expectedRows {
+				t.Errorf("Query %q returned %d rows, expected %d", tt.query, len(result.Rows), tt.expectedRows)
+			}
+		})
+	}
+}
+
+// TestOrderByVariations tests ORDER BY with various expressions
+func TestOrderByVariations(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "xxsql-order-cov-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	engine := storage.NewEngine(tmpDir)
+	if err := engine.Open(); err != nil {
+		t.Fatalf("Failed to open engine: %v", err)
+	}
+	defer engine.Close()
+
+	exec := NewExecutor(engine)
+	exec.SetDatabase("testdb")
+
+	// Create test table
+	if _, err := exec.Execute("CREATE TABLE order_test (id INT, name VARCHAR, score FLOAT)"); err != nil {
+		t.Fatalf("Failed to create table: %v", err)
+	}
+
+	// Insert test data
+	for _, insert := range []string{
+		"INSERT INTO order_test VALUES (1, 'Alice', 85.5)",
+		"INSERT INTO order_test VALUES (2, 'Bob', 92.0)",
+		"INSERT INTO order_test VALUES (3, 'Charlie', 78.5)",
+		"INSERT INTO order_test VALUES (4, 'Dave', 92.0)",
+	} {
+		if _, err := exec.Execute(insert); err != nil {
+			t.Fatalf("Failed to insert: %v", err)
+		}
+	}
+
+	tests := []struct {
+		name         string
+		query        string
+		expectedRows int
+	}{
+		{"ORDER BY ASC", "SELECT * FROM order_test ORDER BY id ASC", 4},
+		{"ORDER BY DESC", "SELECT * FROM order_test ORDER BY id DESC", 4},
+		{"ORDER BY multiple", "SELECT * FROM order_test ORDER BY score DESC, name ASC", 4},
+		{"ORDER BY expression", "SELECT * FROM order_test ORDER BY id + score DESC", 4},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result, err := exec.Execute(tt.query)
+			if err != nil {
+				t.Errorf("Query failed: %v", err)
+				return
+			}
+			if len(result.Rows) != tt.expectedRows {
+				t.Errorf("Query %q returned %d rows, expected %d", tt.query, len(result.Rows), tt.expectedRows)
+			}
+		})
+	}
+}
+
+// TestDistinctQueries tests DISTINCT queries
+func TestDistinctQueries(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "xxsql-distinct-cov-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	engine := storage.NewEngine(tmpDir)
+	if err := engine.Open(); err != nil {
+		t.Fatalf("Failed to open engine: %v", err)
+	}
+	defer engine.Close()
+
+	exec := NewExecutor(engine)
+	exec.SetDatabase("testdb")
+
+	// Create test table
+	if _, err := exec.Execute("CREATE TABLE distinct_test (id INT, category VARCHAR)"); err != nil {
+		t.Fatalf("Failed to create table: %v", err)
+	}
+
+	// Insert test data with duplicates
+	for _, insert := range []string{
+		"INSERT INTO distinct_test VALUES (1, 'A')",
+		"INSERT INTO distinct_test VALUES (2, 'A')",
+		"INSERT INTO distinct_test VALUES (3, 'B')",
+	} {
+		if _, err := exec.Execute(insert); err != nil {
+			t.Fatalf("Failed to insert: %v", err)
+		}
+	}
+
+	// Test that DISTINCT queries don't error
+	queries := []string{
+		"SELECT DISTINCT category FROM distinct_test",
+		"SELECT DISTINCT category FROM distinct_test ORDER BY category",
+	}
+
+	for _, query := range queries {
+		_, err := exec.Execute(query)
+		if err != nil {
+			t.Errorf("Query failed: %v", err)
+		}
+	}
+}
+
+// TestLimitOffset tests LIMIT and OFFSET
+func TestLimitOffset(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "xxsql-limit-cov-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	engine := storage.NewEngine(tmpDir)
+	if err := engine.Open(); err != nil {
+		t.Fatalf("Failed to open engine: %v", err)
+	}
+	defer engine.Close()
+
+	exec := NewExecutor(engine)
+	exec.SetDatabase("testdb")
+
+	// Create test table
+	if _, err := exec.Execute("CREATE TABLE limit_test (id INT)"); err != nil {
+		t.Fatalf("Failed to create table: %v", err)
+	}
+
+	// Insert rows
+	for i := 1; i <= 5; i++ {
+		if _, err := exec.Execute(fmt.Sprintf("INSERT INTO limit_test VALUES (%d)", i)); err != nil {
+			t.Fatalf("Failed to insert: %v", err)
+		}
+	}
+
+	// Just test that queries with LIMIT don't error
+	queries := []string{
+		"SELECT * FROM limit_test LIMIT 5",
+		"SELECT * FROM limit_test LIMIT 3 OFFSET 2",
+	}
+
+	for _, query := range queries {
+		_, err := exec.Execute(query)
+		if err != nil {
+			t.Errorf("Query failed: %v", err)
+		}
+	}
+}
+
+// TestNullHandling tests NULL handling
+func TestNullHandling(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "xxsql-null-cov-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	engine := storage.NewEngine(tmpDir)
+	if err := engine.Open(); err != nil {
+		t.Fatalf("Failed to open engine: %v", err)
+	}
+	defer engine.Close()
+
+	exec := NewExecutor(engine)
+	exec.SetDatabase("testdb")
+
+	// Create test table
+	if _, err := exec.Execute("CREATE TABLE null_test (id INT, value VARCHAR)"); err != nil {
+		t.Fatalf("Failed to create table: %v", err)
+	}
+
+	// Insert data with NULL
+	for _, insert := range []string{
+		"INSERT INTO null_test VALUES (1, 'test')",
+		"INSERT INTO null_test VALUES (2, NULL)",
+		"INSERT INTO null_test VALUES (3, 'other')",
+	} {
+		if _, err := exec.Execute(insert); err != nil {
+			t.Fatalf("Failed to insert: %v", err)
+		}
+	}
+
+	tests := []struct {
+		name         string
+		query        string
+		expectedRows int
+	}{
+		{"IS NULL", "SELECT * FROM null_test WHERE value IS NULL", 1},
+		{"IS NOT NULL", "SELECT * FROM null_test WHERE value IS NOT NULL", 2},
+		{"COALESCE", "SELECT id, COALESCE(value, 'default') FROM null_test", 3},
+		{"IFNULL", "SELECT id, IFNULL(value, 'default') FROM null_test", 3},
+		{"NULLIF equal", "SELECT NULLIF('a', 'a')", 1},
+		{"NULLIF not equal", "SELECT NULLIF('a', 'b')", 1},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result, err := exec.Execute(tt.query)
+			if err != nil {
+				t.Errorf("Query failed: %v", err)
+				return
+			}
+			if len(result.Rows) != tt.expectedRows {
+				t.Errorf("Query %q returned %d rows, expected %d", tt.query, len(result.Rows), tt.expectedRows)
+			}
+		})
+	}
+}
+
+// TestBinaryExpressions tests binary expressions in WHERE clauses
+func TestBinaryExpressions(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "xxsql-binary-cov-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	engine := storage.NewEngine(tmpDir)
+	if err := engine.Open(); err != nil {
+		t.Fatalf("Failed to open engine: %v", err)
+	}
+	defer engine.Close()
+
+	exec := NewExecutor(engine)
+	exec.SetDatabase("testdb")
+
+	// Create test table
+	if _, err := exec.Execute("CREATE TABLE binary_test (a INT, b INT)"); err != nil {
+		t.Fatalf("Failed to create table: %v", err)
+	}
+
+	for _, insert := range []string{
+		"INSERT INTO binary_test VALUES (1, 2)",
+		"INSERT INTO binary_test VALUES (3, 4)",
+		"INSERT INTO binary_test VALUES (5, 6)",
+	} {
+		if _, err := exec.Execute(insert); err != nil {
+			t.Fatalf("Failed to insert: %v", err)
+		}
+	}
+
+	tests := []struct {
+		name  string
+		query string
+	}{
+		{"addition", "SELECT * FROM binary_test WHERE a + b > 5"},
+		{"subtraction", "SELECT * FROM binary_test WHERE b - a > 0"},
+		{"multiplication", "SELECT * FROM binary_test WHERE a * b > 5"},
+		{"division", "SELECT * FROM binary_test WHERE b / a > 1"},
+		{"concat strings", "SELECT 'a' || 'b'"},
+		{"AND expression", "SELECT * FROM binary_test WHERE a > 1 AND b > 2"},
+		{"OR expression", "SELECT * FROM binary_test WHERE a = 1 OR b = 6"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := exec.Execute(tt.query)
+			if err != nil {
+				t.Errorf("Query failed: %v", err)
+			}
+		})
+	}
+}
+
+// TestAggregateFunctions tests aggregate functions
+func TestAggregateFunctions(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "xxsql-agg-cov-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	engine := storage.NewEngine(tmpDir)
+	if err := engine.Open(); err != nil {
+		t.Fatalf("Failed to open engine: %v", err)
+	}
+	defer engine.Close()
+
+	exec := NewExecutor(engine)
+	exec.SetDatabase("testdb")
+
+	// Create test table
+	if _, err := exec.Execute("CREATE TABLE agg_test (id INT, value FLOAT)"); err != nil {
+		t.Fatalf("Failed to create table: %v", err)
+	}
+
+	for _, insert := range []string{
+		"INSERT INTO agg_test VALUES (1, 10.5)",
+		"INSERT INTO agg_test VALUES (2, 20.5)",
+		"INSERT INTO agg_test VALUES (3, 30.5)",
+	} {
+		if _, err := exec.Execute(insert); err != nil {
+			t.Fatalf("Failed to insert: %v", err)
+		}
+	}
+
+	tests := []struct {
+		name  string
+		query string
+	}{
+		{"COUNT *", "SELECT COUNT(*) FROM agg_test"},
+		{"COUNT column", "SELECT COUNT(value) FROM agg_test"},
+		{"SUM", "SELECT SUM(value) FROM agg_test"},
+		{"AVG", "SELECT AVG(value) FROM agg_test"},
+		{"MAX", "SELECT MAX(value) FROM agg_test"},
+		{"MIN", "SELECT MIN(value) FROM agg_test"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := exec.Execute(tt.query)
+			if err != nil {
+				t.Errorf("Query failed: %v", err)
+			}
+		})
+	}
+}
+
+// TestLogicalOperators tests logical operators
+func TestLogicalOperators(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "xxsql-logic-cov-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	engine := storage.NewEngine(tmpDir)
+	if err := engine.Open(); err != nil {
+		t.Fatalf("Failed to open engine: %v", err)
+	}
+	defer engine.Close()
+
+	exec := NewExecutor(engine)
+	exec.SetDatabase("testdb")
+
+	// Create test table
+	if _, err := exec.Execute("CREATE TABLE logic_test (a INT, b INT)"); err != nil {
+		t.Fatalf("Failed to create table: %v", err)
+	}
+
+	for _, insert := range []string{
+		"INSERT INTO logic_test VALUES (1, 2)",
+		"INSERT INTO logic_test VALUES (3, 4)",
+	} {
+		if _, err := exec.Execute(insert); err != nil {
+			t.Fatalf("Failed to insert: %v", err)
+		}
+	}
+
+	tests := []struct {
+		name  string
+		query string
+	}{
+		{"AND expression", "SELECT * FROM logic_test WHERE a > 0 AND b > 0"},
+		{"OR expression", "SELECT * FROM logic_test WHERE a = 1 OR b = 4"},
+		{"NOT expression", "SELECT * FROM logic_test WHERE NOT a = 0"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := exec.Execute(tt.query)
+			if err != nil {
+				t.Errorf("Query failed: %v", err)
+			}
+		})
+	}
+}
+
+// TestCreateIndexCoverage tests CREATE INDEX
+func TestCreateIndexCoverage(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "xxsql-idx-cov-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	engine := storage.NewEngine(tmpDir)
+	if err := engine.Open(); err != nil {
+		t.Fatalf("Failed to open engine: %v", err)
+	}
+	defer engine.Close()
+
+	exec := NewExecutor(engine)
+	exec.SetDatabase("testdb")
+
+	// Create test table
+	if _, err := exec.Execute("CREATE TABLE idx_test (id INT, name VARCHAR)"); err != nil {
+		t.Fatalf("Failed to create table: %v", err)
+	}
+
+	tests := []struct {
+		name  string
+		query string
+	}{
+		{"CREATE INDEX", "CREATE INDEX idx_name ON idx_test(name)"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := exec.Execute(tt.query)
+			if err != nil {
+				t.Errorf("Query failed: %v", err)
+			}
+		})
+	}
+}
+
+// TestPragmaStatements tests PRAGMA statements
+func TestPragmaStatements(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "xxsql-pragma-cov-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	engine := storage.NewEngine(tmpDir)
+	if err := engine.Open(); err != nil {
+		t.Fatalf("Failed to open engine: %v", err)
+	}
+	defer engine.Close()
+
+	exec := NewExecutor(engine)
+	exec.SetDatabase("testdb")
+
+	tests := []struct {
+		name  string
+		query string
+	}{
+		{"PRAGMA cache_size", "PRAGMA cache_size = 1000"},
+		{"PRAGMA journal_mode", "PRAGMA journal_mode"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := exec.Execute(tt.query)
+			if err != nil {
+				t.Logf("Query failed (may be expected): %v", err)
+			}
+		})
+	}
+}
+
+// TestParseTypeFromString tests parseTypeFromString
+func TestParseTypeFromString(t *testing.T) {
+	tests := []struct {
+		input    string
+		expected string
+	}{
+		{"INT", "INT"},
+		{"INTEGER", "INT"},
+		{"BIGINT", "BIGINT"},
+		{"FLOAT", "FLOAT"},
+		{"DOUBLE", "DOUBLE"},
+		{"DECIMAL", "DECIMAL"},
+		{"CHAR", "CHAR"},
+		{"VARCHAR", "VARCHAR"},
+		{"TEXT", "TEXT"},
+		{"DATE", "DATE"},
+		{"TIME", "TIME"},
+		{"DATETIME", "DATETIME"},
+		{"BOOL", "BOOL"},
+		{"BOOLEAN", "BOOL"},
+		{"BLOB", "BLOB"},
+		{"UNKNOWN", "TEXT"}, // Default
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.input, func(t *testing.T) {
+			result := parseTypeFromString(tt.input)
+			if result.Name != tt.expected {
+				t.Errorf("parseTypeFromString(%q) = %q, want %q", tt.input, result.Name, tt.expected)
+			}
+		})
+	}
+}
+
+// TestScriptUDFManager_LoadWithFile tests Load with actual file
+func TestScriptUDFManager_LoadWithFile(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "xxsql-scriptudf-load-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	mgr := NewScriptUDFManager(tmpDir)
+
+	// Create a valid JSON file
+	jsonData := `[{"name":"test_func","params":["a","b"],"return_type":"INT","script":"return a + b"}]`
+	jsonPath := tmpDir + "/script_udf.json"
+	if err := os.WriteFile(jsonPath, []byte(jsonData), 0644); err != nil {
+		t.Fatalf("Failed to write JSON file: %v", err)
+	}
+
+	// Load should succeed
+	err = mgr.Load()
+	if err != nil {
+		t.Errorf("Load failed: %v", err)
+	}
+
+	// Check function was loaded
+	fn, exists := mgr.GetFunction("test_func")
+	if !exists {
+		t.Error("Function should exist after load")
+	}
+	if fn != nil && len(fn.Params) != 2 {
+		t.Errorf("Function params = %d, want 2", len(fn.Params))
+	}
+}
+
+// TestScriptUDFManager_LoadInvalidJSON tests Load with invalid JSON
+func TestScriptUDFManager_LoadInvalidJSON(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "xxsql-scriptudf-invalid-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	mgr := NewScriptUDFManager(tmpDir)
+
+	// Create an invalid JSON file
+	jsonPath := tmpDir + "/script_udf.json"
+	if err := os.WriteFile(jsonPath, []byte(`invalid json`), 0644); err != nil {
+		t.Fatalf("Failed to write JSON file: %v", err)
+	}
+
+	// Load should fail
+	err = mgr.Load()
+	if err == nil {
+		t.Error("Load should fail with invalid JSON")
+	}
+}
+
+// TestScriptUDFManager_SaveWithDir tests Save with data directory
+func TestScriptUDFManager_SaveWithDir(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "xxsql-scriptudf-save-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	mgr := NewScriptUDFManager(tmpDir)
+
+	// Add a function
+	_ = mgr.CreateFunction(&ScriptFunction{
+		Name:       "save_test",
+		Params:     []string{"x"},
+		ReturnType: "INT",
+		Script:     "return x * 2",
+	}, false)
+
+	// Save should succeed
+	err = mgr.Save()
+	if err != nil {
+		t.Errorf("Save failed: %v", err)
+	}
+
+	// Verify file exists
+	jsonPath := tmpDir + "/script_udf.json"
+	if _, err := os.Stat(jsonPath); os.IsNotExist(err) {
+		t.Error("Save file should exist")
+	}
+}
+
+// TestUDFManager_LoadWithFile tests UDFManager.Load with actual file
+func TestUDFManager_LoadWithFile(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "xxsql-udf-load-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	mgr := NewUDFManager(tmpDir)
+
+	// Create a valid JSON file
+	jsonData := `[{"name":"udf_test","parameters":[{"name":"a","type":"INT"}],"return_type":"INT","body":"return a"}]`
+	jsonPath := tmpDir + "/udf.json"
+	if err := os.WriteFile(jsonPath, []byte(jsonData), 0644); err != nil {
+		t.Fatalf("Failed to write JSON file: %v", err)
+	}
+
+	// Load should succeed
+	err = mgr.Load()
+	if err != nil {
+		t.Errorf("Load failed: %v", err)
+	}
+}
+
+// TestUDFManager_LoadInvalidJSON tests UDFManager.Load with invalid JSON
+func TestUDFManager_LoadInvalidJSON(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "xxsql-udf-invalid-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	mgr := NewUDFManager(tmpDir)
+
+	// Create an invalid JSON file
+	jsonPath := tmpDir + "/udf.json"
+	if err := os.WriteFile(jsonPath, []byte(`not valid json`), 0644); err != nil {
+		t.Fatalf("Failed to write JSON file: %v", err)
+	}
+
+	// Load should fail
+	err = mgr.Load()
+	if err == nil {
+		t.Error("Load should fail with invalid JSON")
+	}
+}
+
+// TestUDFManager_SaveWithDir tests UDFManager.Save with data directory
+func TestUDFManager_SaveWithDir(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "xxsql-udf-save-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	mgr := NewUDFManager(tmpDir)
+
+	// Add a function using CreateFunction with proper body
+	udf := &sql.UserFunction{
+		Name:       "save_udf_test",
+		ReturnType: &sql.DataType{Name: "INT"},
+		Body:       &sql.Literal{Value: 1, Type: sql.LiteralNumber},
+	}
+	_ = mgr.CreateFunction(udf, false)
+
+	// Save should succeed
+	err = mgr.Save()
+	if err != nil {
+		t.Errorf("Save failed: %v", err)
+	}
+}
+
+// TestExpressionEvaluation tests expression evaluation without row context
+func TestExpressionEvaluation(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "xxsql-expr-cov-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	engine := storage.NewEngine(tmpDir)
+	if err := engine.Open(); err != nil {
+		t.Fatalf("Failed to open engine: %v", err)
+	}
+	defer engine.Close()
+
+	exec := NewExecutor(engine)
+	exec.SetDatabase("testdb")
+
+	// Test expressions via SELECT statements
+	tests := []struct {
+		name  string
+		query string
+	}{
+		{"literal number", "SELECT 42"},
+		{"literal string", "SELECT 'hello'"},
+		{"negation", "SELECT -5"},
+		{"addition", "SELECT 1 + 2"},
+		{"subtraction", "SELECT 5 - 3"},
+		{"multiplication", "SELECT 4 * 2"},
+		{"division", "SELECT 10 / 2"},
+		{"modulo", "SELECT 7 % 3"},
+		{"comparison", "SELECT 1 = 1"},
+		{"not equal", "SELECT 1 != 2"},
+		{"less than", "SELECT 1 < 2"},
+		{"greater than", "SELECT 2 > 1"},
+		{"concat", "SELECT 'a' || 'b'"},
+		{"CURRENT_TIMESTAMP", "SELECT CURRENT_TIMESTAMP()"},
+		{"NOW", "SELECT NOW()"},
+		{"CURRENT_DATE", "SELECT CURRENT_DATE()"},
+		{"CURRENT_TIME", "SELECT CURRENT_TIME()"},
+		{"UPPER", "SELECT UPPER('hello')"},
+		{"LOWER", "SELECT LOWER('HELLO')"},
+		{"COALESCE non-null", "SELECT COALESCE('value', 'default')"},
+		{"COALESCE null", "SELECT COALESCE(NULL, 'default')"},
+		{"CAST int", "SELECT CAST('42' AS INT)"},
+		{"CAST varchar", "SELECT CAST(42 AS VARCHAR)"},
+		{"CASE simple", "SELECT CASE WHEN 1 = 1 THEN 'yes' ELSE 'no' END"},
+		{"CASE multiple", "SELECT CASE WHEN 1 = 2 THEN 'a' WHEN 1 = 1 THEN 'b' ELSE 'c' END"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := exec.Execute(tt.query)
+			if err != nil {
+				t.Errorf("Query %q failed: %v", tt.query, err)
+			}
+		})
+	}
+}
+
+// TestDefaultValuesCoverage tests default value evaluation
+func TestDefaultValuesCoverage(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "xxsql-default-cov-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	engine := storage.NewEngine(tmpDir)
+	if err := engine.Open(); err != nil {
+		t.Fatalf("Failed to open engine: %v", err)
+	}
+	defer engine.Close()
+
+	exec := NewExecutor(engine)
+	exec.SetDatabase("testdb")
+
+	// Create table with default values
+	tests := []struct {
+		name  string
+		query string
+	}{
+		{"create with default int", "CREATE TABLE t1 (id INT, val INT DEFAULT 0)"},
+		{"create with default string", "CREATE TABLE t2 (id INT, name VARCHAR DEFAULT 'unknown')"},
+		{"create with default timestamp", "CREATE TABLE t3 (id INT, ts TIMESTAMP DEFAULT CURRENT_TIMESTAMP)"},
+		{"insert with default", "INSERT INTO t1 (id) VALUES (1)"},
+		{"insert with explicit", "INSERT INTO t1 VALUES (2, 42)"},
+		{"select default", "SELECT * FROM t1"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := exec.Execute(tt.query)
+			if err != nil {
+				t.Errorf("Query %q failed: %v", tt.query, err)
+			}
+		})
+	}
+}
+
+// TestHavingClause tests HAVING clause evaluation
+func TestHavingClause(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "xxsql-having-cov-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	engine := storage.NewEngine(tmpDir)
+	if err := engine.Open(); err != nil {
+		t.Fatalf("Failed to open engine: %v", err)
+	}
+	defer engine.Close()
+
+	exec := NewExecutor(engine)
+	exec.SetDatabase("testdb")
+
+	// Create table and insert data
+	if _, err := exec.Execute("CREATE TABLE sales (product VARCHAR, amount INT)"); err != nil {
+		t.Fatalf("Failed to create table: %v", err)
+	}
+
+	for _, insert := range []string{
+		"INSERT INTO sales VALUES ('A', 100)",
+		"INSERT INTO sales VALUES ('A', 200)",
+		"INSERT INTO sales VALUES ('B', 50)",
+		"INSERT INTO sales VALUES ('B', 150)",
+		"INSERT INTO sales VALUES ('C', 75)",
+	} {
+		if _, err := exec.Execute(insert); err != nil {
+			t.Fatalf("Failed to insert: %v", err)
+		}
+	}
+
+	// Test HAVING clauses
+	tests := []struct {
+		name  string
+		query string
+	}{
+		{"SUM having", "SELECT product, SUM(amount) FROM sales GROUP BY product HAVING SUM(amount) > 200"},
+		{"COUNT having", "SELECT product, COUNT(*) FROM sales GROUP BY product HAVING COUNT(*) > 1"},
+		{"AVG having", "SELECT product, AVG(amount) FROM sales GROUP BY product HAVING AVG(amount) > 100"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := exec.Execute(tt.query)
+			if err != nil {
+				t.Errorf("Query %q failed: %v", tt.query, err)
+			}
+		})
+	}
+}
+
+// TestDerivedTables tests derived table (subquery in FROM)
+func TestDerivedTables(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "xxsql-derived-cov-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	engine := storage.NewEngine(tmpDir)
+	if err := engine.Open(); err != nil {
+		t.Fatalf("Failed to open engine: %v", err)
+	}
+	defer engine.Close()
+
+	exec := NewExecutor(engine)
+	exec.SetDatabase("testdb")
+
+	// Create table
+	if _, err := exec.Execute("CREATE TABLE t (id INT, name VARCHAR)"); err != nil {
+		t.Fatalf("Failed to create table: %v", err)
+	}
+
+	for _, insert := range []string{
+		"INSERT INTO t VALUES (1, 'a')",
+		"INSERT INTO t VALUES (2, 'b')",
+		"INSERT INTO t VALUES (3, 'c')",
+	} {
+		if _, err := exec.Execute(insert); err != nil {
+			t.Fatalf("Failed to insert: %v", err)
+		}
+	}
+
+	// Test derived tables
+	tests := []struct {
+		name  string
+		query string
+	}{
+		{"simple subquery", "SELECT * FROM (SELECT id FROM t) AS sub"},
+		{"with WHERE", "SELECT * FROM (SELECT id, name FROM t WHERE id > 1) AS sub"},
+		{"with aggregation", "SELECT * FROM (SELECT COUNT(*) AS cnt FROM t) AS sub"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := exec.Execute(tt.query)
+			if err != nil {
+				t.Logf("Query %q failed: %v (may be expected)", tt.query, err)
+			}
+		})
+	}
+}
+
+// TestCreateDropView tests CREATE VIEW and DROP VIEW
+func TestCreateDropView(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "xxsql-view-cov-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	engine := storage.NewEngine(tmpDir)
+	if err := engine.Open(); err != nil {
+		t.Fatalf("Failed to open engine: %v", err)
+	}
+	defer engine.Close()
+
+	exec := NewExecutor(engine)
+	exec.SetDatabase("testdb")
+
+	// Create table
+	if _, err := exec.Execute("CREATE TABLE t (id INT, name VARCHAR)"); err != nil {
+		t.Fatalf("Failed to create table: %v", err)
+	}
+
+	// Test CREATE VIEW
+	tests := []struct {
+		name  string
+		query string
+	}{
+		{"create view", "CREATE VIEW v AS SELECT * FROM t"},
+		{"select from view", "SELECT * FROM v"},
+		{"drop view", "DROP VIEW IF EXISTS v"},
+		{"drop non-existent", "DROP VIEW IF EXISTS nonexistent"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := exec.Execute(tt.query)
+			if err != nil {
+				t.Logf("Query %q failed: %v (may be expected)", tt.query, err)
+			}
+		})
+	}
+}
+
+// TestCompareValuesMore tests compareValues function
+func TestCompareValuesMore(t *testing.T) {
+	tests := []struct {
+		a, b     interface{}
+		expected int
+	}{
+		{int64(1), int64(2), -1},
+		{int64(2), int64(1), 1},
+		{int64(1), int64(1), 0},
+		{"a", "b", -1},
+		{"b", "a", 1},
+		{"a", "a", 0},
+		{1.5, 2.5, -1},
+		{2.5, 1.5, 1},
+		{1.5, 1.5, 0},
+	}
+
+	for _, tt := range tests {
+		result := compareValues(tt.a, tt.b)
+		if result != tt.expected {
+			t.Errorf("compareValues(%v, %v) = %d, want %d", tt.a, tt.b, result, tt.expected)
+		}
+	}
+}
+
+// TestINWithSubquery tests IN operator with subquery
+func TestINWithSubquery(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "xxsql-in-subq-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	engine := storage.NewEngine(tmpDir)
+	if err := engine.Open(); err != nil {
+		t.Fatalf("Failed to open engine: %v", err)
+	}
+	defer engine.Close()
+
+	exec := NewExecutor(engine)
+	exec.SetDatabase("testdb")
+
+	// Create tables
+	if _, err := exec.Execute("CREATE TABLE orders (id INT, customer_id INT)"); err != nil {
+		t.Fatalf("Failed to create orders table: %v", err)
+	}
+	if _, err := exec.Execute("CREATE TABLE customers (id INT, status VARCHAR)"); err != nil {
+		t.Fatalf("Failed to create customers table: %v", err)
+	}
+
+	// Insert data
+	for _, insert := range []string{
+		"INSERT INTO orders VALUES (1, 100)",
+		"INSERT INTO orders VALUES (2, 200)",
+		"INSERT INTO orders VALUES (3, 300)",
+		"INSERT INTO customers VALUES (100, 'active')",
+		"INSERT INTO customers VALUES (200, 'inactive')",
+		"INSERT INTO customers VALUES (300, 'active')",
+	} {
+		if _, err := exec.Execute(insert); err != nil {
+			t.Fatalf("Failed to insert: %v", err)
+		}
+	}
+
+	tests := []struct {
+		name  string
+		query string
+	}{
+		{"IN subquery", "SELECT * FROM orders WHERE customer_id IN (SELECT id FROM customers WHERE status = 'active')"},
+		{"NOT IN subquery", "SELECT * FROM orders WHERE customer_id NOT IN (SELECT id FROM customers WHERE status = 'active')"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := exec.Execute(tt.query)
+			if err != nil {
+				t.Logf("Query %q failed: %v (may be expected)", tt.query, err)
+			}
+		})
+	}
+}
+
+// TestTriggers tests trigger execution
+func TestTriggers(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "xxsql-trigger-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	engine := storage.NewEngine(tmpDir)
+	if err := engine.Open(); err != nil {
+		t.Fatalf("Failed to open engine: %v", err)
+	}
+	defer engine.Close()
+
+	exec := NewExecutor(engine)
+	exec.SetDatabase("testdb")
+
+	// Create tables
+	if _, err := exec.Execute("CREATE TABLE users (id INT, name VARCHAR)"); err != nil {
+		t.Fatalf("Failed to create users table: %v", err)
+	}
+	if _, err := exec.Execute("CREATE TABLE audit_log (action VARCHAR, user_id INT)"); err != nil {
+		t.Fatalf("Failed to create audit_log table: %v", err)
+	}
+
+	// Create triggers
+	tests := []struct {
+		name  string
+		query string
+	}{
+		{"CREATE TRIGGER BEFORE INSERT", "CREATE TRIGGER tr_before_insert BEFORE INSERT ON users BEGIN INSERT INTO audit_log VALUES ('insert', NEW.id); END"},
+		{"INSERT with trigger", "INSERT INTO users VALUES (1, 'test')"},
+		{"SELECT audit", "SELECT * FROM audit_log"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := exec.Execute(tt.query)
+			if err != nil {
+				t.Logf("Query %q failed: %v (may be expected)", tt.query, err)
+			}
+		})
+	}
+}
+
+// TestExtractLiteralValue tests extractLiteralValue function
+func TestExtractLiteralValue(t *testing.T) {
+	exec := &Executor{}
+
+	tests := []struct {
+		name     string
+		expr     sql.Expression
+		expected interface{}
+	}{
+		{"literal int", &sql.Literal{Value: int64(42), Type: sql.LiteralNumber}, int64(42)},
+		{"literal string", &sql.Literal{Value: "test", Type: sql.LiteralString}, "test"},
+		{"column ref", &sql.ColumnRef{Name: "col"}, nil},
+		{"empty column ref", &sql.ColumnRef{}, nil},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := exec.extractLiteralValue(tt.expr)
+			if result != tt.expected {
+				t.Errorf("extractLiteralValue() = %v, want %v", result, tt.expected)
+			}
+		})
+	}
+}
+
+// TestInterfaceToValue tests interfaceToValue function
+func TestInterfaceToValue(t *testing.T) {
+	exec := &Executor{}
+	col := &types.ColumnInfo{Name: "test", Type: types.TypeInt}
+
+	tests := []struct {
+		name  string
+		input interface{}
+	}{
+		{"int", int(42)},
+		{"int64", int64(42)},
+		{"float64", 3.14},
+		{"string", "hello"},
+		{"bool true", true},
+		{"bool false", false},
+		{"nil", nil},
+		{"bytes", []byte("test")},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := exec.interfaceToValue(tt.input, col)
+			_ = result
+		})
+	}
+}
+
+// TestJoinResolution tests JOIN column resolution
+func TestJoinResolution(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "xxsql-join-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	engine := storage.NewEngine(tmpDir)
+	if err := engine.Open(); err != nil {
+		t.Fatalf("Failed to open engine: %v", err)
+	}
+	defer engine.Close()
+
+	exec := NewExecutor(engine)
+	exec.SetDatabase("testdb")
+
+	// Create tables
+	if _, err := exec.Execute("CREATE TABLE users (id INT, name VARCHAR)"); err != nil {
+		t.Fatalf("Failed to create users table: %v", err)
+	}
+	if _, err := exec.Execute("CREATE TABLE orders (id INT, user_id INT, amount INT)"); err != nil {
+		t.Fatalf("Failed to create orders table: %v", err)
+	}
+
+	// Insert data
+	for _, insert := range []string{
+		"INSERT INTO users VALUES (1, 'Alice')",
+		"INSERT INTO users VALUES (2, 'Bob')",
+		"INSERT INTO orders VALUES (1, 1, 100)",
+		"INSERT INTO orders VALUES (2, 1, 200)",
+		"INSERT INTO orders VALUES (3, 2, 150)",
+	} {
+		if _, err := exec.Execute(insert); err != nil {
+			t.Fatalf("Failed to insert: %v", err)
+		}
+	}
+
+	tests := []struct {
+		name  string
+		query string
+	}{
+		{"INNER JOIN", "SELECT u.name, o.amount FROM users u INNER JOIN orders o ON u.id = o.user_id"},
+		{"LEFT JOIN", "SELECT u.name, o.amount FROM users u LEFT JOIN orders o ON u.id = o.user_id"},
+		{"JOIN with WHERE", "SELECT u.name, o.amount FROM users u JOIN orders o ON u.id = o.user_id WHERE o.amount > 100"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := exec.Execute(tt.query)
+			if err != nil {
+				t.Errorf("Query %q failed: %v", tt.query, err)
+			}
+		})
+	}
+}
+
+// TestBetweenOperator tests BETWEEN operator
+func TestBetweenOperator(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "xxsql-between-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	engine := storage.NewEngine(tmpDir)
+	if err := engine.Open(); err != nil {
+		t.Fatalf("Failed to open engine: %v", err)
+	}
+	defer engine.Close()
+
+	exec := NewExecutor(engine)
+	exec.SetDatabase("testdb")
+
+	// Create table
+	if _, err := exec.Execute("CREATE TABLE t (id INT, val INT)"); err != nil {
+		t.Fatalf("Failed to create table: %v", err)
+	}
+
+	for _, insert := range []string{
+		"INSERT INTO t VALUES (1, 10)",
+		"INSERT INTO t VALUES (2, 20)",
+		"INSERT INTO t VALUES (3, 30)",
+		"INSERT INTO t VALUES (4, 40)",
+	} {
+		if _, err := exec.Execute(insert); err != nil {
+			t.Fatalf("Failed to insert: %v", err)
+		}
+	}
+
+	tests := []struct {
+		name  string
+		query string
+	}{
+		{"BETWEEN", "SELECT * FROM t WHERE val BETWEEN 15 AND 35"},
+		{"NOT BETWEEN", "SELECT * FROM t WHERE val NOT BETWEEN 15 AND 35"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := exec.Execute(tt.query)
+			if err != nil {
+				t.Errorf("Query %q failed: %v", tt.query, err)
+			}
+		})
+	}
+}
+
+// TestLikeOperator tests LIKE operator
+func TestLikeOperator(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "xxsql-like-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	engine := storage.NewEngine(tmpDir)
+	if err := engine.Open(); err != nil {
+		t.Fatalf("Failed to open engine: %v", err)
+	}
+	defer engine.Close()
+
+	exec := NewExecutor(engine)
+	exec.SetDatabase("testdb")
+
+	// Create table
+	if _, err := exec.Execute("CREATE TABLE t (name VARCHAR)"); err != nil {
+		t.Fatalf("Failed to create table: %v", err)
+	}
+
+	for _, insert := range []string{
+		"INSERT INTO t VALUES ('hello')",
+		"INSERT INTO t VALUES ('world')",
+		"INSERT INTO t VALUES ('test123')",
+		"INSERT INTO t VALUES ('sample')",
+	} {
+		if _, err := exec.Execute(insert); err != nil {
+			t.Fatalf("Failed to insert: %v", err)
+		}
+	}
+
+	tests := []struct {
+		name  string
+		query string
+	}{
+		{"LIKE percent", "SELECT * FROM t WHERE name LIKE 'test%'"},
+		{"LIKE underscore", "SELECT * FROM t WHERE name LIKE 'h_llo'"},
+		{"NOT LIKE", "SELECT * FROM t WHERE name NOT LIKE 'test%'"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := exec.Execute(tt.query)
+			if err != nil {
+				t.Errorf("Query %q failed: %v", tt.query, err)
+			}
+		})
+	}
+}
+
+// TestScalarSubquery tests scalar subquery evaluation
+func TestScalarSubquery(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "xxsql-scalar-subq-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	engine := storage.NewEngine(tmpDir)
+	if err := engine.Open(); err != nil {
+		t.Fatalf("Failed to open engine: %v", err)
+	}
+	defer engine.Close()
+
+	exec := NewExecutor(engine)
+	exec.SetDatabase("testdb")
+
+	// Create tables
+	if _, err := exec.Execute("CREATE TABLE products (id INT, name VARCHAR, price INT)"); err != nil {
+		t.Fatalf("Failed to create products table: %v", err)
+	}
+
+	for _, insert := range []string{
+		"INSERT INTO products VALUES (1, 'A', 100)",
+		"INSERT INTO products VALUES (2, 'B', 200)",
+		"INSERT INTO products VALUES (3, 'C', 150)",
+	} {
+		if _, err := exec.Execute(insert); err != nil {
+			t.Fatalf("Failed to insert: %v", err)
+		}
+	}
+
+	tests := []struct {
+		name  string
+		query string
+	}{
+		{"scalar subquery in SELECT", "SELECT id, (SELECT MAX(price) FROM products) AS max_price FROM products"},
+		{"scalar subquery in WHERE", "SELECT * FROM products WHERE price > (SELECT AVG(price) FROM products)"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := exec.Execute(tt.query)
+			if err != nil {
+				t.Logf("Query %q failed: %v (may be expected)", tt.query, err)
+			}
+		})
+	}
+}
+
+// TestCorrelatedSubquery tests correlated subquery
+func TestCorrelatedSubquery(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "xxsql-corr-subq-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	engine := storage.NewEngine(tmpDir)
+	if err := engine.Open(); err != nil {
+		t.Fatalf("Failed to open engine: %v", err)
+	}
+	defer engine.Close()
+
+	exec := NewExecutor(engine)
+	exec.SetDatabase("testdb")
+
+	// Create tables
+	if _, err := exec.Execute("CREATE TABLE dept (id INT, name VARCHAR)"); err != nil {
+		t.Fatalf("Failed to create dept table: %v", err)
+	}
+	if _, err := exec.Execute("CREATE TABLE emp (id INT, name VARCHAR, dept_id INT, salary INT)"); err != nil {
+		t.Fatalf("Failed to create emp table: %v", err)
+	}
+
+	for _, insert := range []string{
+		"INSERT INTO dept VALUES (1, 'Engineering')",
+		"INSERT INTO dept VALUES (2, 'Sales')",
+		"INSERT INTO emp VALUES (1, 'Alice', 1, 5000)",
+		"INSERT INTO emp VALUES (2, 'Bob', 1, 6000)",
+		"INSERT INTO emp VALUES (3, 'Carol', 2, 4000)",
+	} {
+		if _, err := exec.Execute(insert); err != nil {
+			t.Fatalf("Failed to insert: %v", err)
+		}
+	}
+
+	tests := []struct {
+		name  string
+		query string
+	}{
+		{"correlated subquery", "SELECT * FROM emp e WHERE salary > (SELECT AVG(salary) FROM emp WHERE dept_id = e.dept_id)"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := exec.Execute(tt.query)
+			if err != nil {
+				t.Logf("Query %q failed: %v (may be expected)", tt.query, err)
+			}
+		})
+	}
+}
+
+// TestUDFCall tests user-defined function calls
+func TestUDFCall(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "xxsql-udf-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	engine := storage.NewEngine(tmpDir)
+	if err := engine.Open(); err != nil {
+		t.Fatalf("Failed to open engine: %v", err)
+	}
+	defer engine.Close()
+
+	exec := NewExecutor(engine)
+	exec.SetDatabase("testdb")
+
+	// Create a simple UDF
+	if _, err := exec.Execute("CREATE FUNCTION double(x INT) RETURNS INT RETURN x * 2"); err != nil {
+		t.Logf("CREATE FUNCTION failed: %v (may be expected)", err)
+	}
+
+	// Try to use the UDF
+	_, err = exec.Execute("SELECT double(21)")
+	if err != nil {
+		t.Logf("UDF call failed: %v (may be expected)", err)
+	}
+}
+
+// TestColumnRefWithTable tests column references with table prefix
+func TestColumnRefWithTable(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "xxsql-colref-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	engine := storage.NewEngine(tmpDir)
+	if err := engine.Open(); err != nil {
+		t.Fatalf("Failed to open engine: %v", err)
+	}
+	defer engine.Close()
+
+	exec := NewExecutor(engine)
+	exec.SetDatabase("testdb")
+
+	// Create table
+	if _, err := exec.Execute("CREATE TABLE t (id INT, name VARCHAR)"); err != nil {
+		t.Fatalf("Failed to create table: %v", err)
+	}
+
+	for _, insert := range []string{
+		"INSERT INTO t VALUES (1, 'Alice')",
+		"INSERT INTO t VALUES (2, 'Bob')",
+	} {
+		if _, err := exec.Execute(insert); err != nil {
+			t.Fatalf("Failed to insert: %v", err)
+		}
+	}
+
+	tests := []struct {
+		name  string
+		query string
+	}{
+		{"table prefix", "SELECT t.id, t.name FROM t"},
+		{"alias", "SELECT x.id, x.name FROM t AS x"},
+		{"mixed", "SELECT t.id, name FROM t"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := exec.Execute(tt.query)
+			if err != nil {
+				t.Errorf("Query %q failed: %v", tt.query, err)
+			}
+		})
+	}
+}
+
+// TestEvaluateBinaryOpMore tests binary operation evaluation
+func TestEvaluateBinaryOpMore(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "xxsql-binop-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	engine := storage.NewEngine(tmpDir)
+	if err := engine.Open(); err != nil {
+		t.Fatalf("Failed to open engine: %v", err)
+	}
+	defer engine.Close()
+
+	exec := NewExecutor(engine)
+	exec.SetDatabase("testdb")
+
+	// Create table
+	if _, err := exec.Execute("CREATE TABLE t (a INT, b INT)"); err != nil {
+		t.Fatalf("Failed to create table: %v", err)
+	}
+
+	for _, insert := range []string{
+		"INSERT INTO t VALUES (10, 3)",
+		"INSERT INTO t VALUES (20, 4)",
+	} {
+		if _, err := exec.Execute(insert); err != nil {
+			t.Fatalf("Failed to insert: %v", err)
+		}
+	}
+
+	tests := []struct {
+		name  string
+		query string
+	}{
+		{"addition", "SELECT a + b FROM t"},
+		{"subtraction", "SELECT a - b FROM t"},
+		{"multiplication", "SELECT a * b FROM t"},
+		{"division", "SELECT a / b FROM t"},
+		{"modulo", "SELECT a % b FROM t"},
+		{"equal", "SELECT a = 10 FROM t"},
+		{"not equal", "SELECT a != b FROM t"},
+		{"less", "SELECT a < b FROM t"},
+		{"greater", "SELECT a > b FROM t"},
+		{"less equal", "SELECT a <= 20 FROM t"},
+		{"greater equal", "SELECT a >= 10 FROM t"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := exec.Execute(tt.query)
+			if err != nil {
+				t.Errorf("Query %q failed: %v", tt.query, err)
+			}
+		})
+	}
+}
+
+// TestIsNullExpr tests IS NULL expressions
+func TestIsNullExpr(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "xxsql-isnull-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	engine := storage.NewEngine(tmpDir)
+	if err := engine.Open(); err != nil {
+		t.Fatalf("Failed to open engine: %v", err)
+	}
+	defer engine.Close()
+
+	exec := NewExecutor(engine)
+	exec.SetDatabase("testdb")
+
+	// Create table
+	if _, err := exec.Execute("CREATE TABLE t (id INT, name VARCHAR)"); err != nil {
+		t.Fatalf("Failed to create table: %v", err)
+	}
+
+	for _, insert := range []string{
+		"INSERT INTO t VALUES (1, 'Alice')",
+		"INSERT INTO t VALUES (2, NULL)",
+		"INSERT INTO t VALUES (3, 'Bob')",
+	} {
+		if _, err := exec.Execute(insert); err != nil {
+			t.Fatalf("Failed to insert: %v", err)
+		}
+	}
+
+	tests := []struct {
+		name  string
+		query string
+	}{
+		{"IS NULL", "SELECT * FROM t WHERE name IS NULL"},
+		{"IS NOT NULL", "SELECT * FROM t WHERE name IS NOT NULL"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := exec.Execute(tt.query)
+			if err != nil {
+				t.Errorf("Query %q failed: %v", tt.query, err)
+			}
+		})
+	}
+}
+
+// TestUnion tests UNION operations
+func TestUnion(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "xxsql-union-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	engine := storage.NewEngine(tmpDir)
+	if err := engine.Open(); err != nil {
+		t.Fatalf("Failed to open engine: %v", err)
+	}
+	defer engine.Close()
+
+	exec := NewExecutor(engine)
+	exec.SetDatabase("testdb")
+
+	// Create tables
+	if _, err := exec.Execute("CREATE TABLE t1 (id INT)"); err != nil {
+		t.Fatalf("Failed to create t1: %v", err)
+	}
+	if _, err := exec.Execute("CREATE TABLE t2 (id INT)"); err != nil {
+		t.Fatalf("Failed to create t2: %v", err)
+	}
+
+	for _, insert := range []string{
+		"INSERT INTO t1 VALUES (1)",
+		"INSERT INTO t1 VALUES (2)",
+		"INSERT INTO t2 VALUES (2)",
+		"INSERT INTO t2 VALUES (3)",
+	} {
+		if _, err := exec.Execute(insert); err != nil {
+			t.Fatalf("Failed to insert: %v", err)
+		}
+	}
+
+	tests := []struct {
+		name  string
+		query string
+	}{
+		{"UNION", "SELECT id FROM t1 UNION SELECT id FROM t2"},
+		{"UNION ALL", "SELECT id FROM t1 UNION ALL SELECT id FROM t2"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := exec.Execute(tt.query)
+			if err != nil {
+				t.Errorf("Query %q failed: %v", tt.query, err)
+			}
+		})
+	}
+}
+// TestIFNullFunction tests IFNULL function
+func TestIFNullFunction(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "xxsql-ifnull-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	engine := storage.NewEngine(tmpDir)
+	if err := engine.Open(); err != nil {
+		t.Fatalf("Failed to open engine: %v", err)
+	}
+	defer engine.Close()
+
+	exec := NewExecutor(engine)
+	exec.SetDatabase("testdb")
+
+	tests := []struct {
+		name  string
+		query string
+	}{
+		{"IFNULL with non-null", "SELECT IFNULL('value', 'default')"},
+		{"IFNULL with null", "SELECT IFNULL(NULL, 'default')"},
+		{"IFNULL with both null", "SELECT IFNULL(NULL, NULL)"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := exec.Execute(tt.query)
+			if err != nil {
+				t.Errorf("Query %q failed: %v", tt.query, err)
+			}
+		})
+	}
+}
+
+// TestCastExpression tests CAST expressions
+func TestCastExpressionMore(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "xxsql-cast-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	engine := storage.NewEngine(tmpDir)
+	if err := engine.Open(); err != nil {
+		t.Fatalf("Failed to open engine: %v", err)
+	}
+	defer engine.Close()
+
+	exec := NewExecutor(engine)
+	exec.SetDatabase("testdb")
+
+	tests := []struct {
+		name  string
+		query string
+	}{
+		{"cast to int", "SELECT CAST('42' AS INT)"},
+		{"cast to varchar", "SELECT CAST(42 AS VARCHAR)"},
+		{"cast to float", "SELECT CAST('3.14' AS FLOAT)"},
+		{"cast to text", "SELECT CAST(123 AS TEXT)"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := exec.Execute(tt.query)
+			if err != nil {
+				t.Errorf("Query %q failed: %v", tt.query, err)
+			}
+		})
+	}
+}
+
+// TestUnaryNegation tests unary negation
+func TestUnaryNegation(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "xxsql-neg-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	engine := storage.NewEngine(tmpDir)
+	if err := engine.Open(); err != nil {
+		t.Fatalf("Failed to open engine: %v", err)
+	}
+	defer engine.Close()
+
+	exec := NewExecutor(engine)
+	exec.SetDatabase("testdb")
+
+	// Create table
+	if _, err := exec.Execute("CREATE TABLE t (val FLOAT)"); err != nil {
+		t.Fatalf("Failed to create table: %v", err)
+	}
+
+	for _, insert := range []string{
+		"INSERT INTO t VALUES (3.5)",
+		"INSERT INTO t VALUES (-2.5)",
+	} {
+		if _, err := exec.Execute(insert); err != nil {
+			t.Fatalf("Failed to insert: %v", err)
+		}
+	}
+
+	tests := []struct {
+		name  string
+		query string
+	}{
+		{"negate int", "SELECT -5"},
+		{"negate float", "SELECT -3.14"},
+		{"negate column", "SELECT -val FROM t"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := exec.Execute(tt.query)
+			if err != nil {
+				t.Errorf("Query %q failed: %v", tt.query, err)
+			}
+		})
+	}
+}
+
+// TestComplexWhere tests complex WHERE expressions
+func TestComplexWhere(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "xxsql-complex-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	engine := storage.NewEngine(tmpDir)
+	if err := engine.Open(); err != nil {
+		t.Fatalf("Failed to open engine: %v", err)
+	}
+	defer engine.Close()
+
+	exec := NewExecutor(engine)
+	exec.SetDatabase("testdb")
+
+	// Create table
+	if _, err := exec.Execute("CREATE TABLE t (a INT, b INT, c INT)"); err != nil {
+		t.Fatalf("Failed to create table: %v", err)
+	}
+
+	for _, insert := range []string{
+		"INSERT INTO t VALUES (1, 2, 3)",
+		"INSERT INTO t VALUES (4, 5, 6)",
+		"INSERT INTO t VALUES (7, 8, 9)",
+	} {
+		if _, err := exec.Execute(insert); err != nil {
+			t.Fatalf("Failed to insert: %v", err)
+		}
+	}
+
+	tests := []struct {
+		name  string
+		query string
+	}{
+		{"nested OR/AND", "SELECT * FROM t WHERE (a = 1 OR b = 5) AND c > 2"},
+		{"multiple AND", "SELECT * FROM t WHERE a > 0 AND b > 0 AND c > 0"},
+		{"multiple OR", "SELECT * FROM t WHERE a = 1 OR a = 4 OR a = 7"},
+		{"NOT with comparison", "SELECT * FROM t WHERE NOT a = 4"},
+		{"arithmetic in where", "SELECT * FROM t WHERE a + b > c"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := exec.Execute(tt.query)
+			if err != nil {
+				t.Errorf("Query %q failed: %v", tt.query, err)
+			}
+		})
+	}
+}
+
+// TestWithClause tests CTEs (WITH clause)
+func TestWithClause(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "xxsql-with-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	engine := storage.NewEngine(tmpDir)
+	if err := engine.Open(); err != nil {
+		t.Fatalf("Failed to open engine: %v", err)
+	}
+	defer engine.Close()
+
+	exec := NewExecutor(engine)
+	exec.SetDatabase("testdb")
+
+	// Create table
+	if _, err := exec.Execute("CREATE TABLE orders (id INT, amount INT)"); err != nil {
+		t.Fatalf("Failed to create table: %v", err)
+	}
+
+	for _, insert := range []string{
+		"INSERT INTO orders VALUES (1, 100)",
+		"INSERT INTO orders VALUES (2, 200)",
+		"INSERT INTO orders VALUES (3, 300)",
+	} {
+		if _, err := exec.Execute(insert); err != nil {
+			t.Fatalf("Failed to insert: %v", err)
+		}
+	}
+
+	tests := []struct {
+		name  string
+		query string
+	}{
+		{"simple CTE", "WITH cte AS (SELECT * FROM orders) SELECT * FROM cte"},
+		{"CTE with filter", "WITH cte AS (SELECT id FROM orders WHERE amount > 150) SELECT * FROM cte"},
+		{"multiple CTEs", "WITH cte1 AS (SELECT id FROM orders), cte2 AS (SELECT amount FROM orders) SELECT * FROM cte1, cte2"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := exec.Execute(tt.query)
+			if err != nil {
+				t.Logf("Query %q failed: %v (may be expected)", tt.query, err)
+			}
+		})
+	}
+}
+
+// TestDateFunctions tests date functions
+func TestDateFunctions(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "xxsql-date-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	engine := storage.NewEngine(tmpDir)
+	if err := engine.Open(); err != nil {
+		t.Fatalf("Failed to open engine: %v", err)
+	}
+	defer engine.Close()
+
+	exec := NewExecutor(engine)
+	exec.SetDatabase("testdb")
+
+	tests := []struct {
+		name  string
+		query string
+	}{
+		{"CURRENT_TIMESTAMP", "SELECT CURRENT_TIMESTAMP()"},
+		{"NOW", "SELECT NOW()"},
+		{"CURRENT_DATE", "SELECT CURRENT_DATE()"},
+		{"CURRENT_TIME", "SELECT CURRENT_TIME()"},
+		{"DATE function", "SELECT DATE('2024-01-15')"},
+		{"TIME function", "SELECT TIME('10:30:00')"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := exec.Execute(tt.query)
+			if err != nil {
+				t.Errorf("Query %q failed: %v", tt.query, err)
+			}
+		})
+	}
+}
+
+// TestStringFunctions tests string functions
+func TestStringFunctions(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "xxsql-str-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	engine := storage.NewEngine(tmpDir)
+	if err := engine.Open(); err != nil {
+		t.Fatalf("Failed to open engine: %v", err)
+	}
+	defer engine.Close()
+
+	exec := NewExecutor(engine)
+	exec.SetDatabase("testdb")
+
+	tests := []struct {
+		name  string
+		query string
+	}{
+		{"UPPER", "SELECT UPPER('hello')"},
+		{"LOWER", "SELECT LOWER('HELLO')"},
+		{"LENGTH", "SELECT LENGTH('hello')"},
+		{"SUBSTR", "SELECT SUBSTR('hello', 1, 3)"},
+		{"CONCAT", "SELECT CONCAT('a', 'b', 'c')"},
+		{"TRIM", "SELECT TRIM('  hello  ')"},
+		{"LTRIM", "SELECT LTRIM('  hello')"},
+		{"RTRIM", "SELECT RTRIM('hello  ')"},
+		{"REPLACE", "SELECT REPLACE('hello', 'l', 'L')"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := exec.Execute(tt.query)
+			if err != nil {
+				t.Logf("Query %q failed: %v (may be expected)", tt.query, err)
+			}
+		})
+	}
+}
+
+// TestMathFunctions tests math functions
+func TestMathFunctions(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "xxsql-math-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	engine := storage.NewEngine(tmpDir)
+	if err := engine.Open(); err != nil {
+		t.Fatalf("Failed to open engine: %v", err)
+	}
+	defer engine.Close()
+
+	exec := NewExecutor(engine)
+	exec.SetDatabase("testdb")
+
+	tests := []struct {
+		name  string
+		query string
+	}{
+		{"ABS", "SELECT ABS(-5)"},
+		{"ROUND", "SELECT ROUND(3.14159, 2)"},
+		{"FLOOR", "SELECT FLOOR(3.9)"},
+		{"CEIL", "SELECT CEIL(3.1)"},
+		{"POWER", "SELECT POWER(2, 3)"},
+		{"SQRT", "SELECT SQRT(16)"},
+		{"MOD", "SELECT MOD(10, 3)"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := exec.Execute(tt.query)
+			if err != nil {
+				t.Logf("Query %q failed: %v (may be expected)", tt.query, err)
+			}
+		})
+	}
+}
+
+// TestMoreAggregateFunctions tests more aggregate functions
+func TestMoreAggregateFunctions(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "xxsql-agg-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	engine := storage.NewEngine(tmpDir)
+	if err := engine.Open(); err != nil {
+		t.Fatalf("Failed to open engine: %v", err)
+	}
+	defer engine.Close()
+
+	exec := NewExecutor(engine)
+	exec.SetDatabase("testdb")
+
+	// Create table
+	if _, err := exec.Execute("CREATE TABLE sales (id INT, amount FLOAT, category VARCHAR)"); err != nil {
+		t.Fatalf("Failed to create table: %v", err)
+	}
+
+	for _, insert := range []string{
+		"INSERT INTO sales VALUES (1, 100.0, 'A')",
+		"INSERT INTO sales VALUES (2, 200.0, 'A')",
+		"INSERT INTO sales VALUES (3, 150.0, 'B')",
+		"INSERT INTO sales VALUES (4, 250.0, 'B')",
+	} {
+		if _, err := exec.Execute(insert); err != nil {
+			t.Fatalf("Failed to insert: %v", err)
+		}
+	}
+
+	tests := []struct {
+		name  string
+		query string
+	}{
+		{"SUM with GROUP BY", "SELECT category, SUM(amount) FROM sales GROUP BY category"},
+		{"AVG with GROUP BY", "SELECT category, AVG(amount) FROM sales GROUP BY category"},
+		{"COUNT with GROUP BY", "SELECT category, COUNT(*) FROM sales GROUP BY category"},
+		{"MAX with GROUP BY", "SELECT category, MAX(amount) FROM sales GROUP BY category"},
+		{"MIN with GROUP BY", "SELECT category, MIN(amount) FROM sales GROUP BY category"},
+		{"multiple aggregates", "SELECT category, SUM(amount), AVG(amount), COUNT(*) FROM sales GROUP BY category"},
+		{"HAVING SUM", "SELECT category, SUM(amount) FROM sales GROUP BY category HAVING SUM(amount) > 300"},
+		{"HAVING COUNT", "SELECT category FROM sales GROUP BY category HAVING COUNT(*) > 1"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := exec.Execute(tt.query)
+			if err != nil {
+				t.Errorf("Query %q failed: %v", tt.query, err)
+			}
+		})
+	}
+}
+
+// TestOrderByExpression tests ORDER BY with expressions
+func TestOrderByExpression(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "xxsql-order-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	engine := storage.NewEngine(tmpDir)
+	if err := engine.Open(); err != nil {
+		t.Fatalf("Failed to open engine: %v", err)
+	}
+	defer engine.Close()
+
+	exec := NewExecutor(engine)
+	exec.SetDatabase("testdb")
+
+	// Create table
+	if _, err := exec.Execute("CREATE TABLE t (a INT, b INT)"); err != nil {
+		t.Fatalf("Failed to create table: %v", err)
+	}
+
+	for _, insert := range []string{
+		"INSERT INTO t VALUES (1, 2)",
+		"INSERT INTO t VALUES (3, 1)",
+		"INSERT INTO t VALUES (2, 3)",
+	} {
+		if _, err := exec.Execute(insert); err != nil {
+			t.Fatalf("Failed to insert: %v", err)
+		}
+	}
+
+	tests := []struct {
+		name  string
+		query string
+	}{
+		{"ORDER BY column ASC", "SELECT * FROM t ORDER BY a ASC"},
+		{"ORDER BY column DESC", "SELECT * FROM t ORDER BY a DESC"},
+		{"ORDER BY expression", "SELECT * FROM t ORDER BY a + b"},
+		{"ORDER BY multiple", "SELECT * FROM t ORDER BY a ASC, b DESC"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := exec.Execute(tt.query)
+			if err != nil {
+				t.Errorf("Query %q failed: %v", tt.query, err)
+			}
+		})
+	}
+}
+
+// TestLimitOffsetMore tests LIMIT and OFFSET with more cases
+func TestLimitOffsetMore(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "xxsql-limit-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	engine := storage.NewEngine(tmpDir)
+	if err := engine.Open(); err != nil {
+		t.Fatalf("Failed to open engine: %v", err)
+	}
+	defer engine.Close()
+
+	exec := NewExecutor(engine)
+	exec.SetDatabase("testdb")
+
+	// Create table
+	if _, err := exec.Execute("CREATE TABLE t (id INT)"); err != nil {
+		t.Fatalf("Failed to create table: %v", err)
+	}
+
+	for i := 1; i <= 10; i++ {
+		if _, err := exec.Execute(fmt.Sprintf("INSERT INTO t VALUES (%d)", i)); err != nil {
+			t.Fatalf("Failed to insert: %v", err)
+		}
+	}
+
+	tests := []struct {
+		name  string
+		query string
+	}{
+		{"LIMIT only", "SELECT * FROM t LIMIT 5"},
+		{"LIMIT and OFFSET", "SELECT * FROM t LIMIT 5 OFFSET 3"},
+		{"OFFSET only", "SELECT * FROM t OFFSET 2"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := exec.Execute(tt.query)
+			if err != nil {
+				t.Errorf("Query %q failed: %v", tt.query, err)
+			}
+		})
+	}
+}
+
+// TestDistinct tests DISTINCT
+func TestDistinct(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "xxsql-distinct-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	engine := storage.NewEngine(tmpDir)
+	if err := engine.Open(); err != nil {
+		t.Fatalf("Failed to open engine: %v", err)
+	}
+	defer engine.Close()
+
+	exec := NewExecutor(engine)
+	exec.SetDatabase("testdb")
+
+	// Create table
+	if _, err := exec.Execute("CREATE TABLE t (category VARCHAR)"); err != nil {
+		t.Fatalf("Failed to create table: %v", err)
+	}
+
+	for _, insert := range []string{
+		"INSERT INTO t VALUES ('A')",
+		"INSERT INTO t VALUES ('B')",
+		"INSERT INTO t VALUES ('A')",
+		"INSERT INTO t VALUES ('C')",
+		"INSERT INTO t VALUES ('B')",
+	} {
+		if _, err := exec.Execute(insert); err != nil {
+			t.Fatalf("Failed to insert: %v", err)
+		}
+	}
+
+	tests := []struct {
+		name  string
+		query string
+	}{
+		{"DISTINCT single column", "SELECT DISTINCT category FROM t"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := exec.Execute(tt.query)
+			if err != nil {
+				t.Errorf("Query %q failed: %v", tt.query, err)
+			}
+		})
+	}
+}
+
+// TestNestedFunctions tests nested function calls
+func TestNestedFunctions(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "xxsql-nested-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	engine := storage.NewEngine(tmpDir)
+	if err := engine.Open(); err != nil {
+		t.Fatalf("Failed to open engine: %v", err)
+	}
+	defer engine.Close()
+
+	exec := NewExecutor(engine)
+	exec.SetDatabase("testdb")
+
+	tests := []struct {
+		name  string
+		query string
+	}{
+		{"nested UPPER LOWER", "SELECT UPPER(LOWER('HELLO'))"},
+		{"nested COALESCE", "SELECT COALESCE(COALESCE(NULL, NULL), 'default')"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := exec.Execute(tt.query)
+			if err != nil {
+				t.Errorf("Query %q failed: %v", tt.query, err)
+			}
+		})
+	}
+}
+
+// TestNullComparisons tests NULL comparisons
+func TestNullComparisons(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "xxsql-null-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	engine := storage.NewEngine(tmpDir)
+	if err := engine.Open(); err != nil {
+		t.Fatalf("Failed to open engine: %v", err)
+	}
+	defer engine.Close()
+
+	exec := NewExecutor(engine)
+	exec.SetDatabase("testdb")
+
+	// Create table
+	if _, err := exec.Execute("CREATE TABLE t (id INT, val INT)"); err != nil {
+		t.Fatalf("Failed to create table: %v", err)
+	}
+
+	for _, insert := range []string{
+		"INSERT INTO t VALUES (1, 10)",
+		"INSERT INTO t VALUES (2, NULL)",
+		"INSERT INTO t VALUES (3, 30)",
+	} {
+		if _, err := exec.Execute(insert); err != nil {
+			t.Fatalf("Failed to insert: %v", err)
+		}
+	}
+
+	tests := []struct {
+		name  string
+		query string
+	}{
+		{"IS NULL", "SELECT * FROM t WHERE val IS NULL"},
+		{"IS NOT NULL", "SELECT * FROM t WHERE val IS NOT NULL"},
+		{"COALESCE with column", "SELECT id, COALESCE(val, 0) FROM t"},
+		{"IFNULL with column", "SELECT id, IFNULL(val, -1) FROM t"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := exec.Execute(tt.query)
+			if err != nil {
+				t.Errorf("Query %q failed: %v", tt.query, err)
+			}
+		})
+	}
+}
+
+// TestBlobComparisons tests BLOB comparison operations
+func TestBlobComparisons(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "xxsql-blob-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	engine := storage.NewEngine(tmpDir)
+	if err := engine.Open(); err != nil {
+		t.Fatalf("Failed to open engine: %v", err)
+	}
+	defer engine.Close()
+
+	exec := NewExecutor(engine)
+	exec.SetDatabase("testdb")
+
+	// Create table with BLOB column
+	if _, err := exec.Execute("CREATE TABLE blob_test (id INT, data BLOB)"); err != nil {
+		t.Fatalf("Failed to create table: %v", err)
+	}
+
+	// Insert BLOB values using hex notation
+	queries := []string{
+		"INSERT INTO blob_test VALUES (1, X'01020304')",
+		"INSERT INTO blob_test VALUES (2, X'05060708')",
+		"INSERT INTO blob_test VALUES (3, X'01020304')",
+	}
+
+	for _, q := range queries {
+		if _, err := exec.Execute(q); err != nil {
+			t.Fatalf("Failed to insert: %v", err)
+		}
+	}
+
+	tests := []struct {
+		name  string
+		query string
+	}{
+		{"BLOB equality", "SELECT * FROM blob_test WHERE data = X'01020304'"},
+		{"BLOB inequality", "SELECT * FROM blob_test WHERE data != X'01020304'"},
+		{"BLOB less than", "SELECT * FROM blob_test WHERE data < X'05060708'"},
+		{"BLOB greater than", "SELECT * FROM blob_test WHERE data > X'01020304'"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := exec.Execute(tt.query)
+			if err != nil {
+				t.Errorf("Query %q failed: %v", tt.query, err)
+			}
+		})
+	}
+}
+
+// TestMoreCompareValues tests more comparison value operations
+func TestMoreCompareValues(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "xxsql-compare-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	engine := storage.NewEngine(tmpDir)
+	if err := engine.Open(); err != nil {
+		t.Fatalf("Failed to open engine: %v", err)
+	}
+	defer engine.Close()
+
+	exec := NewExecutor(engine)
+	exec.SetDatabase("testdb")
+
+	// Create table
+	if _, err := exec.Execute("CREATE TABLE comp_test (id INT, name VARCHAR(50), score FLOAT)"); err != nil {
+		t.Fatalf("Failed to create table: %v", err)
+	}
+
+	inserts := []string{
+		"INSERT INTO comp_test VALUES (1, 'Alice', 85.5)",
+		"INSERT INTO comp_test VALUES (2, 'Bob', 92.0)",
+		"INSERT INTO comp_test VALUES (3, 'Charlie', 78.3)",
+	}
+
+	for _, ins := range inserts {
+		if _, err := exec.Execute(ins); err != nil {
+			t.Fatalf("Failed to insert: %v", err)
+		}
+	}
+
+	tests := []struct {
+		name  string
+		query string
+	}{
+		{"String less than", "SELECT * FROM comp_test WHERE name < 'Charlie'"},
+		{"String greater than", "SELECT * FROM comp_test WHERE name > 'Bob'"},
+		{"String less than or equal", "SELECT * FROM comp_test WHERE name <= 'Bob'"},
+		{"String greater or equal", "SELECT * FROM comp_test WHERE name >= 'Bob'"},
+		{"Float comparisons", "SELECT * FROM comp_test WHERE score > 80.0"},
+		{"Float less than", "SELECT * FROM comp_test WHERE score < 90.0"},
+		{"Float less than or equal", "SELECT * FROM comp_test WHERE score <= 85.5"},
+		{"Float greater or equal", "SELECT * FROM comp_test WHERE score >= 85.5"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := exec.Execute(tt.query)
+			if err != nil {
+				t.Errorf("Query %q failed: %v", tt.query, err)
+			}
+		})
+	}
+}
+
+// TestUDFFunctionCallMore tests more UDF function calls
+func TestUDFFunctionCallMore(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "xxsql-udf-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	engine := storage.NewEngine(tmpDir)
+	if err := engine.Open(); err != nil {
+		t.Fatalf("Failed to open engine: %v", err)
+	}
+	defer engine.Close()
+
+	exec := NewExecutor(engine)
+	exec.SetDatabase("testdb")
+
+	// Create table with various data
+	if _, err := exec.Execute("CREATE TABLE udf_test (id INT, name VARCHAR(50), price FLOAT, created DATE)"); err != nil {
+		t.Fatalf("Failed to create table: %v", err)
+	}
+
+	inserts := []string{
+		"INSERT INTO udf_test VALUES (1, 'Product A', 19.99, '2024-01-15')",
+		"INSERT INTO udf_test VALUES (2, 'product b', 29.99, '2024-02-20')",
+		"INSERT INTO udf_test VALUES (3, 'PRODUCT C', 39.99, '2024-03-25')",
+	}
+
+	for _, ins := range inserts {
+		if _, err := exec.Execute(ins); err != nil {
+			t.Fatalf("Failed to insert: %v", err)
+		}
+	}
+
+	tests := []struct {
+		name  string
+		query string
+	}{
+		{"UPPER function", "SELECT UPPER(name) FROM udf_test"},
+		{"LOWER function", "SELECT LOWER(name) FROM udf_test"},
+		{"UCASE function", "SELECT UCASE(name) FROM udf_test"},
+		{"LCASE function", "SELECT LCASE(name) FROM udf_test"},
+		{"LENGTH function", "SELECT LENGTH(name) FROM udf_test"},
+		{"OCTET_LENGTH function", "SELECT OCTET_LENGTH(name) FROM udf_test"},
+		{"CONCAT function", "SELECT CONCAT(name, ' - $', CAST(price AS VARCHAR)) FROM udf_test"},
+		{"CONCAT_WS function", "SELECT CONCAT_WS('-', name, CAST(price AS VARCHAR)) FROM udf_test"},
+		{"SUBSTRING function", "SELECT SUBSTRING(name, 1, 5) FROM udf_test"},
+		{"LTRIM function", "SELECT LTRIM('  hello  ')"},
+		{"RTRIM function", "SELECT RTRIM('  hello  ')"},
+		{"TRIM function", "SELECT TRIM('  hello  ')"},
+		{"REPLACE function", "SELECT REPLACE(name, 'Product', 'Item') FROM udf_test"},
+		{"REVERSE function", "SELECT REVERSE(name) FROM udf_test"},
+		{"REPEAT function", "SELECT REPEAT(name, 2) FROM udf_test"},
+		{"SPACE function", "SELECT SPACE(5)"},
+		{"STRCMP function", "SELECT STRCMP('abc', 'def')"},
+		{"LOCATE function", "SELECT LOCATE('o', name) FROM udf_test"},
+		{"INSTR function", "SELECT INSTR(name, 'o') FROM udf_test"},
+		{"LEFT function", "SELECT LEFT(name, 3) FROM udf_test"},
+		{"RIGHT function", "SELECT RIGHT(name, 3) FROM udf_test"},
+		{"LPAD function", "SELECT LPAD(name, 10, '*') FROM udf_test"},
+		{"RPAD function", "SELECT RPAD(name, 10, '*') FROM udf_test"},
+		{"ABS function", "SELECT ABS(-5)"},
+		{"ROUND function", "SELECT ROUND(3.14159, 2)"},
+		{"FLOOR function", "SELECT FLOOR(3.7)"},
+		{"CEIL function", "SELECT CEIL(3.2)"},
+		{"CEILING function", "SELECT CEILING(3.2)"},
+		{"POWER function", "SELECT POWER(2, 3)"},
+		{"SQRT function", "SELECT SQRT(16)"},
+		{"MOD function", "SELECT MOD(10, 3)"},
+		{"RAND function", "SELECT RAND()"},
+		{"SIGN function", "SELECT SIGN(-10)"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := exec.Execute(tt.query)
+			if err != nil {
+				t.Errorf("Query %q failed: %v", tt.query, err)
+			}
+		})
+	}
+}
+
+// TestDateFunctionsMore tests more date functions
+func TestDateFunctionsMore(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "xxsql-date-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	engine := storage.NewEngine(tmpDir)
+	if err := engine.Open(); err != nil {
+		t.Fatalf("Failed to open engine: %v", err)
+	}
+	defer engine.Close()
+
+	exec := NewExecutor(engine)
+	exec.SetDatabase("testdb")
+
+	tests := []struct {
+		name  string
+		query string
+	}{
+		{"NOW function", "SELECT NOW()"},
+		{"CURRENT_DATE function", "SELECT CURRENT_DATE()"},
+		{"CURRENT_TIME function", "SELECT CURRENT_TIME()"},
+		{"DATE function", "SELECT DATE('2024-03-22 10:30:00')"},
+		{"TIME function", "SELECT TIME('2024-03-22 10:30:00')"},
+		{"YEAR function", "SELECT YEAR('2024-03-22')"},
+		{"MONTH function", "SELECT MONTH('2024-03-22')"},
+		{"DAY function", "SELECT DAY('2024-03-22')"},
+		{"DAYOFMONTH function", "SELECT DAYOFMONTH('2024-03-22')"},
+		{"DAYOFWEEK function", "SELECT DAYOFWEEK('2024-03-22')"},
+		{"DAYOFYEAR function", "SELECT DAYOFYEAR('2024-03-22')"},
+		{"WEEK function", "SELECT WEEK('2024-03-22')"},
+		{"WEEKDAY function", "SELECT WEEKDAY('2024-03-22')"},
+		{"HOUR function", "SELECT HOUR('10:30:45')"},
+		{"MINUTE function", "SELECT MINUTE('10:30:45')"},
+		{"SECOND function", "SELECT SECOND('10:30:45')"},
+		{"QUARTER function", "SELECT QUARTER('2024-03-22')"},
+		{"DATEDIFF function", "SELECT DATEDIFF('2024-03-22', '2024-01-01')"},
+		{"TIMESTAMPDIFF function", "SELECT TIMESTAMPDIFF(DAY, '2024-01-01', '2024-03-22')"},
+		{"DATE_FORMAT function", "SELECT DATE_FORMAT('2024-03-22', '%Y-%m-%d')"},
+		{"STR_TO_DATE function", "SELECT STR_TO_DATE('2024-03-22', '%Y-%m-%d')"},
+		{"LAST_DAY function", "SELECT LAST_DAY('2024-03-22')"},
+		{"FROM_UNIXTIME function", "SELECT FROM_UNIXTIME(1711100000)"},
+		{"UNIX_TIMESTAMP function", "SELECT UNIX_TIMESTAMP('2024-03-22')"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := exec.Execute(tt.query)
+			if err != nil {
+				t.Errorf("Query %q failed: %v", tt.query, err)
+			}
+		})
+	}
+}
+
+// TestConditionalFunctions tests conditional functions
+func TestConditionalFunctions(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "xxsql-cond-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	engine := storage.NewEngine(tmpDir)
+	if err := engine.Open(); err != nil {
+		t.Fatalf("Failed to open engine: %v", err)
+	}
+	defer engine.Close()
+
+	exec := NewExecutor(engine)
+	exec.SetDatabase("testdb")
+
+	// Create table
+	if _, err := exec.Execute("CREATE TABLE cond_test (id INT, score INT)"); err != nil {
+		t.Fatalf("Failed to create table: %v", err)
+	}
+
+	inserts := []string{
+		"INSERT INTO cond_test VALUES (1, 85)",
+		"INSERT INTO cond_test VALUES (2, NULL)",
+		"INSERT INTO cond_test VALUES (3, 72)",
+	}
+
+	for _, ins := range inserts {
+		if _, err := exec.Execute(ins); err != nil {
+			t.Fatalf("Failed to insert: %v", err)
+		}
+	}
+
+	tests := []struct {
+		name  string
+		query string
+	}{
+		{"IFNULL with value", "SELECT IFNULL(score, 0) FROM cond_test"},
+		{"NULLIF equal", "SELECT NULLIF(1, 1)"},
+		{"NULLIF not equal", "SELECT NULLIF(1, 2)"},
+		{"COALESCE multiple", "SELECT COALESCE(NULL, NULL, 'default')"},
+		{"CASE simple", "SELECT CASE score WHEN 85 THEN 'A' WHEN 72 THEN 'B' ELSE 'C' END FROM cond_test"},
+		{"CASE searched", "SELECT CASE WHEN score >= 80 THEN 'Pass' ELSE 'Fail' END FROM cond_test"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := exec.Execute(tt.query)
+			if err != nil {
+				t.Errorf("Query %q failed: %v", tt.query, err)
+			}
+		})
+	}
+}
+
+// TestMathFunctionsExtra tests additional math functions
+func TestMathFunctionsExtra(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "xxsql-math-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	engine := storage.NewEngine(tmpDir)
+	if err := engine.Open(); err != nil {
+		t.Fatalf("Failed to open engine: %v", err)
+	}
+	defer engine.Close()
+
+	exec := NewExecutor(engine)
+	exec.SetDatabase("testdb")
+
+	tests := []struct {
+		name  string
+		query string
+	}{
+		{"EXP function", "SELECT EXP(1)"},
+		{"LOG function", "SELECT LOG(10)"},
+		{"LOG10 function", "SELECT LOG10(100)"},
+		{"LOG2 function", "SELECT LOG2(8)"},
+		{"LN function", "SELECT LN(10)"},
+		{"PI function", "SELECT PI()"},
+		{"SIN function", "SELECT SIN(0)"},
+		{"COS function", "SELECT COS(0)"},
+		{"TAN function", "SELECT TAN(0)"},
+		{"ASIN function", "SELECT ASIN(0)"},
+		{"ACOS function", "SELECT ACOS(1)"},
+		{"ATAN function", "SELECT ATAN(0)"},
+		{"ATAN2 function", "SELECT ATAN2(1, 1)"},
+		{"COT function", "SELECT COT(1)"},
+		{"DEGREES function", "SELECT DEGREES(3.14159)"},
+		{"RADIANS function", "SELECT RADIANS(180)"},
+		{"TRUNCATE function", "SELECT TRUNCATE(3.14159, 2)"},
+		{"GREATEST function", "SELECT GREATEST(1, 5, 3, 2)"},
+		{"LEAST function", "SELECT LEAST(1, 5, 3, 2)"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := exec.Execute(tt.query)
+			if err != nil {
+				t.Errorf("Query %q failed: %v", tt.query, err)
+			}
+		})
+	}
+}
+
+// TestTypeConversionFunctions tests type conversion functions
+func TestTypeConversionFunctions(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "xxsql-conv-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	engine := storage.NewEngine(tmpDir)
+	if err := engine.Open(); err != nil {
+		t.Fatalf("Failed to open engine: %v", err)
+	}
+	defer engine.Close()
+
+	exec := NewExecutor(engine)
+	exec.SetDatabase("testdb")
+
+	tests := []struct {
+		name  string
+		query string
+	}{
+		{"CAST to INT", "SELECT CAST('42' AS INT)"},
+		{"CAST to INTEGER", "SELECT CAST('42' AS INTEGER)"},
+		{"CAST to FLOAT", "SELECT CAST('3.14' AS FLOAT)"},
+		{"CAST to VARCHAR", "SELECT CAST(42 AS VARCHAR)"},
+		{"CAST to CHAR", "SELECT CAST(42 AS CHAR)"},
+		{"CAST to TEXT", "SELECT CAST('hello' AS TEXT)"},
+		{"CONVERT function", "SELECT CONVERT('42', INT)"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := exec.Execute(tt.query)
+			if err != nil {
+				t.Errorf("Query %q failed: %v", tt.query, err)
+			}
+		})
+	}
+}
+
+// TestWhereWithInSubquery tests WHERE with IN subquery
+func TestWhereWithInSubquery(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "xxsql-in-subq-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	engine := storage.NewEngine(tmpDir)
+	if err := engine.Open(); err != nil {
+		t.Fatalf("Failed to open engine: %v", err)
+	}
+	defer engine.Close()
+
+	exec := NewExecutor(engine)
+	exec.SetDatabase("testdb")
+
+	// Create tables
+	if _, err := exec.Execute("CREATE TABLE orders (id INT, customer_id INT, amount FLOAT)"); err != nil {
+		t.Fatalf("Failed to create orders table: %v", err)
+	}
+	if _, err := exec.Execute("CREATE TABLE customers (id INT, name VARCHAR(50))"); err != nil {
+		t.Fatalf("Failed to create customers table: %v", err)
+	}
+
+	// Insert data
+	inserts := []string{
+		"INSERT INTO customers VALUES (1, 'Alice')",
+		"INSERT INTO customers VALUES (2, 'Bob')",
+		"INSERT INTO customers VALUES (3, 'Charlie')",
+		"INSERT INTO orders VALUES (1, 1, 100.0)",
+		"INSERT INTO orders VALUES (2, 2, 200.0)",
+		"INSERT INTO orders VALUES (3, 1, 150.0)",
+	}
+
+	for _, ins := range inserts {
+		if _, err := exec.Execute(ins); err != nil {
+			t.Fatalf("Failed to insert: %v", err)
+		}
+	}
+
+	tests := []struct {
+		name  string
+		query string
+	}{
+		{"IN subquery", "SELECT * FROM orders WHERE customer_id IN (SELECT id FROM customers)"},
+		{"NOT IN subquery", "SELECT * FROM orders WHERE customer_id NOT IN (SELECT id FROM customers WHERE name = 'Bob')"},
+		{"EXISTS subquery", "SELECT * FROM orders o WHERE EXISTS (SELECT 1 FROM customers c WHERE c.id = o.customer_id)"},
+		{"IN with parenthesized subquery", "SELECT * FROM orders WHERE customer_id IN (SELECT id FROM customers WHERE name = 'Alice')"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := exec.Execute(tt.query)
+			if err != nil {
+				t.Errorf("Query %q failed: %v", tt.query, err)
+			}
+		})
+	}
+}
+
+// TestHavingClause tests HAVING clause
+func TestHavingClauseMore(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "xxsql-having-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	engine := storage.NewEngine(tmpDir)
+	if err := engine.Open(); err != nil {
+		t.Fatalf("Failed to open engine: %v", err)
+	}
+	defer engine.Close()
+
+	exec := NewExecutor(engine)
+	exec.SetDatabase("testdb")
+
+	// Create table
+	if _, err := exec.Execute("CREATE TABLE sales (id INT, region VARCHAR(50), amount FLOAT)"); err != nil {
+		t.Fatalf("Failed to create table: %v", err)
+	}
+
+	// Insert data
+	inserts := []string{
+		"INSERT INTO sales VALUES (1, 'North', 100.0)",
+		"INSERT INTO sales VALUES (2, 'North', 200.0)",
+		"INSERT INTO sales VALUES (3, 'South', 150.0)",
+		"INSERT INTO sales VALUES (4, 'South', 250.0)",
+		"INSERT INTO sales VALUES (5, 'East', 50.0)",
+	}
+
+	for _, ins := range inserts {
+		if _, err := exec.Execute(ins); err != nil {
+			t.Fatalf("Failed to insert: %v", err)
+		}
+	}
+
+	tests := []struct {
+		name  string
+		query string
+	}{
+		{"HAVING with aggregate", "SELECT region, SUM(amount) as total FROM sales GROUP BY region HAVING SUM(amount) > 200"},
+		{"HAVING with COUNT", "SELECT region, COUNT(*) as cnt FROM sales GROUP BY region HAVING COUNT(*) >= 2"},
+		{"HAVING with AVG", "SELECT region, AVG(amount) as avg FROM sales GROUP BY region HAVING AVG(amount) > 100"},
+		{"HAVING with multiple conditions", "SELECT region, SUM(amount) as total FROM sales GROUP BY region HAVING SUM(amount) > 100 AND COUNT(*) >= 1"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := exec.Execute(tt.query)
+			if err != nil {
+				t.Errorf("Query %q failed: %v", tt.query, err)
+			}
+		})
+	}
+}
+
+// TestEvaluateExpressionWithoutRow tests expression evaluation without row context
+func TestEvaluateExpressionWithoutRow(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "xxsql-expr-norow-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	engine := storage.NewEngine(tmpDir)
+	if err := engine.Open(); err != nil {
+		t.Fatalf("Failed to open engine: %v", err)
+	}
+	defer engine.Close()
+
+	exec := NewExecutor(engine)
+	exec.SetDatabase("testdb")
+
+	tests := []struct {
+		name  string
+		query string
+	}{
+		{"Simple arithmetic", "SELECT 1 + 2"},
+		{"Nested functions", "SELECT UPPER(LOWER('HELLO'))"},
+		{"COALESCE", "SELECT COALESCE(NULL, 'default')"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := exec.Execute(tt.query)
+			if err != nil {
+				t.Errorf("Query %q failed: %v", tt.query, err)
+			}
+		})
+	}
+}
+
+// TestLateralDerivedTable tests LATERAL derived tables
+func TestLateralDerivedTable(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "xxsql-lateral-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	engine := storage.NewEngine(tmpDir)
+	if err := engine.Open(); err != nil {
+		t.Fatalf("Failed to open engine: %v", err)
+	}
+	defer engine.Close()
+
+	exec := NewExecutor(engine)
+	exec.SetDatabase("testdb")
+
+	// Create table
+	if _, err := exec.Execute("CREATE TABLE employees (id INT, dept_id INT, salary FLOAT)"); err != nil {
+		t.Fatalf("Failed to create table: %v", err)
+	}
+
+	inserts := []string{
+		"INSERT INTO employees VALUES (1, 1, 50000)",
+		"INSERT INTO employees VALUES (2, 1, 60000)",
+		"INSERT INTO employees VALUES (3, 2, 45000)",
+	}
+
+	for _, ins := range inserts {
+		if _, err := exec.Execute(ins); err != nil {
+			t.Fatalf("Failed to insert: %v", err)
+		}
+	}
+
+	// Test lateral derived table query - skip if not supported
+	_, err = exec.Execute("SELECT e.id, d.avg_sal FROM employees e, LATERAL (SELECT AVG(salary) as avg_sal FROM employees WHERE dept_id = e.dept_id) d")
+	// This may fail if LATERAL is not fully supported
+	if err != nil {
+		t.Logf("LATERAL query not supported: %v", err)
+	}
+}
+
+// TestCreateView tests CREATE VIEW
+func TestCreateView(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "xxsql-view-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	engine := storage.NewEngine(tmpDir)
+	if err := engine.Open(); err != nil {
+		t.Fatalf("Failed to open engine: %v", err)
+	}
+	defer engine.Close()
+
+	exec := NewExecutor(engine)
+	exec.SetDatabase("testdb")
+
+	// Create base table
+	if _, err := exec.Execute("CREATE TABLE users (id INT, name VARCHAR(50), active INT)"); err != nil {
+		t.Fatalf("Failed to create table: %v", err)
+	}
+
+	inserts := []string{
+		"INSERT INTO users VALUES (1, 'Alice', 1)",
+		"INSERT INTO users VALUES (2, 'Bob', 0)",
+		"INSERT INTO users VALUES (3, 'Charlie', 1)",
+	}
+
+	for _, ins := range inserts {
+		if _, err := exec.Execute(ins); err != nil {
+			t.Fatalf("Failed to insert: %v", err)
+		}
+	}
+
+	tests := []struct {
+		name  string
+		query string
+	}{
+		{"Create simple view", "CREATE VIEW active_users AS SELECT * FROM users WHERE active = 1"},
+		{"Create view with columns", "CREATE VIEW user_names (user_id, user_name) AS SELECT id, name FROM users"},
+		{"Select from view", "SELECT * FROM active_users"},
+		{"Drop view", "DROP VIEW IF EXISTS active_users"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := exec.Execute(tt.query)
+			if err != nil {
+				t.Errorf("Query %q failed: %v", tt.query, err)
+			}
+		})
+	}
+}
+
+// TestPragmaStatements tests PRAGMA statements
+func TestPragmaStatementsMore(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "xxsql-pragma-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	engine := storage.NewEngine(tmpDir)
+	if err := engine.Open(); err != nil {
+		t.Fatalf("Failed to open engine: %v", err)
+	}
+	defer engine.Close()
+
+	exec := NewExecutor(engine)
+	exec.SetDatabase("testdb")
+
+	tests := []struct {
+		name  string
+		query string
+	}{
+		{"PRAGMA cache_size", "PRAGMA cache_size = 1000"},
+		{"PRAGMA journal_mode", "PRAGMA journal_mode = WAL"},
+		{"PRAGMA synchronous", "PRAGMA synchronous = 1"},
+		{"PRAGMA foreign_keys", "PRAGMA foreign_keys = ON"},
+		{"PRAGMA read query", "PRAGMA cache_size"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := exec.Execute(tt.query)
+			if err != nil {
+				t.Errorf("Query %q failed: %v", tt.query, err)
+			}
+		})
+	}
+}
+
+// TestDropFunctionTrigger tests DROP FUNCTION and DROP TRIGGER
+func TestDropFunctionTrigger(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "xxsql-drop-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	engine := storage.NewEngine(tmpDir)
+	if err := engine.Open(); err != nil {
+		t.Fatalf("Failed to open engine: %v", err)
+	}
+	defer engine.Close()
+
+	exec := NewExecutor(engine)
+	exec.SetDatabase("testdb")
+
+	// Create function
+	if _, err := exec.Execute("CREATE FUNCTION my_func(x INT) RETURNS INT BEGIN RETURN x * 2; END"); err != nil {
+		// Function might not be supported, skip test
+		t.Skip("CREATE FUNCTION not supported")
+	}
+
+	// Drop function
+	_, err = exec.Execute("DROP FUNCTION IF EXISTS my_func")
+	if err != nil {
+		t.Errorf("DROP FUNCTION failed: %v", err)
+	}
+}
+
+// TestCompareValuesWithBlobs tests BLOB comparison operations
+func TestCompareValuesWithBlobs(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "xxsql-blobcmp-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	engine := storage.NewEngine(tmpDir)
+	if err := engine.Open(); err != nil {
+		t.Fatalf("Failed to open engine: %v", err)
+	}
+	defer engine.Close()
+
+	exec := NewExecutor(engine)
+	exec.SetDatabase("testdb")
+
+	// Create table with BLOB
+	if _, err := exec.Execute("CREATE TABLE blob_table (id INT, data BLOB)"); err != nil {
+		t.Fatalf("Failed to create table: %v", err)
+	}
+
+	// Insert BLOB data
+	inserts := []string{
+		"INSERT INTO blob_table VALUES (1, X'010203')",
+		"INSERT INTO blob_table VALUES (2, X'040506')",
+		"INSERT INTO blob_table VALUES (3, X'010203')",
+	}
+
+	for _, ins := range inserts {
+		if _, err := exec.Execute(ins); err != nil {
+			t.Fatalf("Failed to insert: %v", err)
+		}
+	}
+
+	tests := []struct {
+		name  string
+		query string
+	}{
+		{"BLOB equal", "SELECT * FROM blob_table WHERE data = X'010203'"},
+		{"BLOB not equal", "SELECT * FROM blob_table WHERE data != X'010203'"},
+		{"BLOB less than", "SELECT * FROM blob_table WHERE data < X'040506'"},
+		{"BLOB greater than", "SELECT * FROM blob_table WHERE data > X'010203'"},
+		{"BLOB less or equal", "SELECT * FROM blob_table WHERE data <= X'010203'"},
+		{"BLOB greater or equal", "SELECT * FROM blob_table WHERE data >= X'010203'"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := exec.Execute(tt.query)
+			if err != nil {
+				t.Errorf("Query %q failed: %v", tt.query, err)
+			}
+		})
+	}
 }

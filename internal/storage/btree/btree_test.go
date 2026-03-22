@@ -1057,3 +1057,160 @@ func TestNode_SerializeDeserialize_NonLeaf(t *testing.T) {
 		t.Errorf("Expected 3 children, got %d", len(node.Children))
 	}
 }
+
+func TestIndexScanLessThan(t *testing.T) {
+	idx, err := btree.NewIndexManager("test_table", nil).CreateIndex("pk", []string{"id"}, btree.IndexTypePrimary, types.TypeInt)
+	if err != nil {
+		t.Fatalf("Failed to create index: %v", err)
+	}
+
+	// Insert keys
+	for i := 1; i <= 20; i++ {
+		err := idx.Insert(types.NewIntValue(int64(i)), row.RowID(i))
+		if err != nil {
+			t.Fatalf("Failed to insert: %v", err)
+		}
+	}
+
+	// ScanLessThan (less than 10, not including equal)
+	rowIDs := idx.ScanLessThan(types.NewIntValue(10), false)
+	if len(rowIDs) != 9 {
+		t.Errorf("Expected 9 row IDs less than 10, got %d", len(rowIDs))
+	}
+
+	// ScanLessThan (less than or equal to 10)
+	rowIDs = idx.ScanLessThan(types.NewIntValue(10), true)
+	if len(rowIDs) != 10 {
+		t.Errorf("Expected 10 row IDs less than or equal to 10, got %d", len(rowIDs))
+	}
+
+	// ScanLessThan on empty result
+	rowIDs = idx.ScanLessThan(types.NewIntValue(0), false)
+	if len(rowIDs) != 0 {
+		t.Errorf("Expected 0 row IDs less than 0, got %d", len(rowIDs))
+	}
+}
+
+func TestIndexScanGreaterThan(t *testing.T) {
+	idx, err := btree.NewIndexManager("test_table", nil).CreateIndex("pk", []string{"id"}, btree.IndexTypePrimary, types.TypeInt)
+	if err != nil {
+		t.Fatalf("Failed to create index: %v", err)
+	}
+
+	// Insert keys
+	for i := 1; i <= 20; i++ {
+		err := idx.Insert(types.NewIntValue(int64(i)), row.RowID(i))
+		if err != nil {
+			t.Fatalf("Failed to insert: %v", err)
+		}
+	}
+
+	// ScanGreaterThan (greater than 10, not including equal)
+	rowIDs := idx.ScanGreaterThan(types.NewIntValue(10), false)
+	if len(rowIDs) != 10 {
+		t.Errorf("Expected 10 row IDs greater than 10, got %d", len(rowIDs))
+	}
+
+	// ScanGreaterThan (greater than or equal to 10)
+	rowIDs = idx.ScanGreaterThan(types.NewIntValue(10), true)
+	if len(rowIDs) != 11 {
+		t.Errorf("Expected 11 row IDs greater than or equal to 10, got %d", len(rowIDs))
+	}
+
+	// ScanGreaterThan on empty result
+	rowIDs = idx.ScanGreaterThan(types.NewIntValue(100), false)
+	if len(rowIDs) != 0 {
+		t.Errorf("Expected 0 row IDs greater than 100, got %d", len(rowIDs))
+	}
+}
+
+func TestIndexClear(t *testing.T) {
+	idx, err := btree.NewIndexManager("test_table", nil).CreateIndex("pk", []string{"id"}, btree.IndexTypePrimary, types.TypeInt)
+	if err != nil {
+		t.Fatalf("Failed to create index: %v", err)
+	}
+
+	// Insert keys
+	for i := 1; i <= 10; i++ {
+		idx.Insert(types.NewIntValue(int64(i)), row.RowID(i))
+	}
+
+	if idx.Count() != 10 {
+		t.Errorf("Expected count 10, got %d", idx.Count())
+	}
+
+	// Clear the index
+	err = idx.Clear()
+	if err != nil {
+		t.Fatalf("Clear failed: %v", err)
+	}
+
+	// Verify count is 0
+	if idx.Count() != 0 {
+		t.Errorf("Expected count 0 after clear, got %d", idx.Count())
+	}
+
+	// Verify searches return no results
+	_, found := idx.Search(types.NewIntValue(5))
+	if found {
+		t.Error("Should not find key after clear")
+	}
+}
+
+func TestIndexScanLessThanEmpty(t *testing.T) {
+	idx, _ := btree.NewIndexManager("test_table", nil).CreateIndex("pk", []string{"id"}, btree.IndexTypePrimary, types.TypeInt)
+
+	// ScanLessThan on empty index
+	rowIDs := idx.ScanLessThan(types.NewIntValue(10), false)
+	if len(rowIDs) != 0 {
+		t.Errorf("Expected 0 row IDs for empty index, got %d", len(rowIDs))
+	}
+}
+
+func TestIndexScanGreaterThanEmpty(t *testing.T) {
+	idx, _ := btree.NewIndexManager("test_table", nil).CreateIndex("pk", []string{"id"}, btree.IndexTypePrimary, types.TypeInt)
+
+	// ScanGreaterThan on empty index
+	rowIDs := idx.ScanGreaterThan(types.NewIntValue(10), false)
+	if len(rowIDs) != 0 {
+		t.Errorf("Expected 0 row IDs for empty index, got %d", len(rowIDs))
+	}
+}
+
+func TestIndexScanLessThanStringKeys(t *testing.T) {
+	idx, err := btree.NewIndexManager("test_table", nil).CreateIndex("idx", []string{"name"}, btree.IndexTypeNonUnique, types.TypeVarchar)
+	if err != nil {
+		t.Fatalf("Failed to create index: %v", err)
+	}
+
+	// Insert string keys
+	keys := []string{"apple", "banana", "cherry", "date", "elderberry"}
+	for i, k := range keys {
+		idx.Insert(types.NewStringValue(k, types.TypeVarchar), row.RowID(i+1))
+	}
+
+	// ScanLessThan "cherry"
+	rowIDs := idx.ScanLessThan(types.NewStringValue("cherry", types.TypeVarchar), false)
+	if len(rowIDs) != 2 {
+		t.Errorf("Expected 2 row IDs less than 'cherry', got %d", len(rowIDs))
+	}
+}
+
+func TestIndexScanGreaterThanStringKeys(t *testing.T) {
+	idx, err := btree.NewIndexManager("test_table", nil).CreateIndex("idx", []string{"name"}, btree.IndexTypeNonUnique, types.TypeVarchar)
+	if err != nil {
+		t.Fatalf("Failed to create index: %v", err)
+	}
+
+	// Insert string keys
+	keys := []string{"apple", "banana", "cherry", "date", "elderberry"}
+	for i, k := range keys {
+		idx.Insert(types.NewStringValue(k, types.TypeVarchar), row.RowID(i+1))
+	}
+
+	// ScanGreaterThan "cherry"
+	rowIDs := idx.ScanGreaterThan(types.NewStringValue("cherry", types.TypeVarchar), false)
+	if len(rowIDs) != 2 {
+		t.Errorf("Expected 2 row IDs greater than 'cherry', got %d", len(rowIDs))
+	}
+}
