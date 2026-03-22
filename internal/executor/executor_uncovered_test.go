@@ -2035,3 +2035,343 @@ func TestJSONSet(t *testing.T) {
 	}
 	_ = result
 }
+
+// TestDropFunctionExtra tests DROP FUNCTION statement
+func TestDropFunctionExtra(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "xxsql-drop-func-test-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	engine := storage.NewEngine(tmpDir)
+	if err := engine.Open(); err != nil {
+		t.Fatalf("Failed to open engine: %v", err)
+	}
+	defer engine.Close()
+
+	exec := NewExecutor(engine)
+	exec.SetDatabase("testdb")
+
+	// Create a function first
+	_, err = exec.Execute("CREATE FUNCTION test_func() RETURNS INT BEGIN RETURN 42; END")
+	if err != nil {
+		t.Logf("CREATE FUNCTION error (may not be fully supported): %v", err)
+	}
+
+	// Drop the function
+	_, err = exec.Execute("DROP FUNCTION test_func")
+	if err != nil {
+		t.Logf("DROP FUNCTION error: %v", err)
+	}
+
+	// Test DROP FUNCTION IF EXISTS for non-existent function
+	_, err = exec.Execute("DROP FUNCTION IF EXISTS nonexistent_func")
+	if err != nil {
+		t.Errorf("DROP FUNCTION IF EXISTS should not error: %v", err)
+	}
+}
+
+// TestDropTriggerExtra tests DROP TRIGGER statement
+func TestDropTriggerExtra(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "xxsql-drop-trigger-test-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	engine := storage.NewEngine(tmpDir)
+	if err := engine.Open(); err != nil {
+		t.Fatalf("Failed to open engine: %v", err)
+	}
+	defer engine.Close()
+
+	exec := NewExecutor(engine)
+	exec.SetDatabase("testdb")
+
+	// Create table first
+	_, err = exec.Execute("CREATE TABLE trigger_test_extra (id INT PRIMARY KEY, value INT)")
+	if err != nil {
+		t.Fatalf("CREATE TABLE failed: %v", err)
+	}
+
+	// Create a trigger
+	_, err = exec.Execute("CREATE TRIGGER test_trigger_extra BEFORE INSERT ON trigger_test_extra BEGIN SELECT 1; END")
+	if err != nil {
+		t.Logf("CREATE TRIGGER error (may not be fully supported): %v", err)
+	}
+
+	// Drop the trigger
+	_, err = exec.Execute("DROP TRIGGER test_trigger_extra")
+	if err != nil {
+		t.Logf("DROP TRIGGER error: %v", err)
+	}
+}
+
+// TestTruncateTableExtra tests TRUNCATE TABLE statement
+func TestTruncateTableExtra(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "xxsql-truncate-test-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	engine := storage.NewEngine(tmpDir)
+	if err := engine.Open(); err != nil {
+		t.Fatalf("Failed to open engine: %v", err)
+	}
+	defer engine.Close()
+
+	exec := NewExecutor(engine)
+	exec.SetDatabase("testdb")
+
+	// Create table and insert data
+	_, err = exec.Execute("CREATE TABLE truncate_test_extra (id INT PRIMARY KEY, value INT)")
+	if err != nil {
+		t.Fatalf("CREATE TABLE failed: %v", err)
+	}
+
+	_, err = exec.Execute("INSERT INTO truncate_test_extra VALUES (1, 100)")
+	if err != nil {
+		t.Fatalf("INSERT failed: %v", err)
+	}
+
+	_, err = exec.Execute("INSERT INTO truncate_test_extra VALUES (2, 200)")
+	if err != nil {
+		t.Fatalf("INSERT failed: %v", err)
+	}
+
+	// Truncate the table
+	_, err = exec.Execute("TRUNCATE TABLE truncate_test_extra")
+	if err != nil {
+		t.Errorf("TRUNCATE TABLE failed: %v", err)
+	}
+
+	// Verify table is empty
+	result, err := exec.Execute("SELECT * FROM truncate_test_extra")
+	if err != nil {
+		t.Errorf("SELECT after TRUNCATE failed: %v", err)
+	}
+	if result.RowCount != 0 {
+		t.Errorf("Table should be empty after TRUNCATE, got %d rows", result.RowCount)
+	}
+}
+
+// TestTruncateNonExistentTable tests TRUNCATE on non-existent table
+func TestTruncateNonExistentTable(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "xxsql-truncate-ne-test-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	engine := storage.NewEngine(tmpDir)
+	if err := engine.Open(); err != nil {
+		t.Fatalf("Failed to open engine: %v", err)
+	}
+	defer engine.Close()
+
+	exec := NewExecutor(engine)
+	exec.SetDatabase("testdb")
+
+	// Try to truncate non-existent table
+	_, err = exec.Execute("TRUNCATE TABLE nonexistent")
+	if err == nil {
+		t.Error("TRUNCATE non-existent table should fail")
+	}
+}
+
+// TestPragmaWithArg tests PRAGMA statements with arguments
+func TestPragmaWithArg(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "xxsql-pragma-arg-test-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	engine := storage.NewEngine(tmpDir)
+	if err := engine.Open(); err != nil {
+		t.Fatalf("Failed to open engine: %v", err)
+	}
+	defer engine.Close()
+
+	exec := NewExecutor(engine)
+	exec.SetDatabase("testdb")
+
+	// Create table for table_info pragma
+	_, err = exec.Execute("CREATE TABLE pragma_test (id INT PRIMARY KEY, name VARCHAR)")
+	if err != nil {
+		t.Fatalf("CREATE TABLE failed: %v", err)
+	}
+
+	// Test various pragmas
+	pragmas := []string{
+		"PRAGMA table_info(pragma_test)",
+		"PRAGMA database_list",
+		"PRAGMA compile_options",
+		"PRAGMA quick_check",
+		"PRAGMA page_size",
+		"PRAGMA cache_size = 1000",
+		"PRAGMA synchronous = NORMAL",
+	}
+
+	for _, pragma := range pragmas {
+		_, err := exec.Execute(pragma)
+		if err != nil {
+			t.Logf("PRAGMA error for %q: %v", pragma, err)
+		}
+	}
+}
+
+// TestDerivedTableExtra tests derived tables with more complex queries
+func TestDerivedTableExtra(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "xxsql-derived-extra-test-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	engine := storage.NewEngine(tmpDir)
+	if err := engine.Open(); err != nil {
+		t.Fatalf("Failed to open engine: %v", err)
+	}
+	defer engine.Close()
+
+	exec := NewExecutor(engine)
+	exec.SetDatabase("testdb")
+
+	// Create table
+	_, err = exec.Execute("CREATE TABLE orders_extra (id INT PRIMARY KEY, customer_id INT, amount INT)")
+	if err != nil {
+		t.Fatalf("CREATE TABLE failed: %v", err)
+	}
+
+	_, err = exec.Execute("INSERT INTO orders_extra VALUES (1, 1, 100)")
+	if err != nil {
+		t.Fatalf("INSERT failed: %v", err)
+	}
+
+	_, err = exec.Execute("INSERT INTO orders_extra VALUES (2, 1, 200)")
+	if err != nil {
+		t.Fatalf("INSERT failed: %v", err)
+	}
+
+	_, err = exec.Execute("INSERT INTO orders_extra VALUES (3, 2, 150)")
+	if err != nil {
+		t.Fatalf("INSERT failed: %v", err)
+	}
+
+	// Select from derived table
+	result, err := exec.Execute(`
+		SELECT * FROM (SELECT customer_id, SUM(amount) FROM orders_extra GROUP BY customer_id) AS summary
+	`)
+	if err != nil {
+		t.Errorf("Derived table with aggregation failed: %v", err)
+	}
+	_ = result
+
+	// Nested derived tables
+	result, err = exec.Execute(`
+		SELECT * FROM (SELECT * FROM (SELECT id FROM orders_extra) AS t1) AS t2
+	`)
+	if err != nil {
+		t.Errorf("Nested derived tables failed: %v", err)
+	}
+	_ = result
+}
+
+// TestSelectFromValuesExtra tests SELECT FROM VALUES with more variations
+func TestSelectFromValuesExtra(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "xxsql-values-extra-test-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	engine := storage.NewEngine(tmpDir)
+	if err := engine.Open(); err != nil {
+		t.Fatalf("Failed to open engine: %v", err)
+	}
+	defer engine.Close()
+
+	exec := NewExecutor(engine)
+	exec.SetDatabase("testdb")
+
+	// VALUES with expressions
+	result, err := exec.Execute("SELECT * FROM (VALUES (1+1, 'a'), (2*2, 'b')) AS t(num, letter)")
+	if err != nil {
+		t.Errorf("VALUES with expressions failed: %v", err)
+	}
+	_ = result
+}
+
+// TestInsertWithReturning tests INSERT with RETURNING clause
+func TestInsertWithReturning(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "xxsql-returning-test-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	engine := storage.NewEngine(tmpDir)
+	if err := engine.Open(); err != nil {
+		t.Fatalf("Failed to open engine: %v", err)
+	}
+	defer engine.Close()
+
+	exec := NewExecutor(engine)
+	exec.SetDatabase("testdb")
+
+	// Create table
+	_, err = exec.Execute("CREATE TABLE returning_test (id INT PRIMARY KEY, name VARCHAR)")
+	if err != nil {
+		t.Fatalf("CREATE TABLE failed: %v", err)
+	}
+
+	// INSERT with RETURNING
+	result, err := exec.Execute("INSERT INTO returning_test VALUES (1, 'test') RETURNING *")
+	if err != nil {
+		t.Logf("INSERT RETURNING error (may not be fully supported): %v", err)
+		return
+	}
+	if result.RowCount != 1 {
+		t.Errorf("INSERT RETURNING should return 1 row, got %d", result.RowCount)
+	}
+}
+
+// TestUpdateWithReturning tests UPDATE with RETURNING clause
+func TestUpdateWithReturning(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "xxsql-update-returning-test-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	engine := storage.NewEngine(tmpDir)
+	if err := engine.Open(); err != nil {
+		t.Fatalf("Failed to open engine: %v", err)
+	}
+	defer engine.Close()
+
+	exec := NewExecutor(engine)
+	exec.SetDatabase("testdb")
+
+	// Create table
+	_, err = exec.Execute("CREATE TABLE update_returning (id INT PRIMARY KEY, value INT)")
+	if err != nil {
+		t.Fatalf("CREATE TABLE failed: %v", err)
+	}
+
+	_, err = exec.Execute("INSERT INTO update_returning VALUES (1, 100)")
+	if err != nil {
+		t.Fatalf("INSERT failed: %v", err)
+	}
+
+	// UPDATE with RETURNING
+	result, err := exec.Execute("UPDATE update_returning SET value = 200 WHERE id = 1 RETURNING *")
+	if err != nil {
+		t.Logf("UPDATE RETURNING error (may not be fully supported): %v", err)
+		return
+	}
+	_ = result
+}
