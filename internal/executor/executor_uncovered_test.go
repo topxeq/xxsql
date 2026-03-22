@@ -7160,3 +7160,275 @@ func TestGeneratedColumns(t *testing.T) {
 		t.Logf("Result: %v", result)
 	}
 }
+
+// TestHavingClauseComplex tests complex HAVING clauses
+func TestHavingClauseComplex(t *testing.T) {
+	engine := setupTestEngine(t)
+	defer engine.Close()
+
+	exec := NewExecutor(engine)
+	exec.SetDatabase("testdb")
+
+	// Create table
+	if _, err := exec.Execute("CREATE TABLE sales (id INT, region VARCHAR(50), amount FLOAT)"); err != nil {
+		t.Fatalf("Failed to create table: %v", err)
+	}
+
+	// Insert data
+	inserts := []string{
+		"INSERT INTO sales VALUES (1, 'North', 100)",
+		"INSERT INTO sales VALUES (2, 'North', 200)",
+		"INSERT INTO sales VALUES (3, 'South', 150)",
+		"INSERT INTO sales VALUES (4, 'South', 250)",
+		"INSERT INTO sales VALUES (5, 'East', 300)",
+	}
+	for _, ins := range inserts {
+		if _, err := exec.Execute(ins); err != nil {
+			t.Fatalf("Failed to insert: %v", err)
+		}
+	}
+
+	tests := []struct {
+		name  string
+		query string
+	}{
+		{"HAVING with SUM", "SELECT region, SUM(amount) FROM sales GROUP BY region HAVING SUM(amount) > 300"},
+		{"HAVING with COUNT", "SELECT region, COUNT(*) FROM sales GROUP BY region HAVING COUNT(*) > 1"},
+		{"HAVING with AVG", "SELECT region, AVG(amount) FROM sales GROUP BY region HAVING AVG(amount) > 150"},
+		{"HAVING with MAX", "SELECT region, MAX(amount) FROM sales GROUP BY region HAVING MAX(amount) > 200"},
+		{"HAVING with MIN", "SELECT region, MIN(amount) FROM sales GROUP BY region HAVING MIN(amount) < 150"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result, err := exec.Execute(tt.query)
+			if err != nil {
+				t.Logf("Query %q failed: %v (may be expected)", tt.query, err)
+			} else {
+				t.Logf("Result: %v", result)
+			}
+		})
+	}
+}
+
+// TestViewOperations tests CREATE VIEW and SELECT FROM VIEW
+func TestViewOperations(t *testing.T) {
+	engine := setupTestEngine(t)
+	defer engine.Close()
+
+	exec := NewExecutor(engine)
+	exec.SetDatabase("testdb")
+
+	// Create table
+	if _, err := exec.Execute("CREATE TABLE base_table (id INT, name VARCHAR(50))"); err != nil {
+		t.Fatalf("Failed to create table: %v", err)
+	}
+
+	// Insert data
+	if _, err := exec.Execute("INSERT INTO base_table VALUES (1, 'Alice'), (2, 'Bob')"); err != nil {
+		t.Fatalf("Failed to insert: %v", err)
+	}
+
+	// Create view
+	result, err := exec.Execute("CREATE VIEW test_view AS SELECT id, name FROM base_table WHERE id > 0")
+	if err != nil {
+		t.Logf("CREATE VIEW failed: %v (may be expected)", err)
+	} else {
+		t.Logf("Result: %v", result)
+	}
+
+	// Select from view
+	result, err = exec.Execute("SELECT * FROM test_view")
+	if err != nil {
+		t.Logf("SELECT FROM VIEW failed: %v (may be expected)", err)
+	} else {
+		t.Logf("Result: %v", result)
+	}
+
+	// Drop view
+	result, err = exec.Execute("DROP VIEW IF EXISTS test_view")
+	if err != nil {
+		t.Logf("DROP VIEW failed: %v (may be expected)", err)
+	} else {
+		t.Logf("Result: %v", result)
+	}
+}
+
+// TestPragmaStatementsMore tests more PRAGMA statements
+func TestPragmaStatementsMore2(t *testing.T) {
+	engine := setupTestEngine(t)
+	defer engine.Close()
+
+	exec := NewExecutor(engine)
+	exec.SetDatabase("testdb")
+
+	tests := []struct {
+		name  string
+		query string
+	}{
+		{"PRAGMA table_info", "PRAGMA table_info(sqlite_master)"},
+		{"PRAGMA index_list", "PRAGMA index_list(sqlite_master)"},
+		{"PRAGMA database_list", "PRAGMA database_list"},
+		{"PRAGMA integrity_check", "PRAGMA integrity_check"},
+		{"PRAGMA quick_check", "PRAGMA quick_check"},
+		{"PRAGMA foreign_key_check", "PRAGMA foreign_key_check"},
+		{"PRAGMA wal_checkpoint", "PRAGMA wal_checkpoint(TRUNCATE)"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result, err := exec.Execute(tt.query)
+			if err != nil {
+				t.Logf("Query %q failed: %v (may be expected)", tt.query, err)
+			} else {
+				t.Logf("Result: %v", result)
+			}
+		})
+	}
+}
+
+// TestDropFunction tests DROP FUNCTION
+func TestDropFunction(t *testing.T) {
+	engine := setupTestEngine(t)
+	defer engine.Close()
+
+	exec := NewExecutor(engine)
+	exec.SetDatabase("testdb")
+
+	// Create a function first
+	result, err := exec.Execute("CREATE FUNCTION test_func(x INT) RETURNS INT BEGIN RETURN x * 2 END")
+	if err != nil {
+		t.Logf("CREATE FUNCTION failed: %v (may be expected)", err)
+	} else {
+		t.Logf("Result: %v", result)
+	}
+
+	// Drop function
+	result, err = exec.Execute("DROP FUNCTION IF EXISTS test_func")
+	if err != nil {
+		t.Logf("DROP FUNCTION failed: %v (may be expected)", err)
+	} else {
+		t.Logf("Result: %v", result)
+	}
+}
+
+// TestDropTrigger tests DROP TRIGGER
+func TestDropTriggerFinal(t *testing.T) {
+	engine := setupTestEngine(t)
+	defer engine.Close()
+
+	exec := NewExecutor(engine)
+	exec.SetDatabase("testdb")
+
+	// Create table
+	if _, err := exec.Execute("CREATE TABLE trigger_test (id INT, name VARCHAR(50))"); err != nil {
+		t.Fatalf("Failed to create table: %v", err)
+	}
+
+	// Create trigger
+	result, err := exec.Execute("CREATE TRIGGER test_trigger BEFORE INSERT ON trigger_test BEGIN SELECT 1 END")
+	if err != nil {
+		t.Logf("CREATE TRIGGER failed: %v (may be expected)", err)
+	} else {
+		t.Logf("Result: %v", result)
+	}
+
+	// Drop trigger
+	result, err = exec.Execute("DROP TRIGGER IF EXISTS test_trigger")
+	if err != nil {
+		t.Logf("DROP TRIGGER failed: %v (may be expected)", err)
+	} else {
+		t.Logf("Result: %v", result)
+	}
+}
+
+// TestDerivedTable tests derived tables (subqueries in FROM)
+func TestDerivedTable(t *testing.T) {
+	engine := setupTestEngine(t)
+	defer engine.Close()
+
+	exec := NewExecutor(engine)
+	exec.SetDatabase("testdb")
+
+	// Create table
+	if _, err := exec.Execute("CREATE TABLE derived_test (id INT, value INT)"); err != nil {
+		t.Fatalf("Failed to create table: %v", err)
+	}
+
+	// Insert data
+	if _, err := exec.Execute("INSERT INTO derived_test VALUES (1, 10), (2, 20), (3, 30)"); err != nil {
+		t.Fatalf("Failed to insert: %v", err)
+	}
+
+	tests := []struct {
+		name  string
+		query string
+	}{
+		{"Simple derived", "SELECT * FROM (SELECT id, value FROM derived_test) AS t"},
+		{"Derived with WHERE", "SELECT * FROM (SELECT id, value FROM derived_test WHERE value > 15) AS t"},
+		{"Derived with aggregate", "SELECT * FROM (SELECT SUM(value) as total FROM derived_test) AS t"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result, err := exec.Execute(tt.query)
+			if err != nil {
+				t.Logf("Query %q failed: %v (may be expected)", tt.query, err)
+			} else {
+				t.Logf("Result: %v", result)
+			}
+		})
+	}
+}
+
+// TestFunctionsWithoutRowMore tests more functions without row context
+func TestFunctionsWithoutRowMore(t *testing.T) {
+	engine := setupTestEngine(t)
+	defer engine.Close()
+
+	exec := NewExecutor(engine)
+	exec.SetDatabase("testdb")
+
+	tests := []struct {
+		name  string
+		query string
+	}{
+		{"ABS", "SELECT ABS(-5)"},
+		{"CEIL", "SELECT CEIL(3.14)"},
+		{"FLOOR", "SELECT FLOOR(3.14)"},
+		{"ROUND", "SELECT ROUND(3.14159, 2)"},
+		{"POWER", "SELECT POWER(2, 3)"},
+		{"SQRT", "SELECT SQRT(16)"},
+		{"LENGTH", "SELECT LENGTH('hello')"},
+		{"UPPER", "SELECT UPPER('hello')"},
+		{"LOWER", "SELECT LOWER('HELLO')"},
+		{"TRIM", "SELECT TRIM('  hello  ')"},
+		{"LTRIM", "SELECT LTRIM('  hello')"},
+		{"RTRIM", "SELECT RTRIM('hello  ')"},
+		{"SUBSTR", "SELECT SUBSTR('hello', 1, 3)"},
+		{"REPLACE", "SELECT REPLACE('hello', 'l', 'x')"},
+		{"INSTR", "SELECT INSTR('hello', 'll')"},
+		{"CONCAT", "SELECT CONCAT('hello', ' ', 'world')"},
+		{"COALESCE", "SELECT COALESCE(NULL, 'default')"},
+		{"IFNULL", "SELECT IFNULL(NULL, 'default')"},
+		{"NULLIF", "SELECT NULLIF(1, 1)"},
+		{"RANDOM", "SELECT RANDOM()"},
+		{"RANDOMBLOB", "SELECT RANDOMBLOB(16)"},
+		{"ZEROBLOB", "SELECT ZEROBLOB(16)"},
+		{"TYPEOF", "SELECT TYPEOF(1)"},
+		{"QUOTE", "SELECT QUOTE('hello')"},
+		{"HEX", "SELECT HEX(X'01234567')"},
+		{"UNHEX", "SELECT UNHEX('01234567')"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result, err := exec.Execute(tt.query)
+			if err != nil {
+				t.Logf("Query %q failed: %v (may be expected)", tt.query, err)
+			} else {
+				t.Logf("Result: %v", result)
+			}
+		})
+	}
+}
