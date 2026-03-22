@@ -453,3 +453,108 @@ func TestParseExpressionWithOperators(t *testing.T) {
 		}
 	}
 }
+
+// TestParsePragmaStatementExtra tests PRAGMA statement parsing
+func TestParsePragmaStatementExtra(t *testing.T) {
+	tests := []struct {
+		input       string
+		name        string
+		valueCheck  func(interface{}) bool
+	}{
+		{"PRAGMA journal_mode", "journal_mode", nil},
+		{"PRAGMA journal_mode = WAL", "journal_mode", func(v interface{}) bool {
+			return v == "WAL"
+		}},
+		{"PRAGMA synchronous = 1", "synchronous", func(v interface{}) bool {
+			return v == int64(1)
+		}},
+		{"PRAGMA foreign_keys = ON", "foreign_keys", func(v interface{}) bool {
+			return v == true
+		}},
+		{"PRAGMA foreign_keys = OFF", "foreign_keys", func(v interface{}) bool {
+			return v == false
+		}},
+		{"PRAGMA foreign_keys = TRUE", "foreign_keys", func(v interface{}) bool {
+			return v == true
+		}},
+		{"PRAGMA foreign_keys = FALSE", "foreign_keys", func(v interface{}) bool {
+			return v == false
+		}},
+		{"PRAGMA foreign_keys = YES", "foreign_keys", func(v interface{}) bool {
+			return v == true
+		}},
+		{"PRAGMA foreign_keys = NO", "foreign_keys", func(v interface{}) bool {
+			return v == false
+		}},
+		{"PRAGMA database_list", "database_list", nil},
+		// table_info returns the argument in Argument field, not Value
+		{"PRAGMA table_info(users)", "table_info", nil},
+		{"PRAGMA table_info('users')", "table_info", nil},
+	}
+
+	for _, tt := range tests {
+		p := NewParser(tt.input)
+		stmt, err := p.Parse()
+		if err != nil {
+			t.Errorf("Parse(%q) failed: %v", tt.input, err)
+			continue
+		}
+		pragma, ok := stmt.(*PragmaStmt)
+		if !ok {
+			t.Errorf("Parse(%q) returned %T, want *PragmaStmt", tt.input, stmt)
+			continue
+		}
+		if pragma.Name != tt.name {
+			t.Errorf("Parse(%q) name = %q, want %q", tt.input, pragma.Name, tt.name)
+		}
+		if tt.valueCheck != nil && !tt.valueCheck(pragma.Value) {
+			t.Errorf("Parse(%q) value = %v, check failed", tt.input, pragma.Value)
+		}
+	}
+}
+
+// TestParseHexNumberExtra tests hexadecimal number parsing
+func TestParseHexNumberExtra(t *testing.T) {
+	tests := []struct {
+		input    string
+		expected int64
+	}{
+		{"SELECT 0x10", 16},
+		{"SELECT 0xFF", 255},
+		{"SELECT 0x0", 0},
+		{"SELECT 0xABCDEF", 11259375},
+	}
+
+	for _, tt := range tests {
+		p := NewParser(tt.input)
+		stmt, err := p.Parse()
+		if err != nil {
+			t.Errorf("Parse(%q) failed: %v", tt.input, err)
+			continue
+		}
+		_ = stmt
+	}
+}
+
+// TestParseFloatNumberExtra tests float number parsing
+func TestParseFloatNumberExtra(t *testing.T) {
+	tests := []string{
+		"SELECT 3.14",
+		"SELECT 0.5",
+		"SELECT 123.456",
+		"SELECT 1e10",
+		"SELECT 1.5e-3",
+	}
+
+	for _, input := range tests {
+		p := NewParser(input)
+		stmt, err := p.Parse()
+		if err != nil {
+			t.Errorf("Parse(%q) failed: %v", input, err)
+			continue
+		}
+		if stmt == nil {
+			t.Errorf("Parse(%q) returned nil", input)
+		}
+	}
+}
