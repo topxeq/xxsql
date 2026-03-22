@@ -11338,3 +11338,190 @@ func TestExecutePragmaWithArg(t *testing.T) {
 	})
 }
 
+// TestEvaluateExpressionExtra tests the evaluateExpression function
+func TestEvaluateExpressionExtra(t *testing.T) {
+	exec := &Executor{currentTable: "users"}
+
+	// Create test columns
+	colInfo := &types.ColumnInfo{Name: "id", Type: types.TypeInt}
+	nameInfo := &types.ColumnInfo{Name: "name", Type: types.TypeVarchar}
+	columnMap := map[string]*types.ColumnInfo{
+		"id":   colInfo,
+		"name": nameInfo,
+	}
+	columnOrder := []*types.ColumnInfo{colInfo, nameInfo}
+
+	// Create test row
+	testRow := &row.Row{
+		ID: 1,
+		Values: []types.Value{
+			types.NewIntValue(42),
+			types.NewStringValue("test", types.TypeVarchar),
+		},
+	}
+
+	t.Run("literal", func(t *testing.T) {
+		expr := &sql.Literal{Value: int64(100)}
+		result, err := exec.evaluateExpression(expr, testRow, columnMap, columnOrder)
+		if err != nil {
+			t.Errorf("unexpected error: %v", err)
+		}
+		if result != int64(100) {
+			t.Errorf("expected 100, got %v", result)
+		}
+	})
+
+	t.Run("column ref simple", func(t *testing.T) {
+		expr := &sql.ColumnRef{Name: "id"}
+		result, err := exec.evaluateExpression(expr, testRow, columnMap, columnOrder)
+		if err != nil {
+			t.Errorf("unexpected error: %v", err)
+		}
+		if result != int64(42) {
+			t.Errorf("expected 42, got %v", result)
+		}
+	})
+
+	t.Run("column ref with matching table", func(t *testing.T) {
+		expr := &sql.ColumnRef{Name: "name", Table: "users"}
+		result, err := exec.evaluateExpression(expr, testRow, columnMap, columnOrder)
+		if err != nil {
+			t.Errorf("unexpected error: %v", err)
+		}
+		if result != "test" {
+			t.Errorf("expected 'test', got %v", result)
+		}
+	})
+
+	t.Run("column ref with non-matching table - no outer context", func(t *testing.T) {
+		expr := &sql.ColumnRef{Name: "id", Table: "orders"}
+		_, err := exec.evaluateExpression(expr, testRow, columnMap, columnOrder)
+		if err == nil {
+			t.Error("expected error for non-matching table prefix")
+		}
+	})
+
+	t.Run("column ref with outer context", func(t *testing.T) {
+		exec := &Executor{
+			currentTable: "orders",
+			outerContext: map[string]interface{}{"users.id": int64(99)},
+		}
+		expr := &sql.ColumnRef{Name: "id", Table: "users"}
+		result, err := exec.evaluateExpression(expr, testRow, columnMap, columnOrder)
+		if err != nil {
+			t.Errorf("unexpected error: %v", err)
+		}
+		if result != int64(99) {
+			t.Errorf("expected 99, got %v", result)
+		}
+	})
+
+	t.Run("column ref unknown column - outer context", func(t *testing.T) {
+		exec := &Executor{
+			outerContext: map[string]interface{}{"other_col": "from_outer"},
+		}
+		expr := &sql.ColumnRef{Name: "other_col"}
+		result, err := exec.evaluateExpression(expr, testRow, columnMap, columnOrder)
+		if err != nil {
+			t.Errorf("unexpected error: %v", err)
+		}
+		if result != "from_outer" {
+			t.Errorf("expected 'from_outer', got %v", result)
+		}
+	})
+
+	t.Run("column ref unknown column", func(t *testing.T) {
+		exec := &Executor{}
+		expr := &sql.ColumnRef{Name: "unknown"}
+		_, err := exec.evaluateExpression(expr, testRow, columnMap, columnOrder)
+		if err == nil {
+			t.Error("expected error for unknown column")
+		}
+	})
+
+	t.Run("cast expression", func(t *testing.T) {
+		expr := &sql.CastExpr{
+			Expr: &sql.Literal{Value: 42},
+			Type: &sql.DataType{Name: "VARCHAR"},
+		}
+		result, err := exec.evaluateExpression(expr, testRow, columnMap, columnOrder)
+		if err != nil {
+			t.Errorf("unexpected error: %v", err)
+		}
+		if result != "42" {
+			t.Errorf("expected '42', got %v", result)
+		}
+	})
+
+	t.Run("binary expression", func(t *testing.T) {
+		expr := &sql.BinaryExpr{
+			Left:  &sql.Literal{Value: int64(10)},
+			Op:    sql.OpAdd,
+			Right: &sql.Literal{Value: int64(5)},
+		}
+		result, err := exec.evaluateExpression(expr, testRow, columnMap, columnOrder)
+		if err != nil {
+			t.Errorf("unexpected error: %v", err)
+		}
+		if result != float64(15) {
+			t.Errorf("expected 15, got %v", result)
+		}
+	})
+
+	t.Run("unary expression neg int", func(t *testing.T) {
+		expr := &sql.UnaryExpr{
+			Op:    sql.OpNeg,
+			Right: &sql.Literal{Value: int64(10)},
+		}
+		result, err := exec.evaluateExpression(expr, testRow, columnMap, columnOrder)
+		if err != nil {
+			t.Errorf("unexpected error: %v", err)
+		}
+		if result != int64(-10) {
+			t.Errorf("expected -10, got %v", result)
+		}
+	})
+
+	t.Run("unary expression neg float", func(t *testing.T) {
+		expr := &sql.UnaryExpr{
+			Op:    sql.OpNeg,
+			Right: &sql.Literal{Value: float64(3.14)},
+		}
+		result, err := exec.evaluateExpression(expr, testRow, columnMap, columnOrder)
+		if err != nil {
+			t.Errorf("unexpected error: %v", err)
+		}
+		if result != float64(-3.14) {
+			t.Errorf("expected -3.14, got %v", result)
+		}
+	})
+
+	t.Run("unary expression null", func(t *testing.T) {
+		expr := &sql.UnaryExpr{
+			Op:    sql.OpNeg,
+			Right: &sql.Literal{Value: nil},
+		}
+		result, err := exec.evaluateExpression(expr, testRow, columnMap, columnOrder)
+		if err != nil {
+			t.Errorf("unexpected error: %v", err)
+		}
+		if result != nil {
+			t.Errorf("expected nil, got %v", result)
+		}
+	})
+
+	t.Run("collate expression", func(t *testing.T) {
+		expr := &sql.CollateExpr{
+			Expr:     &sql.Literal{Value: "test"},
+			Collate:  "NOCASE",
+		}
+		result, err := exec.evaluateExpression(expr, testRow, columnMap, columnOrder)
+		if err != nil {
+			t.Errorf("unexpected error: %v", err)
+		}
+		if result != "test" {
+			t.Errorf("expected 'test', got %v", result)
+		}
+	})
+}
+
