@@ -2,6 +2,8 @@ package executor
 
 import (
 	"testing"
+
+	"github.com/topxeq/xxsql/internal/storage/types"
 )
 
 // TestBytesCompare tests the bytesCompare method
@@ -282,5 +284,366 @@ func TestUDFManager_Save(t *testing.T) {
 	err := mgr.Save()
 	if err != nil {
 		t.Errorf("Save with empty dataDir failed: %v", err)
+	}
+}
+
+// TestValuesEqual tests the valuesEqual method
+func TestValuesEqual(t *testing.T) {
+	tests := []struct {
+		name     string
+		a, b     types.Value
+		expected bool
+	}{
+		{
+			name:     "both null",
+			a:        types.NewNullValue(),
+			b:        types.NewNullValue(),
+			expected: true,
+		},
+		{
+			name:     "one null",
+			a:        types.NewNullValue(),
+			b:        types.NewIntValue(1),
+			expected: false,
+		},
+		{
+			name:     "both non-null equal int",
+			a:        types.NewIntValue(42),
+			b:        types.NewIntValue(42),
+			expected: true,
+		},
+		{
+			name:     "both non-null not equal int",
+			a:        types.NewIntValue(1),
+			b:        types.NewIntValue(2),
+			expected: false,
+		},
+		{
+			name:     "string equal",
+			a:        types.NewStringValue("hello", types.TypeVarchar),
+			b:        types.NewStringValue("hello", types.TypeVarchar),
+			expected: true,
+		},
+		{
+			name:     "string not equal",
+			a:        types.NewStringValue("hello", types.TypeVarchar),
+			b:        types.NewStringValue("world", types.TypeVarchar),
+			expected: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := (*Executor)(nil).valuesEqual(tt.a, tt.b)
+			if result != tt.expected {
+				t.Errorf("valuesEqual() = %v, want %v", result, tt.expected)
+			}
+		})
+	}
+}
+
+// TestJsonExtractExtra tests the jsonExtract function
+func TestJsonExtractExtra(t *testing.T) {
+	tests := []struct {
+		name     string
+		jsonStr  string
+		path     string
+		hasError bool
+	}{
+		{
+			name:     "root path",
+			jsonStr:  `{"a": 1}`,
+			path:     "$",
+			hasError: false,
+		},
+		{
+			name:     "simple field",
+			jsonStr:  `{"a": 1}`,
+			path:     "$.a",
+			hasError: false,
+		},
+		{
+			name:     "nested field",
+			jsonStr:  `{"a": {"b": 2}}`,
+			path:     "$.a.b",
+			hasError: false,
+		},
+		{
+			name:     "array index",
+			jsonStr:  `[1, 2, 3]`,
+			path:     "$[1]",
+			hasError: false,
+		},
+		{
+			name:     "invalid path",
+			jsonStr:  `{"a": 1}`,
+			path:     "invalid",
+			hasError: true,
+		},
+		{
+			name:     "invalid json",
+			jsonStr:  `{invalid}`,
+			path:     "$",
+			hasError: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := jsonExtract(tt.jsonStr, tt.path)
+			if tt.hasError {
+				if err == nil {
+					t.Error("Expected error, got nil")
+				}
+				return
+			}
+			if err != nil {
+				t.Errorf("Unexpected error: %v", err)
+			}
+		})
+	}
+}
+
+// TestJsonTypeExtra tests the jsonType function
+func TestJsonTypeExtra(t *testing.T) {
+	tests := []struct {
+		jsonStr  string
+		expected string
+	}{
+		{`null`, "NULL"},
+		{`true`, "BOOLEAN"},
+		{`false`, "BOOLEAN"},
+		{`42`, "INTEGER"},
+		{`3.14`, "INTEGER"}, // jsonType treats all numbers as INTEGER
+		{`"hello"`, "STRING"}, // jsonType returns STRING, not TEXT
+		{`[]`, "ARRAY"},
+		{`{}`, "OBJECT"},
+		{`invalid`, "INVALID"},
+	}
+
+	for _, tt := range tests {
+		result := jsonType(tt.jsonStr)
+		if result != tt.expected {
+			t.Errorf("jsonType(%q) = %q, want %q", tt.jsonStr, result, tt.expected)
+		}
+	}
+}
+
+// TestJsonContainsExtra tests the jsonContains function
+func TestJsonContainsExtra(t *testing.T) {
+	tests := []struct {
+		name      string
+		target    string
+		candidate string
+		expected  bool
+	}{
+		{
+			name:      "exact match",
+			target:    `{"a": 1}`,
+			candidate: `{"a": 1}`,
+			expected:  true,
+		},
+		{
+			name:      "subset keys",
+			target:    `{"a": 1, "b": 2}`,
+			candidate: `{"a": 1}`,
+			expected:  true,
+		},
+		{
+			name:      "array contains",
+			target:    `[1, 2, 3]`,
+			candidate: `2`,
+			expected:  true,
+		},
+		{
+			name:      "not contained",
+			target:    `{"a": 1}`,
+			candidate: `{"b": 2}`,
+			expected:  false,
+		},
+		{
+			name:      "invalid json",
+			target:    `invalid`,
+			candidate: `1`,
+			expected:  false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := jsonContains(tt.target, tt.candidate)
+			if result != tt.expected {
+				t.Errorf("jsonContains() = %v, want %v", result, tt.expected)
+			}
+		})
+	}
+}
+
+// TestJsonKeysExtra tests the jsonKeys function
+func TestJsonKeysExtra(t *testing.T) {
+	tests := []struct {
+		name     string
+		jsonStr  string
+		expected int // number of keys
+		hasError bool
+	}{
+		{
+			name:     "simple object",
+			jsonStr:  `{"b": 2, "a": 1}`,
+			expected: 2,
+			hasError: false,
+		},
+		{
+			name:     "empty object",
+			jsonStr:  `{}`,
+			expected: 0,
+			hasError: false,
+		},
+		{
+			name:     "not an object",
+			jsonStr:  `[1, 2, 3]`,
+			expected: -1, // nil result
+			hasError: false,
+		},
+		{
+			name:     "invalid json",
+			jsonStr:  `invalid`,
+			expected: 0,
+			hasError: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result, err := jsonKeys(tt.jsonStr)
+			if tt.hasError {
+				if err == nil {
+					t.Error("Expected error, got nil")
+				}
+				return
+			}
+			if err != nil {
+				t.Errorf("Unexpected error: %v", err)
+				return
+			}
+			if tt.expected < 0 {
+				if result != nil {
+					t.Errorf("jsonKeys() should return nil for non-object, got %v", result)
+				}
+			} else if len(result) != tt.expected {
+				t.Errorf("jsonKeys() length = %d, want %d", len(result), tt.expected)
+			}
+		})
+	}
+}
+
+// TestJsonLengthExtra tests the jsonLength function
+func TestJsonLengthExtra(t *testing.T) {
+	tests := []struct {
+		jsonStr  string
+		expected int64
+	}{
+		{`[1, 2, 3]`, 3},
+		{`[]`, 0},
+		{`{"a": 1, "b": 2}`, 2},
+		{`{}`, 0},
+		{`"string"`, 6},
+		{`invalid`, 0},
+	}
+
+	for _, tt := range tests {
+		result := jsonLength(tt.jsonStr)
+		if result != tt.expected {
+			t.Errorf("jsonLength(%q) = %d, want %d", tt.jsonStr, result, tt.expected)
+		}
+	}
+}
+
+// TestJsonMergePatch tests the jsonMergePatch function
+func TestJsonMergePatch(t *testing.T) {
+	tests := []struct {
+		name        string
+		target      map[string]interface{}
+		patch       map[string]interface{}
+		checkKey    string
+		checkValue  interface{}
+	}{
+		{
+			name:       "add field",
+			target:     map[string]interface{}{"a": 1},
+			patch:      map[string]interface{}{"b": 2},
+			checkKey:   "b",
+			checkValue: 2,
+		},
+		{
+			name:       "replace field",
+			target:     map[string]interface{}{"a": 1},
+			patch:      map[string]interface{}{"a": 2},
+			checkKey:   "a",
+			checkValue: 2,
+		},
+		{
+			name:       "delete field with null",
+			target:     map[string]interface{}{"a": 1, "b": 2},
+			patch:      map[string]interface{}{"a": nil},
+			checkKey:   "a",
+			checkValue: nil, // should not exist
+		},
+		{
+			name:        "nested merge",
+			target:      map[string]interface{}{"obj": map[string]interface{}{"x": 1, "y": 2}},
+			patch:       map[string]interface{}{"obj": map[string]interface{}{"y": 3, "z": 4}},
+			checkKey:    "obj",
+			checkValue:  "map", // just check it exists and is a map
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result := jsonMergePatch(tt.target, tt.patch)
+			if tt.checkValue == nil {
+				// Check key doesn't exist
+				if _, exists := result[tt.checkKey]; exists {
+					t.Errorf("jsonMergePatch() should not have key %q", tt.checkKey)
+				}
+				return
+			}
+			if tt.checkValue == "map" {
+				// Check it's a nested map
+				if obj, ok := result[tt.checkKey].(map[string]interface{}); !ok {
+					t.Errorf("jsonMergePatch()[%q] should be a map", tt.checkKey)
+				} else {
+					// Verify nested values
+					if obj["y"] != 3 {
+						t.Errorf("nested obj['y'] = %v, want 3", obj["y"])
+					}
+				}
+				return
+			}
+			if result[tt.checkKey] != tt.checkValue {
+				t.Errorf("jsonMergePatch()[%q] = %v, want %v", tt.checkKey, result[tt.checkKey], tt.checkValue)
+			}
+		})
+	}
+}
+
+// TestJsonEqual tests the jsonEqual function
+func TestJsonEqual(t *testing.T) {
+	tests := []struct {
+		a, b     interface{}
+		expected bool
+	}{
+		{1, 1, true},
+		{1, 2, false},
+		{"hello", "hello", true},
+		{[]interface{}{1, 2}, []interface{}{1, 2}, true},
+		{map[string]interface{}{"a": 1}, map[string]interface{}{"a": 1}, true},
+	}
+
+	for _, tt := range tests {
+		result := jsonEqual(tt.a, tt.b)
+		if result != tt.expected {
+			t.Errorf("jsonEqual(%v, %v) = %v, want %v", tt.a, tt.b, result, tt.expected)
+		}
 	}
 }
