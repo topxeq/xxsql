@@ -8512,3 +8512,582 @@ func TestEvaluateExpressionWithParamsMore(t *testing.T) {
 		}
 	})
 }
+
+// TestCompareValuesBLOBHex tests compareValues with BLOB and hex string conversions
+func TestCompareValuesBLOBHex(t *testing.T) {
+	e := NewExecutor(nil)
+
+	t.Run("BLOB equals hex string", func(t *testing.T) {
+		blob := []byte{0x01, 0x02, 0x03}
+		result, err := e.compareValues(blob, sql.OpEq, "0x010203")
+		if err != nil {
+			t.Errorf("compareValues returned error: %v", err)
+		}
+		if !result {
+			t.Errorf("BLOB should equal hex string")
+		}
+	})
+
+	t.Run("hex string equals BLOB", func(t *testing.T) {
+		blob := []byte{0xAB, 0xCD, 0xEF}
+		result, err := e.compareValues("0xABCDEF", sql.OpEq, blob)
+		if err != nil {
+			t.Errorf("compareValues returned error: %v", err)
+		}
+		if !result {
+			t.Errorf("hex string should equal BLOB")
+		}
+	})
+
+	t.Run("BLOB not equals hex string", func(t *testing.T) {
+		blob := []byte{0x01, 0x02, 0x03}
+		result, err := e.compareValues(blob, sql.OpNe, "0x010204")
+		if err != nil {
+			t.Errorf("compareValues returned error: %v", err)
+		}
+		if !result {
+			t.Errorf("BLOB should not equal different hex string")
+		}
+	})
+
+	t.Run("BLOB less than hex string", func(t *testing.T) {
+		blob := []byte{0x01, 0x02}
+		result, err := e.compareValues(blob, sql.OpLt, []byte{0x01, 0x03})
+		if err != nil {
+			t.Errorf("compareValues returned error: %v", err)
+		}
+		if !result {
+			t.Errorf("BLOB comparison should work with Lt")
+		}
+	})
+
+	t.Run("BLOB greater than hex string", func(t *testing.T) {
+		blob := []byte{0x02, 0x00}
+		result, err := e.compareValues(blob, sql.OpGt, []byte{0x01, 0xFF})
+		if err != nil {
+			t.Errorf("compareValues returned error: %v", err)
+		}
+		if !result {
+			t.Errorf("BLOB comparison should work with Gt")
+		}
+	})
+
+	t.Run("BLOB less than or equal", func(t *testing.T) {
+		blob := []byte{0x01, 0x02}
+		result, err := e.compareValues(blob, sql.OpLe, []byte{0x01, 0x02})
+		if err != nil {
+			t.Errorf("compareValues returned error: %v", err)
+		}
+		if !result {
+			t.Errorf("BLOB should be <= itself")
+		}
+	})
+
+	t.Run("BLOB greater than or equal", func(t *testing.T) {
+		blob := []byte{0x01, 0x02}
+		result, err := e.compareValues(blob, sql.OpGe, []byte{0x01, 0x02})
+		if err != nil {
+			t.Errorf("compareValues returned error: %v", err)
+		}
+		if !result {
+			t.Errorf("BLOB should be >= itself")
+		}
+	})
+
+	t.Run("BLOB with string conversion", func(t *testing.T) {
+		blob := []byte("test")
+		result, err := e.compareValues(blob, sql.OpEq, "test")
+		if err != nil {
+			t.Errorf("compareValues returned error: %v", err)
+		}
+		if !result {
+			t.Errorf("BLOB should equal string 'test'")
+		}
+	})
+}
+
+// TestCompareValuesStringOps tests compareValues with string operations
+func TestCompareValuesStringOps(t *testing.T) {
+	e := NewExecutor(nil)
+
+	t.Run("string equality", func(t *testing.T) {
+		result, err := e.compareValues("hello", sql.OpEq, "hello")
+		if err != nil {
+			t.Errorf("compareValues returned error: %v", err)
+		}
+		if !result {
+			t.Errorf("'hello' should equal 'hello'")
+		}
+	})
+
+	t.Run("string inequality", func(t *testing.T) {
+		result, err := e.compareValues("hello", sql.OpNe, "world")
+		if err != nil {
+			t.Errorf("compareValues returned error: %v", err)
+		}
+		if !result {
+			t.Errorf("'hello' should not equal 'world'")
+		}
+	})
+
+	t.Run("string less than", func(t *testing.T) {
+		result, err := e.compareValues("abc", sql.OpLt, "def")
+		if err != nil {
+			t.Errorf("compareValues returned error: %v", err)
+		}
+		if !result {
+			t.Errorf("'abc' should be less than 'def'")
+		}
+	})
+
+	t.Run("string less than or equal", func(t *testing.T) {
+		result, err := e.compareValues("abc", sql.OpLe, "abc")
+		if err != nil {
+			t.Errorf("compareValues returned error: %v", err)
+		}
+		if !result {
+			t.Errorf("'abc' should be <= 'abc'")
+		}
+	})
+
+	t.Run("string greater than", func(t *testing.T) {
+		result, err := e.compareValues("xyz", sql.OpGt, "abc")
+		if err != nil {
+			t.Errorf("compareValues returned error: %v", err)
+		}
+		if !result {
+			t.Errorf("'xyz' should be greater than 'abc'")
+		}
+	})
+
+	t.Run("string greater than or equal", func(t *testing.T) {
+		result, err := e.compareValues("xyz", sql.OpGe, "xyz")
+		if err != nil {
+			t.Errorf("compareValues returned error: %v", err)
+		}
+		if !result {
+			t.Errorf("'xyz' should be >= 'xyz'")
+		}
+	})
+
+	t.Run("int comparison as string", func(t *testing.T) {
+		// compareValues converts to string, so this is string comparison
+		// "100" < "50" lexicographically because '1' < '5'
+		result, err := e.compareValues(100, sql.OpLt, 50)
+		if err != nil {
+			t.Errorf("compareValues returned error: %v", err)
+		}
+		if !result {
+			t.Errorf("100 should be less than 50 in string comparison")
+		}
+	})
+
+	t.Run("float comparison", func(t *testing.T) {
+		// String comparison: "3.14" < "3.15"
+		result, err := e.compareValues(3.14, sql.OpLt, 3.15)
+		if err != nil {
+			t.Errorf("compareValues returned error: %v", err)
+		}
+		if !result {
+			t.Errorf("3.14 should be less than 3.15")
+		}
+	})
+}
+
+// TestEvaluateLetExprMore tests evaluateLetExpr with various cases
+func TestEvaluateLetExprMore(t *testing.T) {
+	e := NewExecutor(nil)
+
+	t.Run("let with simple value", func(t *testing.T) {
+		letExpr := &sql.LetExpr{
+			Name:  "x",
+			Value: &sql.Literal{Value: int64(42), Type: sql.LiteralNumber},
+		}
+		params := map[string]interface{}{}
+		result, err := e.evaluateLetExpr(letExpr, params)
+		if err != nil {
+			t.Errorf("evaluateLetExpr returned error: %v", err)
+		}
+		if params["x"] != int64(42) {
+			t.Errorf("params['x'] = %v, want 42", params["x"])
+		}
+		if result != int64(42) {
+			t.Errorf("evaluateLetExpr = %v, want 42", result)
+		}
+	})
+
+	t.Run("let with expression", func(t *testing.T) {
+		letExpr := &sql.LetExpr{
+			Name: "y",
+			Value: &sql.BinaryExpr{
+				Left:  &sql.Literal{Value: int64(10), Type: sql.LiteralNumber},
+				Op:    sql.OpAdd,
+				Right: &sql.Literal{Value: int64(5), Type: sql.LiteralNumber},
+			},
+		}
+		params := map[string]interface{}{}
+		result, err := e.evaluateLetExpr(letExpr, params)
+		if err != nil {
+			t.Errorf("evaluateLetExpr returned error: %v", err)
+		}
+		if result != int64(15) && result != float64(15) {
+			t.Errorf("evaluateLetExpr = %v, want 15", result)
+		}
+	})
+}
+
+// TestEvaluateBlockExprMore tests evaluateBlockExpr
+func TestEvaluateBlockExprMore(t *testing.T) {
+	e := NewExecutor(nil)
+
+	t.Run("empty block", func(t *testing.T) {
+		blockExpr := &sql.BlockExpr{
+			Expressions: []sql.Expression{},
+		}
+		result, err := e.evaluateBlockExpr(blockExpr, nil)
+		if err != nil {
+			t.Errorf("evaluateBlockExpr returned error: %v", err)
+		}
+		if result != nil {
+			t.Errorf("empty block should return nil")
+		}
+	})
+
+	t.Run("single expression block", func(t *testing.T) {
+		blockExpr := &sql.BlockExpr{
+			Expressions: []sql.Expression{
+				&sql.Literal{Value: int64(42), Type: sql.LiteralNumber},
+			},
+		}
+		result, err := e.evaluateBlockExpr(blockExpr, nil)
+		if err != nil {
+			t.Errorf("evaluateBlockExpr returned error: %v", err)
+		}
+		if result != int64(42) {
+			t.Errorf("block result = %v, want 42", result)
+		}
+	})
+
+	t.Run("multiple expression block", func(t *testing.T) {
+		blockExpr := &sql.BlockExpr{
+			Expressions: []sql.Expression{
+				&sql.Literal{Value: int64(1), Type: sql.LiteralNumber},
+				&sql.Literal{Value: int64(2), Type: sql.LiteralNumber},
+				&sql.Literal{Value: int64(3), Type: sql.LiteralNumber},
+			},
+		}
+		result, err := e.evaluateBlockExpr(blockExpr, nil)
+		if err != nil {
+			t.Errorf("evaluateBlockExpr returned error: %v", err)
+		}
+		// Should return last value
+		if result != int64(3) {
+			t.Errorf("block result = %v, want 3 (last expression)", result)
+		}
+	})
+}
+
+// TestEvaluateUDFFunctionCallMore tests more UDF function cases
+func TestEvaluateUDFFunctionCallMore(t *testing.T) {
+	e := NewExecutor(nil)
+
+	t.Run("LCASE alias", func(t *testing.T) {
+		fc := &sql.FunctionCall{
+			Name: "LCASE",
+			Args: []sql.Expression{&sql.Literal{Value: "HELLO", Type: sql.LiteralString}},
+		}
+		result, err := e.evaluateUDFFunctionCall(fc, nil)
+		if err != nil {
+			t.Errorf("evaluateUDFFunctionCall returned error: %v", err)
+		}
+		if result != "hello" {
+			t.Errorf("LCASE('HELLO') = %v, want 'hello'", result)
+		}
+	})
+
+	t.Run("UCASE alias", func(t *testing.T) {
+		fc := &sql.FunctionCall{
+			Name: "UCASE",
+			Args: []sql.Expression{&sql.Literal{Value: "hello", Type: sql.LiteralString}},
+		}
+		result, err := e.evaluateUDFFunctionCall(fc, nil)
+		if err != nil {
+			t.Errorf("evaluateUDFFunctionCall returned error: %v", err)
+		}
+		if result != "HELLO" {
+			t.Errorf("UCASE('hello') = %v, want 'HELLO'", result)
+		}
+	})
+
+	t.Run("OCTET_LENGTH alias", func(t *testing.T) {
+		fc := &sql.FunctionCall{
+			Name: "OCTET_LENGTH",
+			Args: []sql.Expression{&sql.Literal{Value: "hello", Type: sql.LiteralString}},
+		}
+		result, err := e.evaluateUDFFunctionCall(fc, nil)
+		if err != nil {
+			t.Errorf("evaluateUDFFunctionCall returned error: %v", err)
+		}
+		if result != int64(5) {
+			t.Errorf("OCTET_LENGTH('hello') = %v, want 5", result)
+		}
+	})
+
+	t.Run("CURRENT_TIMESTAMP alias", func(t *testing.T) {
+		fc := &sql.FunctionCall{
+			Name: "CURRENT_TIMESTAMP",
+			Args: []sql.Expression{},
+		}
+		result, err := e.evaluateUDFFunctionCall(fc, nil)
+		if err != nil {
+			t.Errorf("evaluateUDFFunctionCall returned error: %v", err)
+		}
+		_, ok := result.(string)
+		if !ok {
+			t.Errorf("CURRENT_TIMESTAMP should return string, got %T", result)
+		}
+	})
+}
+
+// TestEvaluateIfExprConditionTypes tests evaluateIfExpr with different condition types
+func TestEvaluateIfExprConditionTypes(t *testing.T) {
+	e := NewExecutor(nil)
+
+	t.Run("condition is int (non-zero)", func(t *testing.T) {
+		ifExpr := &sql.IfExpr{
+			Condition:  &sql.Literal{Value: int64(5), Type: sql.LiteralNumber},
+			ThenExpr:   &sql.Literal{Value: "truthy", Type: sql.LiteralString},
+			ElseExpr:   &sql.Literal{Value: "falsy", Type: sql.LiteralString},
+		}
+		result, err := e.evaluateIfExpr(ifExpr, nil)
+		if err != nil {
+			t.Errorf("evaluateIfExpr returned error: %v", err)
+		}
+		if result != "truthy" {
+			t.Errorf("non-zero int should be truthy, got %v", result)
+		}
+	})
+
+	t.Run("condition is int (zero)", func(t *testing.T) {
+		ifExpr := &sql.IfExpr{
+			Condition:  &sql.Literal{Value: int64(0), Type: sql.LiteralNumber},
+			ThenExpr:   &sql.Literal{Value: "truthy", Type: sql.LiteralString},
+			ElseExpr:   &sql.Literal{Value: "falsy", Type: sql.LiteralString},
+		}
+		result, err := e.evaluateIfExpr(ifExpr, nil)
+		if err != nil {
+			t.Errorf("evaluateIfExpr returned error: %v", err)
+		}
+		// Note: int64(0) is non-nil, so it's treated as truthy
+		if result != "truthy" {
+			t.Errorf("non-nil int64(0) should be truthy, got %v", result)
+		}
+	})
+
+	t.Run("condition is float64 (non-zero)", func(t *testing.T) {
+		ifExpr := &sql.IfExpr{
+			Condition:  &sql.Literal{Value: 3.14, Type: sql.LiteralNumber},
+			ThenExpr:   &sql.Literal{Value: "truthy", Type: sql.LiteralString},
+			ElseExpr:   &sql.Literal{Value: "falsy", Type: sql.LiteralString},
+		}
+		result, err := e.evaluateIfExpr(ifExpr, nil)
+		if err != nil {
+			t.Errorf("evaluateIfExpr returned error: %v", err)
+		}
+		if result != "truthy" {
+			t.Errorf("non-zero float should be truthy, got %v", result)
+		}
+	})
+
+	t.Run("condition is string (non-empty)", func(t *testing.T) {
+		ifExpr := &sql.IfExpr{
+			Condition:  &sql.Literal{Value: "hello", Type: sql.LiteralString},
+			ThenExpr:   &sql.Literal{Value: "truthy", Type: sql.LiteralString},
+			ElseExpr:   &sql.Literal{Value: "falsy", Type: sql.LiteralString},
+		}
+		result, err := e.evaluateIfExpr(ifExpr, nil)
+		if err != nil {
+			t.Errorf("evaluateIfExpr returned error: %v", err)
+		}
+		if result != "truthy" {
+			t.Errorf("non-empty string should be truthy, got %v", result)
+		}
+	})
+
+	t.Run("condition is empty string", func(t *testing.T) {
+		ifExpr := &sql.IfExpr{
+			Condition:  &sql.Literal{Value: "", Type: sql.LiteralString},
+			ThenExpr:   &sql.Literal{Value: "truthy", Type: sql.LiteralString},
+			ElseExpr:   &sql.Literal{Value: "falsy", Type: sql.LiteralString},
+		}
+		result, err := e.evaluateIfExpr(ifExpr, nil)
+		if err != nil {
+			t.Errorf("evaluateIfExpr returned error: %v", err)
+		}
+		if result != "falsy" {
+			t.Errorf("empty string should be falsy, got %v", result)
+		}
+	})
+
+	t.Run("condition is nil (elseExpr nil)", func(t *testing.T) {
+		ifExpr := &sql.IfExpr{
+			Condition:  &sql.Literal{Value: nil, Type: sql.LiteralNull},
+			ThenExpr:   &sql.Literal{Value: "truthy", Type: sql.LiteralString},
+			ElseExpr:   nil,
+		}
+		result, err := e.evaluateIfExpr(ifExpr, nil)
+		if err != nil {
+			t.Errorf("evaluateIfExpr returned error: %v", err)
+		}
+		if result != nil {
+			t.Errorf("nil condition with nil elseExpr should return nil, got %v", result)
+		}
+	})
+
+	t.Run("condition is non-nil object", func(t *testing.T) {
+		ifExpr := &sql.IfExpr{
+			Condition:  &sql.Literal{Value: []int{1, 2, 3}, Type: sql.LiteralBlob},
+			ThenExpr:   &sql.Literal{Value: "truthy", Type: sql.LiteralString},
+			ElseExpr:   &sql.Literal{Value: "falsy", Type: sql.LiteralString},
+		}
+		result, err := e.evaluateIfExpr(ifExpr, nil)
+		if err != nil {
+			t.Errorf("evaluateIfExpr returned error: %v", err)
+		}
+		if result != "truthy" {
+			t.Errorf("non-nil object should be truthy, got %v", result)
+		}
+	})
+}
+
+// TestCompareValuesWithCollationBLOB tests compareValuesWithCollation with BLOB values
+func TestCompareValuesWithCollationBLOB(t *testing.T) {
+	e := NewExecutor(nil)
+
+	t.Run("BLOB equality with collation", func(t *testing.T) {
+		blob1 := []byte{0x01, 0x02, 0x03}
+		blob2 := []byte{0x01, 0x02, 0x03}
+		result, err := e.compareValuesWithCollation(blob1, sql.OpEq, blob2, "BINARY")
+		if err != nil {
+			t.Errorf("compareValuesWithCollation returned error: %v", err)
+		}
+		if !result {
+			t.Errorf("equal BLOBs should be equal")
+		}
+	})
+
+	t.Run("BLOB inequality with collation", func(t *testing.T) {
+		blob1 := []byte{0x01, 0x02, 0x03}
+		blob2 := []byte{0x01, 0x02, 0x04}
+		result, err := e.compareValuesWithCollation(blob1, sql.OpNe, blob2, "BINARY")
+		if err != nil {
+			t.Errorf("compareValuesWithCollation returned error: %v", err)
+		}
+		if !result {
+			t.Errorf("different BLOBs should not be equal")
+		}
+	})
+
+	t.Run("BLOB less than with collation", func(t *testing.T) {
+		blob1 := []byte{0x01, 0x02}
+		blob2 := []byte{0x01, 0x03}
+		result, err := e.compareValuesWithCollation(blob1, sql.OpLt, blob2, "BINARY")
+		if err != nil {
+			t.Errorf("compareValuesWithCollation returned error: %v", err)
+		}
+		if !result {
+			t.Errorf("BLOB comparison should work with Lt")
+		}
+	})
+
+	t.Run("BLOB greater than with collation", func(t *testing.T) {
+		blob1 := []byte{0x02}
+		blob2 := []byte{0x01}
+		result, err := e.compareValuesWithCollation(blob1, sql.OpGt, blob2, "BINARY")
+		if err != nil {
+			t.Errorf("compareValuesWithCollation returned error: %v", err)
+		}
+		if !result {
+			t.Errorf("BLOB comparison should work with Gt")
+		}
+	})
+
+	t.Run("BLOB less than or equal with collation", func(t *testing.T) {
+		blob1 := []byte{0x01, 0x02}
+		blob2 := []byte{0x01, 0x02}
+		result, err := e.compareValuesWithCollation(blob1, sql.OpLe, blob2, "BINARY")
+		if err != nil {
+			t.Errorf("compareValuesWithCollation returned error: %v", err)
+		}
+		if !result {
+			t.Errorf("BLOB should be <= itself")
+		}
+	})
+
+	t.Run("BLOB greater than or equal with collation", func(t *testing.T) {
+		blob1 := []byte{0x01, 0x02}
+		blob2 := []byte{0x01, 0x02}
+		result, err := e.compareValuesWithCollation(blob1, sql.OpGe, blob2, "BINARY")
+		if err != nil {
+			t.Errorf("compareValuesWithCollation returned error: %v", err)
+		}
+		if !result {
+			t.Errorf("BLOB should be >= itself")
+		}
+	})
+
+	t.Run("NULL with collation", func(t *testing.T) {
+		result, err := e.compareValuesWithCollation(nil, sql.OpEq, nil, "BINARY")
+		if err != nil {
+			t.Errorf("compareValuesWithCollation returned error: %v", err)
+		}
+		if !result {
+			t.Errorf("NULL = NULL should be true")
+		}
+	})
+}
+
+// TestCompareValuesWithCollationNumeric tests numeric comparisons with collation
+func TestCompareValuesWithCollationNumeric(t *testing.T) {
+	e := NewExecutor(nil)
+
+	t.Run("numeric equality with collation", func(t *testing.T) {
+		result, err := e.compareValuesWithCollation(int64(42), sql.OpEq, int64(42), "BINARY")
+		if err != nil {
+			t.Errorf("compareValuesWithCollation returned error: %v", err)
+		}
+		if !result {
+			t.Errorf("42 should equal 42")
+		}
+	})
+
+	t.Run("numeric less than with collation", func(t *testing.T) {
+		result, err := e.compareValuesWithCollation(int64(10), sql.OpLt, int64(20), "BINARY")
+		if err != nil {
+			t.Errorf("compareValuesWithCollation returned error: %v", err)
+		}
+		if !result {
+			t.Errorf("10 should be less than 20")
+		}
+	})
+
+	t.Run("float comparison with collation", func(t *testing.T) {
+		result, err := e.compareValuesWithCollation(3.14, sql.OpLt, 3.15, "BINARY")
+		if err != nil {
+			t.Errorf("compareValuesWithCollation returned error: %v", err)
+		}
+		if !result {
+			t.Errorf("3.14 should be less than 3.15")
+		}
+	})
+
+	t.Run("mixed int/float comparison", func(t *testing.T) {
+		result, err := e.compareValuesWithCollation(int64(5), sql.OpEq, float64(5.0), "BINARY")
+		if err != nil {
+			t.Errorf("compareValuesWithCollation returned error: %v", err)
+		}
+		if !result {
+			t.Errorf("5 should equal 5.0")
+		}
+	})
+}
