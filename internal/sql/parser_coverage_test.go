@@ -2087,3 +2087,195 @@ func TestDeleteStmtStringMore(t *testing.T) {
 	}
 	_ = stmt.String()
 }
+
+// TestWithClauseString tests WithClause.String
+func TestWithClauseString(t *testing.T) {
+	wc := &WithClause{
+		Recursive: true,
+		CTEs: []CTEDefinition{
+			{Name: "cte1", Query: &SelectStmt{Columns: []Expression{&Literal{Value: "1", Type: LiteralNumber}}}},
+		},
+	}
+	_ = wc.String()
+}
+
+// TestWithStmtString tests WithStmt.String
+func TestWithStmtString(t *testing.T) {
+	stmt := &WithStmt{
+		CTEs: []CTEDefinition{
+			{Name: "cte1", Query: &SelectStmt{Columns: []Expression{&Literal{Value: "1", Type: LiteralNumber}}}},
+		},
+		MainQuery: &SelectStmt{Columns: []Expression{&ColumnRef{Name: "a"}}},
+	}
+	_ = stmt.String()
+}
+
+// TestSelectStmtStringFull tests SelectStmt.String with all clauses
+func TestSelectStmtStringFull(t *testing.T) {
+	limit := 10
+	offset := 5
+
+	stmt := &SelectStmt{
+		Distinct: true,
+		Columns:  []Expression{&ColumnRef{Name: "a"}, &ColumnRef{Name: "b"}},
+		From: &FromClause{
+			Table: &TableRef{Name: "t", Alias: "x"},
+		},
+		Where:   &BinaryExpr{Left: &ColumnRef{Name: "a"}, Op: OpEq, Right: &Literal{Value: "1", Type: LiteralNumber}},
+		GroupBy: []Expression{&ColumnRef{Name: "b"}},
+		Having:  &BinaryExpr{Left: &FunctionCall{Name: "COUNT", Args: []Expression{&ColumnRef{Name: "a"}}}, Op: OpGt, Right: &Literal{Value: "1", Type: LiteralNumber}},
+		OrderBy: []*OrderByItem{{Expr: &ColumnRef{Name: "a"}, Ascending: false}},
+		Limit:   &limit,
+		Offset:  &offset,
+	}
+	_ = stmt.String()
+}
+
+// TestFromClauseString tests FromClause.String
+func TestFromClauseStringExtra(t *testing.T) {
+	fc := &FromClause{
+		Table: &TableRef{Name: "users", Alias: "u"},
+		Joins: []*JoinClause{
+			{
+				Type:  JoinLeft,
+				Table: &TableRef{Name: "orders", Alias: "o"},
+				On:    &BinaryExpr{Left: &ColumnRef{Table: "u", Name: "id"}, Op: OpEq, Right: &ColumnRef{Table: "o", Name: "user_id"}},
+			},
+		},
+	}
+	_ = fc.String()
+}
+
+// TestJoinClauseString tests JoinClause.String
+func TestJoinClauseStringExtra(t *testing.T) {
+	jc := &JoinClause{
+		Type:  JoinInner,
+		Table: &TableRef{Name: "orders"},
+		On: &BinaryExpr{Left: &ColumnRef{Name: "id"}, Op: OpEq, Right: &ColumnRef{Name: "user_id"}},
+	}
+	_ = jc.String()
+}
+
+// TestTableRefString tests TableRef.String
+func TestTableRefStringExtra(t *testing.T) {
+	tr := &TableRef{Name: "users"}
+	_ = tr.String()
+
+	tr = &TableRef{Name: "users", Alias: "u"}
+	_ = tr.String()
+}
+
+// TestBinaryExprStringAllOps tests BinaryExpr.String with all operators
+func TestBinaryExprStringAllOps(t *testing.T) {
+	ops := []BinaryOp{
+		OpEq, OpNe, OpLt, OpLe, OpGt, OpGe,
+		OpAdd, OpSub, OpMul, OpDiv, OpMod,
+		OpAnd, OpOr, OpLike, OpNotLike, OpIn, OpNotIn,
+		OpGlob, OpNotGlob, OpConcat,
+	}
+
+	for _, op := range ops {
+		expr := &BinaryExpr{
+			Left:  &ColumnRef{Name: "a"},
+			Op:    op,
+			Right: &Literal{Value: "1", Type: LiteralNumber},
+		}
+		_ = expr.String()
+	}
+}
+
+// TestUnaryExprStringAllOps tests UnaryExpr.String with all operators
+func TestUnaryExprStringAllOps(t *testing.T) {
+	ops := []UnaryOp{OpNeg, OpNot}
+
+	for _, op := range ops {
+		expr := &UnaryExpr{
+			Op:    op,
+			Right: &Literal{Value: "5", Type: LiteralNumber},
+		}
+		_ = expr.String()
+	}
+}
+
+// TestOrderByItemString tests OrderByItem.String
+func TestOrderByItemStringExtra(t *testing.T) {
+	item := &OrderByItem{
+		Expr: &ColumnRef{Name: "name"},
+	}
+	_ = item.String()
+
+	item = &OrderByItem{
+		Expr:      &ColumnRef{Name: "name"},
+		Ascending: false,
+	}
+	_ = item.String()
+}
+
+// TestFunctionCallWithDistinct tests FunctionCall with DISTINCT
+func TestFunctionCallWithDistinct(t *testing.T) {
+	fc := &FunctionCall{
+		Name:     "COUNT",
+		Distinct: true,
+		Args:     []Expression{&ColumnRef{Name: "id"}},
+	}
+	_ = fc.String()
+}
+
+// TestCaseExprString tests CaseExpr.String
+func TestCaseExprStringExtra(t *testing.T) {
+	ce := &CaseExpr{
+		Whens: []*CaseWhen{
+			{
+				Condition: &BinaryExpr{Left: &ColumnRef{Name: "a"}, Op: OpGt, Right: &Literal{Value: "0", Type: LiteralNumber}},
+				Result:    &Literal{Value: "positive", Type: LiteralString},
+			},
+		},
+		Else: &Literal{Value: "non-positive", Type: LiteralString},
+	}
+	_ = ce.String()
+}
+
+// TestInExprString tests InExpr.String
+func TestInExprStringExtra(t *testing.T) {
+	ie := &InExpr{
+		Expr: &ColumnRef{Name: "id"},
+		List: []Expression{
+			&Literal{Value: "1", Type: LiteralNumber},
+			&Literal{Value: "2", Type: LiteralNumber},
+		},
+		Not: false,
+	}
+	_ = ie.String()
+
+	ie = &InExpr{
+		Expr:   &ColumnRef{Name: "id"},
+		Select: &SelectStmt{Columns: []Expression{&ColumnRef{Name: "id"}}, From: &FromClause{Table: &TableRef{Name: "other"}}},
+		Not:    true,
+	}
+	_ = ie.String()
+}
+
+// TestBetweenExprString tests BetweenExpr.String
+func TestBetweenExprStringExtra(t *testing.T) {
+	be := &BetweenExpr{
+		Expr:  &ColumnRef{Name: "age"},
+		Left:  &Literal{Value: "18", Type: LiteralNumber},
+		Right: &Literal{Value: "65", Type: LiteralNumber},
+		Not:   false,
+	}
+	_ = be.String()
+}
+
+// TestExistsExprString tests ExistsExpr.String
+func TestExistsExprString(t *testing.T) {
+	ee := &ExistsExpr{
+		Subquery: &SubqueryExpr{
+			Select: &SelectStmt{
+				Columns: []Expression{&Literal{Value: "1", Type: LiteralNumber}},
+				From:    &FromClause{Table: &TableRef{Name: "t"}},
+			},
+		},
+		Not: false,
+	}
+	_ = ee.String()
+}
