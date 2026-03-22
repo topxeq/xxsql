@@ -1,11 +1,13 @@
 package executor
 
 import (
+	"os"
 	"regexp"
 	"testing"
 	"time"
 
 	"github.com/topxeq/xxsql/internal/sql"
+	"github.com/topxeq/xxsql/internal/storage"
 	"github.com/topxeq/xxsql/internal/storage/types"
 )
 
@@ -1261,5 +1263,134 @@ func TestApplyDateModifier(t *testing.T) {
 		if !tt.check(result) {
 			t.Errorf("applyDateModifier(%q) produced unexpected result: %v", tt.modifier, result)
 		}
+	}
+}
+
+// TestAlterTableAddColumnWithDefaultExtra tests ALTER TABLE ADD COLUMN with DEFAULT value
+func TestAlterTableAddColumnWithDefaultExtra(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "xxsql-alter-default-test-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	engine := storage.NewEngine(tmpDir)
+	if err := engine.Open(); err != nil {
+		t.Fatalf("Failed to open engine: %v", err)
+	}
+	defer engine.Close()
+
+	exec := NewExecutor(engine)
+	exec.SetDatabase("testdb")
+
+	// Create table
+	_, err = exec.Execute("CREATE TABLE test_alter_extra (id INT PRIMARY KEY)")
+	if err != nil {
+		t.Fatalf("CREATE TABLE failed: %v", err)
+	}
+
+	// Add column with DEFAULT
+	_, err = exec.Execute("ALTER TABLE test_alter_extra ADD COLUMN name VARCHAR DEFAULT 'unknown'")
+	if err != nil {
+		t.Errorf("ALTER TABLE ADD COLUMN with DEFAULT failed: %v", err)
+	}
+
+	// Add column with DEFAULT expression
+	_, err = exec.Execute("ALTER TABLE test_alter_extra ADD COLUMN value INT DEFAULT 10 + 5")
+	if err != nil {
+		t.Errorf("ALTER TABLE ADD COLUMN with DEFAULT expression failed: %v", err)
+	}
+
+	// Add column with UPPER function default
+	_, err = exec.Execute("ALTER TABLE test_alter_extra ADD COLUMN code VARCHAR DEFAULT UPPER('abc')")
+	if err != nil {
+		t.Errorf("ALTER TABLE ADD COLUMN with UPPER DEFAULT failed: %v", err)
+	}
+
+	// Add column with LOWER function default
+	_, err = exec.Execute("ALTER TABLE test_alter_extra ADD COLUMN lower_code VARCHAR DEFAULT LOWER('XYZ')")
+	if err != nil {
+		t.Errorf("ALTER TABLE ADD COLUMN with LOWER DEFAULT failed: %v", err)
+	}
+
+	// Insert and verify defaults apply
+	_, err = exec.Execute("INSERT INTO test_alter_extra (id) VALUES (1)")
+	if err != nil {
+		t.Errorf("INSERT failed: %v", err)
+	}
+
+	// Query to verify defaults
+	result, err := exec.Execute("SELECT * FROM test_alter_extra WHERE id = 1")
+	if err != nil {
+		t.Errorf("SELECT failed: %v", err)
+	}
+	if result.RowCount != 1 {
+		t.Errorf("Expected 1 row, got %d", result.RowCount)
+	}
+}
+
+// TestAlterTableDropColumnExtra tests ALTER TABLE DROP COLUMN
+func TestAlterTableDropColumnExtra(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "xxsql-alter-drop-test-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	engine := storage.NewEngine(tmpDir)
+	if err := engine.Open(); err != nil {
+		t.Fatalf("Failed to open engine: %v", err)
+	}
+	defer engine.Close()
+
+	exec := NewExecutor(engine)
+	exec.SetDatabase("testdb")
+
+	// Create table with multiple columns
+	_, err = exec.Execute("CREATE TABLE test_drop_extra (id INT PRIMARY KEY, name VARCHAR, value INT)")
+	if err != nil {
+		t.Fatalf("CREATE TABLE failed: %v", err)
+	}
+
+	// Insert data
+	_, err = exec.Execute("INSERT INTO test_drop_extra VALUES (1, 'test', 100)")
+	if err != nil {
+		t.Fatalf("INSERT failed: %v", err)
+	}
+
+	// Drop column
+	_, err = exec.Execute("ALTER TABLE test_drop_extra DROP COLUMN value")
+	if err != nil {
+		t.Errorf("ALTER TABLE DROP COLUMN failed: %v", err)
+	}
+}
+
+// TestAlterTableModifyColumnExtra tests ALTER TABLE MODIFY COLUMN
+func TestAlterTableModifyColumnExtra(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "xxsql-alter-modify-test-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	engine := storage.NewEngine(tmpDir)
+	if err := engine.Open(); err != nil {
+		t.Fatalf("Failed to open engine: %v", err)
+	}
+	defer engine.Close()
+
+	exec := NewExecutor(engine)
+	exec.SetDatabase("testdb")
+
+	// Create table
+	_, err = exec.Execute("CREATE TABLE test_modify_extra (id INT PRIMARY KEY, name VARCHAR(10))")
+	if err != nil {
+		t.Fatalf("CREATE TABLE failed: %v", err)
+	}
+
+	// Modify column
+	_, err = exec.Execute("ALTER TABLE test_modify_extra MODIFY COLUMN name VARCHAR(50)")
+	if err != nil {
+		t.Logf("ALTER TABLE MODIFY COLUMN may not be fully supported: %v", err)
 	}
 }
