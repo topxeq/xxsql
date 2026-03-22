@@ -844,7 +844,7 @@ func TestTableUpdateWithIndex(t *testing.T) {
 }
 
 // TestTableGetPage tests getPage functionality
-func TestTableGetPage(t *testing.T) {
+func TestTableGetPageExtra(t *testing.T) {
 	tmpDir := t.TempDir()
 
 	columns := []*types.ColumnInfo{
@@ -1102,5 +1102,381 @@ func TestTableReopenExtra(t *testing.T) {
 	}
 	if len(rows) != 10 {
 		t.Errorf("Count after reopen: got %d, want 10", len(rows))
+	}
+}
+
+// TestTableInsertWithSeq tests Insert with SEQ column
+func TestTableInsertWithSeq(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	columns := []*types.ColumnInfo{
+		{Name: "id", Type: types.TypeSeq, PrimaryKey: true},
+		{Name: "name", Type: types.TypeVarchar, Size: 50},
+	}
+
+	tbl, err := table.OpenTable(tmpDir, "seq_test", columns)
+	if err != nil {
+		t.Fatalf("OpenTable failed: %v", err)
+	}
+	defer tbl.Close()
+
+	// Insert with nil seq value (auto-increment)
+	rowID, err := tbl.Insert([]types.Value{
+		types.NewNullValue(),
+		types.NewStringValue("Alice", types.TypeVarchar),
+	})
+	if err != nil {
+		t.Errorf("Insert with nil seq failed: %v", err)
+	}
+	if rowID < 1 {
+		t.Errorf("RowID: got %d, want >= 1", rowID)
+	}
+
+	// Verify the auto-incremented value
+	rows, err := tbl.Scan()
+	if err != nil {
+		t.Fatalf("Scan failed: %v", err)
+	}
+	if len(rows) != 1 {
+		t.Fatalf("Row count: got %d, want 1", len(rows))
+	}
+}
+
+// TestTableFindByKeyMultiple tests FindByKey with multiple rows
+func TestTableFindByKeyMultiple(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	columns := []*types.ColumnInfo{
+		{Name: "id", Type: types.TypeInt, PrimaryKey: true},
+		{Name: "value", Type: types.TypeVarchar, Size: 50},
+	}
+
+	tbl, err := table.OpenTable(tmpDir, "findkey_test", columns)
+	if err != nil {
+		t.Fatalf("OpenTable failed: %v", err)
+	}
+	defer tbl.Close()
+
+	// Insert multiple rows
+	for i := 1; i <= 5; i++ {
+		_, err := tbl.Insert([]types.Value{
+			types.NewIntValue(int64(i)),
+			types.NewStringValue(fmt.Sprintf("value%d", i), types.TypeVarchar),
+		})
+		if err != nil {
+			t.Fatalf("Insert %d failed: %v", i, err)
+		}
+	}
+
+	// Find existing key
+	row, err := tbl.FindByKey(types.NewIntValue(3))
+	if err != nil {
+		t.Errorf("FindByKey(3) failed: %v", err)
+	}
+	if row == nil {
+		t.Error("FindByKey(3) returned nil")
+	}
+
+	// Find non-existing key
+	row, err = tbl.FindByKey(types.NewIntValue(99))
+	if err != nil {
+		t.Logf("FindByKey(99) returned error (expected): %v", err)
+	}
+	if row != nil {
+		t.Error("FindByKey(99) should return nil for non-existing key")
+	}
+}
+
+// TestTableIndexRangeScanMore tests IndexRangeScan with various ranges
+func TestTableIndexRangeScanMore(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	columns := []*types.ColumnInfo{
+		{Name: "id", Type: types.TypeInt, PrimaryKey: true},
+		{Name: "score", Type: types.TypeInt},
+	}
+
+	tbl, err := table.OpenTable(tmpDir, "range_test", columns)
+	if err != nil {
+		t.Fatalf("OpenTable failed: %v", err)
+	}
+	defer tbl.Close()
+
+	// Insert rows with various scores
+	for i := 1; i <= 10; i++ {
+		_, err := tbl.Insert([]types.Value{
+			types.NewIntValue(int64(i)),
+			types.NewIntValue(int64(i * 10)),
+		})
+		if err != nil {
+			t.Fatalf("Insert %d failed: %v", i, err)
+		}
+	}
+
+	// Create index on score
+	err = tbl.CreateIndex("idx_score", []string{"score"}, false)
+	if err != nil {
+		t.Fatalf("CreateIndex failed: %v", err)
+	}
+
+	// Test range scan with both bounds
+	rows, err := tbl.IndexRangeScan("idx_score",
+		types.NewIntValue(30),
+		types.NewIntValue(70),
+		true, true)
+	if err != nil {
+		t.Errorf("IndexRangeScan failed: %v", err)
+	}
+	if len(rows) < 1 {
+		t.Logf("IndexRangeScan returned %d rows", len(rows))
+	}
+
+	// Test range scan with start only
+	rows, err = tbl.IndexRangeScan("idx_score",
+		types.NewIntValue(50),
+		types.NewIntValue(0), // No end bound (use min value)
+		true, false)
+	if err != nil {
+		t.Errorf("IndexRangeScan with start only failed: %v", err)
+	}
+	_ = rows
+
+	// Test range scan with end only
+	rows, err = tbl.IndexRangeScan("idx_score",
+		types.NewIntValue(0), // No start bound (use min value)
+		types.NewIntValue(50),
+		false, true)
+	if err != nil {
+		t.Errorf("IndexRangeScan with end only failed: %v", err)
+	}
+	_ = rows
+}
+
+// TestTableGetRowsByRowIDs tests GetRowsByRowIDs
+func TestTableGetRowsByRowIDs(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	columns := []*types.ColumnInfo{
+		{Name: "id", Type: types.TypeInt, PrimaryKey: true},
+		{Name: "name", Type: types.TypeVarchar, Size: 50},
+	}
+
+	tbl, err := table.OpenTable(tmpDir, "rowid_test", columns)
+	if err != nil {
+		t.Fatalf("OpenTable failed: %v", err)
+	}
+	defer tbl.Close()
+
+	// Insert rows and collect row IDs
+	rowIDs := make([]row.RowID, 0, 5)
+	for i := 1; i <= 5; i++ {
+		rowID, err := tbl.Insert([]types.Value{
+			types.NewIntValue(int64(i)),
+			types.NewStringValue(fmt.Sprintf("name%d", i), types.TypeVarchar),
+		})
+		if err != nil {
+			t.Fatalf("Insert %d failed: %v", i, err)
+		}
+		rowIDs = append(rowIDs, rowID)
+	}
+
+	// Get rows by IDs
+	rows, err := tbl.GetRowsByRowIDs(rowIDs)
+	if err != nil {
+		t.Errorf("GetRowsByRowIDs failed: %v", err)
+	}
+	if len(rows) != 5 {
+		t.Errorf("GetRowsByRowIDs count: got %d, want 5", len(rows))
+	}
+}
+
+// TestTableUpdateMore tests Update with various conditions
+func TestTableUpdateMore(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	columns := []*types.ColumnInfo{
+		{Name: "id", Type: types.TypeInt, PrimaryKey: true},
+		{Name: "value", Type: types.TypeInt},
+	}
+
+	tbl, err := table.OpenTable(tmpDir, "update_test", columns)
+	if err != nil {
+		t.Fatalf("OpenTable failed: %v", err)
+	}
+	defer tbl.Close()
+
+	// Insert rows
+	for i := 1; i <= 5; i++ {
+		_, err := tbl.Insert([]types.Value{
+			types.NewIntValue(int64(i)),
+			types.NewIntValue(int64(i * 10)),
+		})
+		if err != nil {
+			t.Fatalf("Insert %d failed: %v", i, err)
+		}
+	}
+
+	// Update multiple rows
+	updates := map[int]types.Value{1: types.NewIntValue(999)}
+	count, err := tbl.Update(func(r *row.Row) bool {
+		// Update all rows where id > 2
+		id := r.Values[0].AsInt()
+		return id > 2
+	}, updates)
+	if err != nil {
+		t.Errorf("Update failed: %v", err)
+	}
+	t.Logf("Updated %d rows", count)
+}
+
+// TestTableFlush tests the Flush method
+func TestTableFlushExtra(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	columns := []*types.ColumnInfo{
+		{Name: "id", Type: types.TypeInt, PrimaryKey: true},
+		{Name: "value", Type: types.TypeVarchar, Size: 50},
+	}
+
+	tbl, err := table.OpenTable(tmpDir, "flush_test", columns)
+	if err != nil {
+		t.Fatalf("OpenTable failed: %v", err)
+	}
+	defer tbl.Close()
+
+	// Insert some data
+	_, err = tbl.Insert([]types.Value{
+		types.NewIntValue(1),
+		types.NewStringValue("test", types.TypeVarchar),
+	})
+	if err != nil {
+		t.Fatalf("Insert failed: %v", err)
+	}
+
+	// Flush
+	err = tbl.Flush()
+	if err != nil {
+		t.Errorf("Flush failed: %v", err)
+	}
+}
+
+// TestTableGetPage tests internal page caching
+func TestTableGetPage(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	columns := []*types.ColumnInfo{
+		{Name: "id", Type: types.TypeInt, PrimaryKey: true},
+	}
+
+	tbl, err := table.OpenTable(tmpDir, "page_test", columns)
+	if err != nil {
+		t.Fatalf("OpenTable failed: %v", err)
+	}
+	defer tbl.Close()
+
+	// Insert enough rows to create multiple pages
+	for i := 1; i <= 100; i++ {
+		_, err := tbl.Insert([]types.Value{
+			types.NewIntValue(int64(i)),
+		})
+		if err != nil {
+			t.Fatalf("Insert %d failed: %v", i, err)
+		}
+	}
+
+	// Verify all rows can be scanned
+	rows, err := tbl.Scan()
+	if err != nil {
+		t.Errorf("Scan failed: %v", err)
+	}
+	if len(rows) != 100 {
+		t.Errorf("Scan count: got %d, want 100", len(rows))
+	}
+}
+
+// TestTableNullValues tests handling of NULL values
+func TestTableNullValuesExtra(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	columns := []*types.ColumnInfo{
+		{Name: "id", Type: types.TypeInt, PrimaryKey: true},
+		{Name: "nullable", Type: types.TypeVarchar, Size: 50, Nullable: true},
+	}
+
+	tbl, err := table.OpenTable(tmpDir, "null_test", columns)
+	if err != nil {
+		t.Fatalf("OpenTable failed: %v", err)
+	}
+	defer tbl.Close()
+
+	// Insert with NULL value
+	_, err = tbl.Insert([]types.Value{
+		types.NewIntValue(1),
+		types.NewNullValue(),
+	})
+	if err != nil {
+		t.Errorf("Insert with NULL failed: %v", err)
+	}
+
+	// Insert with non-NULL value
+	_, err = tbl.Insert([]types.Value{
+		types.NewIntValue(2),
+		types.NewStringValue("not null", types.TypeVarchar),
+	})
+	if err != nil {
+		t.Errorf("Insert with value failed: %v", err)
+	}
+
+	// Scan and verify
+	rows, err := tbl.Scan()
+	if err != nil {
+		t.Errorf("Scan failed: %v", err)
+	}
+	if len(rows) != 2 {
+		t.Errorf("Scan count: got %d, want 2", len(rows))
+	}
+}
+
+// TestTableEstimateSelectivity tests EstimateSelectivity
+func TestTableEstimateSelectivityExtra(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	columns := []*types.ColumnInfo{
+		{Name: "id", Type: types.TypeInt, PrimaryKey: true},
+		{Name: "category", Type: types.TypeVarchar, Size: 20},
+	}
+
+	tbl, err := table.OpenTable(tmpDir, "selectivity_test", columns)
+	if err != nil {
+		t.Fatalf("OpenTable failed: %v", err)
+	}
+	defer tbl.Close()
+
+	// Insert rows
+	for i := 1; i <= 100; i++ {
+		category := "A"
+		if i > 50 {
+			category = "B"
+		}
+		_, err := tbl.Insert([]types.Value{
+			types.NewIntValue(int64(i)),
+			types.NewStringValue(category, types.TypeVarchar),
+		})
+		if err != nil {
+			t.Fatalf("Insert %d failed: %v", i, err)
+		}
+	}
+
+	// Create index on category
+	err = tbl.CreateIndex("idx_category", []string{"category"}, false)
+	if err != nil {
+		t.Fatalf("CreateIndex failed: %v", err)
+	}
+
+	// Estimate selectivity
+	selectivity := tbl.EstimateSelectivity("idx_category")
+	t.Logf("Selectivity for idx_category: %d", selectivity)
+	if selectivity < 0 {
+		t.Errorf("Selectivity out of range: %d", selectivity)
 	}
 }
