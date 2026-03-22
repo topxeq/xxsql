@@ -1774,3 +1774,127 @@ func TestParseSetOperations(t *testing.T) {
 		_ = stmt.String()
 	}
 }
+
+// TestASTStringMethodsExtra2 tests AST String methods
+func TestASTStringMethodsExtra2(t *testing.T) {
+	// Test FrameBound String
+	fb := FrameBound{Type: "UNBOUNDED PRECEDING"}
+	_ = fb.String()
+
+	fb = FrameBound{Type: "UNBOUNDED FOLLOWING"}
+	_ = fb.String()
+
+	fb = FrameBound{Type: "CURRENT ROW"}
+	_ = fb.String()
+
+	fb = FrameBound{Type: "PRECEDING", Offset: 5}
+	_ = fb.String()
+
+	fb = FrameBound{Type: "FOLLOWING", Offset: 10}
+	_ = fb.String()
+
+	fb = FrameBound{Type: "UNKNOWN"}
+	_ = fb.String()
+
+	// Test FrameSpec String
+	fs := &FrameSpec{
+		Mode:  "RANGE",
+		Start: FrameBound{Type: "UNBOUNDED PRECEDING"},
+		End:   FrameBound{Type: "UNBOUNDED FOLLOWING"},
+	}
+	_ = fs.String()
+
+	// Test WindowSpec String
+	ws := &WindowSpec{
+		PartitionBy: []Expression{&ColumnRef{Name: "a"}},
+		OrderBy:     []*OrderByItem{{Expr: &ColumnRef{Name: "b"}}},
+	}
+	_ = ws.String()
+}
+
+// TestParseError tests parser error handling
+func TestParseError(t *testing.T) {
+	tests := []string{
+		"SELECT",
+		"SELECT FROM",
+		"CREATE",
+		"INSERT INTO",
+		"UPDATE SET",
+		"DELETE FROM WHERE",
+	}
+
+	for _, input := range tests {
+		p := NewParser(input)
+		_, err := p.Parse()
+		if err == nil {
+			t.Logf("Parse(%q) should have failed but succeeded", input)
+		}
+	}
+}
+
+// TestLiteralStringMethod tests Literal.String method
+func TestLiteralStringMethod(t *testing.T) {
+	tests := []struct {
+		lit Literal
+	}{
+		{Literal{Value: "42", Type: LiteralNumber}},
+		{Literal{Value: "hello", Type: LiteralString}},
+		{Literal{Value: "NULL", Type: LiteralNull}},
+		{Literal{Value: "TRUE", Type: LiteralBool}},
+		{Literal{Value: "FALSE", Type: LiteralBool}},
+	}
+
+	for _, tt := range tests {
+		_ = tt.lit.String()
+	}
+}
+
+// TestBinaryExprStringMethod tests BinaryExpr.String method
+func TestBinaryExprStringMethod(t *testing.T) {
+	expr := &BinaryExpr{
+		Left:  &ColumnRef{Name: "a"},
+		Op:    OpAdd,
+		Right: &Literal{Value: "1", Type: LiteralNumber},
+	}
+	_ = expr.String()
+
+	expr = &BinaryExpr{
+		Left:  &ColumnRef{Name: "a"},
+		Op:    OpEq,
+		Right: &ColumnRef{Name: "b"},
+	}
+	_ = expr.String()
+}
+
+// TestUnaryExprStringMethod tests UnaryExpr.String method
+func TestUnaryExprStringMethod(t *testing.T) {
+	expr := &UnaryExpr{
+		Op:    OpNeg,
+		Right: &Literal{Value: "5", Type: LiteralNumber},
+	}
+	_ = expr.String()
+
+	expr = &UnaryExpr{
+		Op:    OpNot,
+		Right: &Literal{Value: "TRUE", Type: LiteralBool},
+	}
+	_ = expr.String()
+}
+
+// TestFunctionCallStringMethod tests FunctionCall.String method
+func TestFunctionCallStringMethod(t *testing.T) {
+	fc := &FunctionCall{
+		Name: "SUM",
+		Args: []Expression{&ColumnRef{Name: "a"}},
+	}
+	_ = fc.String()
+
+	fc = &FunctionCall{
+		Name: "CONCAT",
+		Args: []Expression{
+			&Literal{Value: "a", Type: LiteralString},
+			&Literal{Value: "b", Type: LiteralString},
+		},
+	}
+	_ = fc.String()
+}

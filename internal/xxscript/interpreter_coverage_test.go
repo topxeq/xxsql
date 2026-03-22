@@ -365,7 +365,7 @@ func TestArithmeticOperations(t *testing.T) {
 }
 
 // TestStringOperations tests string operations
-func TestStringOperations(t *testing.T) {
+func TestStringOperationsExtra(t *testing.T) {
 	tests := []struct {
 		script   string
 		expected string
@@ -2032,7 +2032,7 @@ func TestCallExpressionMore(t *testing.T) {
 }
 
 // TestDivisionByZero tests division edge cases
-func TestDivisionByZero(t *testing.T) {
+func TestDivisionByZeroExtra(t *testing.T) {
 	result, err := Run("1 / 0", nil)
 	// Division by zero should either error or return inf
 	_ = result
@@ -2424,6 +2424,277 @@ func TestToFloatFunction(t *testing.T) {
 		"int(3.14)",
 		"int('42')",
 		"int(42.9)",
+	}
+
+	for _, script := range tests {
+		t.Run(script, func(t *testing.T) {
+			_, err := Run(script, nil)
+			if err != nil {
+				t.Logf("Run(%q) error: %v", script, err)
+			}
+		})
+	}
+}
+
+// TestArithmeticOperations tests arithmetic operations
+func TestArithmeticOperationsFinal(t *testing.T) {
+	tests := []struct {
+		script string
+		want   interface{}
+	}{
+		{"1 + 2", int64(3)},
+		{"5 - 3", int64(2)},
+		{"4 * 3", int64(12)},
+		{"10 / 2", int64(5)},
+		{"10.0 / 3", 3.3333333333333335},
+		{"10 % 3", int64(1)},
+		{"-5", int64(-5)},
+		{"--5", int64(5)},
+		{"!true", false},
+		{"!false", true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.script, func(t *testing.T) {
+			result, err := Run(tt.script, nil)
+			if err != nil {
+				t.Errorf("Run(%q) error: %v", tt.script, err)
+			}
+			t.Logf("Run(%q) = %v", tt.script, result)
+		})
+	}
+}
+
+// TestCompareOperations tests comparison operations
+func TestCompareOperationsMore(t *testing.T) {
+	tests := []struct {
+		script string
+		want   bool
+	}{
+		{"1 < 2", true},
+		{"2 < 1", false},
+		{"2 > 1", true},
+		{"1 > 2", false},
+		{"1 <= 1", true},
+		{"1 >= 1", true},
+		{"1 == 1", true},
+		{"1 != 2", true},
+		{"'a' < 'b'", true},
+		{"'b' > 'a'", true},
+		{"true == true", true},
+		{"false == false", true},
+		{"true != false", true},
+		{"1.5 < 2.5", true},
+		{"2.5 > 1.5", true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.script, func(t *testing.T) {
+			result, err := Run(tt.script, nil)
+			if err != nil {
+				t.Errorf("Run(%q) error: %v", tt.script, err)
+			}
+			t.Logf("Run(%q) = %v", tt.script, result)
+		})
+	}
+}
+
+// TestWhileStatement tests while loop
+func TestWhileStatement(t *testing.T) {
+	tests := []string{
+		"while (true) { break }",
+	}
+
+	for _, script := range tests {
+		t.Run(script, func(t *testing.T) {
+			_, err := Run(script, nil)
+			if err != nil {
+				t.Logf("Run(%q) error: %v", script, err)
+			}
+		})
+	}
+}
+
+// TestArrayOperations tests array operations
+func TestArrayOperationsMore(t *testing.T) {
+	tests := []string{
+		"[1, 2, 3][0]",
+		"[1, 2, 3][2]",
+		"len([1, 2, 3])",
+		"[1, 2, 3] + [4, 5]", // array concatenation
+		"var a = [1, 2]; a[0] = 10; a[0]",
+	}
+
+	for _, script := range tests {
+		t.Run(script, func(t *testing.T) {
+			_, err := Run(script, nil)
+			if err != nil {
+				t.Logf("Run(%q) error: %v", script, err)
+			}
+		})
+	}
+}
+
+// TestMapOperations tests map operations
+func TestMapOperationsExtra(t *testing.T) {
+	tests := []string{
+		"({'a': 1})['a']",
+		"var m = {'a': 1}; m['b'] = 2; m['b']",
+		"keys({'a': 1, 'b': 2})",
+		"values({'a': 1, 'b': 2})",
+		"len({'a': 1, 'b': 2})",
+	}
+
+	for _, script := range tests {
+		t.Run(script, func(t *testing.T) {
+			_, err := Run(script, nil)
+			if err != nil {
+				t.Logf("Run(%q) error: %v", script, err)
+			}
+		})
+	}
+}
+
+// TestTryThrowStatement tests try/throw statements
+func TestTryThrowStatement(t *testing.T) {
+	tests := []string{
+		"try { throw 'error' } catch (e) { e }",
+		"try { 1/0 } catch (e) { 'caught' }",
+	}
+
+	for _, script := range tests {
+		t.Run(script, func(t *testing.T) {
+			_, err := Run(script, nil)
+			if err != nil {
+				t.Logf("Run(%q) error: %v", script, err)
+			}
+		})
+	}
+}
+
+// TestDivisionByZero tests division by zero handling
+func TestDivisionByZeroHandler(t *testing.T) {
+	tests := []string{
+		"1 / 0",
+		"1.0 / 0.0",
+	}
+
+	for _, script := range tests {
+		t.Run(script, func(t *testing.T) {
+			_, err := Run(script, nil)
+			if err != nil {
+				t.Logf("Run(%q) error: %v (expected)", script, err)
+			}
+		})
+	}
+}
+
+// TestParserStringMethods tests parser String methods
+func TestParserStringMethods(t *testing.T) {
+	// Test various AST node String methods
+	tests := []string{
+		"1",       // literal
+		"1 + 2",   // binary expression
+		"-5",      // unary expression
+		"foo()",   // call expression
+		"a.b",     // member expression
+		"a[0]",    // index expression
+		"[1, 2]",  // array literal
+		"{'a': 1}", // map literal
+	}
+
+	for _, script := range tests {
+		t.Run(script, func(t *testing.T) {
+			_, err := Run(script, nil)
+			if err != nil {
+				t.Logf("Run(%q) error: %v", script, err)
+			}
+		})
+	}
+}
+
+// TestTypeofFunction tests typeof function
+func TestTypeofFunction(t *testing.T) {
+	tests := []string{
+		"typeof(1)",
+		"typeof(1.5)",
+		"typeof('hello')",
+		"typeof(true)",
+		"typeof(null)",
+		"typeof([1, 2])",
+		"typeof({'a': 1})",
+	}
+
+	for _, script := range tests {
+		t.Run(script, func(t *testing.T) {
+			_, err := Run(script, nil)
+			if err != nil {
+				t.Errorf("Run(%q) error: %v", script, err)
+			}
+		})
+	}
+}
+
+// TestStringOperations tests string operations
+func TestStringOperationsMore(t *testing.T) {
+	tests := []string{
+		"'hello' + ' world'",
+		"string(42)",
+		"string(3.14)",
+		"string(true)",
+		"len('hello')",
+		"sprintf('%s %d', 'test', 42)",
+	}
+
+	for _, script := range tests {
+		t.Run(script, func(t *testing.T) {
+			_, err := Run(script, nil)
+			if err != nil {
+				t.Logf("Run(%q) error: %v", script, err)
+			}
+		})
+	}
+}
+
+// TestReturnStatement tests return statement
+func TestReturnStatement(t *testing.T) {
+	tests := []string{
+		"func f() { return 42 }\nf()",
+	}
+
+	for _, script := range tests {
+		t.Run(script, func(t *testing.T) {
+			_, err := Run(script, nil)
+			if err != nil {
+				t.Errorf("Run(%q) error: %v", script, err)
+			}
+		})
+	}
+}
+
+// TestJSONOperations tests JSON operations
+func TestJSONOperations(t *testing.T) {
+	tests := []string{
+		"json({'a': 1})",
+		"jsonparse('{\"a\": 1}')",
+	}
+
+	for _, script := range tests {
+		t.Run(script, func(t *testing.T) {
+			_, err := Run(script, nil)
+			if err != nil {
+				t.Logf("Run(%q) error: %v", script, err)
+			}
+		})
+	}
+}
+
+// TestRangeFunction tests range function
+func TestRangeFunction(t *testing.T) {
+	tests := []string{
+		"range(5)",
+		"range(0, 5)",
+		"range(0, 10, 2)",
 	}
 
 	for _, script := range tests {

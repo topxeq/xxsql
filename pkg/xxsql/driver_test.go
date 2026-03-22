@@ -4650,3 +4650,368 @@ func TestStmtOperations(t *testing.T) {
 		t.Errorf("NumInput: got %d, want 1", stmt.NumInput())
 	}
 }
+
+// TestPrivateConnBuildAuthRequest tests buildAuthRequest
+func TestPrivateConnBuildAuthRequest(t *testing.T) {
+	cfg := &Config{
+		User:   "testuser",
+		Passwd: "testpass",
+		DBName: "testdb",
+	}
+	pc := &privateConn{cfg: cfg}
+
+	authReq := pc.buildAuthRequest()
+	if authReq == nil || len(authReq) == 0 {
+		t.Error("buildAuthRequest returned empty or nil result")
+	}
+
+	// Verify auth method byte
+	if authReq[0] != 0 {
+		t.Errorf("auth method: got %d, want 0", authReq[0])
+	}
+}
+
+// TestPrivateConnParseHandshakeResponse tests parseHandshakeResponse
+func TestPrivateConnParseHandshakeResponse(t *testing.T) {
+	pc := &privateConn{}
+
+	tests := []struct {
+		name    string
+		payload []byte
+		wantErr bool
+	}{
+		{"too short", []byte{0x00, 0x01, 0x02}, true},
+		{"valid", []byte{
+			0x00, 0x03, // protocol version 3
+			0x00, 0x05, // server version length
+			'1', '.', '0', '.', '0', // server version
+			0x01, // supported = true
+		}, false},
+		{"invalid version length", []byte{
+			0x00, 0x03,
+			0x00, 0x10, // server version length too large
+			'1', '.', '0', '.', '0',
+			0x01,
+		}, true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			resp, err := pc.parseHandshakeResponse(tt.payload)
+			if tt.wantErr {
+				if err == nil {
+					t.Error("expected error, got nil")
+				}
+			} else {
+				if err != nil {
+					t.Errorf("unexpected error: %v", err)
+				}
+				if resp == nil {
+					t.Error("resp is nil")
+				}
+			}
+		})
+	}
+}
+
+// TestPrivateConnParseAuthResponse tests parseAuthResponse
+func TestPrivateConnParseAuthResponse(t *testing.T) {
+	pc := &privateConn{}
+
+	tests := []struct {
+		name    string
+		payload []byte
+		success bool
+		message string
+		wantErr bool
+	}{
+		{"empty", []byte{}, false, "", true},
+		{"success", []byte{0x01}, true, "", false},
+		{"failure", []byte{0x00}, false, "", false},
+		{"with message", []byte{0x01, 0x00, 0x05, 'h', 'e', 'l', 'l', 'o'}, true, "hello", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			resp, err := pc.parseAuthResponse(tt.payload)
+			if tt.wantErr {
+				if err == nil {
+					t.Error("expected error, got nil")
+				}
+				return
+			}
+			if err != nil {
+				t.Errorf("unexpected error: %v", err)
+				return
+			}
+			if resp.Success != tt.success {
+				t.Errorf("Success: got %v, want %v", resp.Success, tt.success)
+			}
+			if resp.Message != tt.message {
+				t.Errorf("Message: got %q, want %q", resp.Message, tt.message)
+			}
+		})
+	}
+}
+
+// TestPrivateConnParseQueryResult tests parseQueryResult
+func TestPrivateConnParseQueryResult(t *testing.T) {
+	pc := &privateConn{}
+
+	tests := []struct {
+		name    string
+		payload []byte
+		wantErr bool
+	}{
+		{"too short", []byte{0x00, 0x01, 0x02, 0x03}, true},
+		{"valid", []byte{
+			0x00, 0x00, 0x00, 0x0A, // rows affected = 10
+			0x00, 0x00, 0x00, 0x05, // last insert id = 5
+		}, false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result, err := pc.parseQueryResult(tt.payload)
+			if tt.wantErr {
+				if err == nil {
+					t.Error("expected error, got nil")
+				}
+			} else {
+				if err != nil {
+					t.Errorf("unexpected error: %v", err)
+				}
+				if result == nil {
+					t.Error("result is nil")
+				}
+			}
+		})
+	}
+}
+
+// TestPrivateConnParseRows tests parseRows
+func TestPrivateConnParseRows(t *testing.T) {
+	pc := &privateConn{}
+
+	tests := []struct {
+		name    string
+		payload []byte
+		wantErr bool
+	}{
+		{"too short", []byte{0x00}, true},
+		{"valid empty", []byte{0x00, 0x00, 0x00, 0x00}, false},
+		{"valid with columns", []byte{
+			0x00, 0x02, // 2 columns
+			0x00, 0x02, 'i', 'd', // column "id"
+			0x00, 0x04, 'n', 'a', 'm', 'e', // column "name"
+			0x00, 0x00, // 0 rows
+		}, false},
+		{"valid with rows", []byte{
+			0x00, 0x01, // 1 column
+			0x00, 0x01, 'a', // column "a"
+			0x00, 0x01, // 1 row
+			0x01, // int64 type
+			0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x2A, // value 42
+		}, false},
+		{"row with string", []byte{
+			0x00, 0x01, // 1 column
+			0x00, 0x01, 'a', // column "a"
+			0x00, 0x01, // 1 row
+			0x03, // string type
+			0x00, 0x05, 'h', 'e', 'l', 'l', 'o', // "hello"
+		}, false},
+		{"row with null", []byte{
+			0x00, 0x01, // 1 column
+			0x00, 0x01, 'a', // column "a"
+			0x00, 0x01, // 1 row
+			0x00, // null type
+		}, false},
+		{"row with float", []byte{
+			0x00, 0x01, // 1 column
+			0x00, 0x01, 'a', // column "a"
+			0x00, 0x01, // 1 row
+			0x02, // float64 type
+			0x40, 0x09, 0x21, 0xfb, 0x54, 0x44, 0x2d, 0x18, // pi
+		}, false},
+		{"row with bool", []byte{
+			0x00, 0x01, // 1 column
+			0x00, 0x01, 'a', // column "a"
+			0x00, 0x01, // 1 row
+			0x04, // bool type
+			0x01, // true
+		}, false},
+		{"unknown type", []byte{
+			0x00, 0x01, // 1 column
+			0x00, 0x01, 'a', // column "a"
+			0x00, 0x01, // 1 row
+			0xFF, // unknown type
+		}, true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			rows, err := pc.parseRows(tt.payload)
+			if tt.wantErr {
+				if err == nil {
+					t.Error("expected error, got nil")
+				}
+			} else {
+				if err != nil {
+					t.Errorf("unexpected error: %v", err)
+				}
+				if rows == nil {
+					t.Error("rows is nil")
+				}
+			}
+		})
+	}
+}
+
+// TestPrivateResult tests privateResult
+func TestPrivateResult(t *testing.T) {
+	r := &privateResult{
+		rowsAffected: 100,
+		lastInsertID: 42,
+	}
+
+	lastID, err := r.LastInsertId()
+	if err != nil {
+		t.Errorf("LastInsertId error: %v", err)
+	}
+	if lastID != 42 {
+		t.Errorf("LastInsertId: got %d, want 42", lastID)
+	}
+
+	affected, err := r.RowsAffected()
+	if err != nil {
+		t.Errorf("RowsAffected error: %v", err)
+	}
+	if affected != 100 {
+		t.Errorf("RowsAffected: got %d, want 100", affected)
+	}
+}
+
+// TestPrivateRows tests privateRows
+func TestPrivateRows(t *testing.T) {
+	r := &privateRows{
+		columns: []string{"id", "name"},
+		rows: [][]interface{}{
+			{int64(1), "Alice"},
+			{int64(2), "Bob"},
+		},
+	}
+
+	cols := r.Columns()
+	if len(cols) != 2 {
+		t.Errorf("Columns: got %d, want 2", len(cols))
+	}
+
+	dest := make([]driver.Value, 2)
+	err := r.Next(dest)
+	if err != nil {
+		t.Errorf("Next error: %v", err)
+	}
+	if dest[0] != int64(1) {
+		t.Errorf("dest[0]: got %v, want 1", dest[0])
+	}
+
+	err = r.Next(dest)
+	if err != nil {
+		t.Errorf("Next error: %v", err)
+	}
+
+	err = r.Next(dest)
+	if err != io.EOF {
+		t.Errorf("Next on exhausted: got %v, want io.EOF", err)
+	}
+
+	if err := r.Close(); err != nil {
+		t.Errorf("Close error: %v", err)
+	}
+}
+
+// TestPrivateStmt tests privateStmt
+func TestPrivateStmt(t *testing.T) {
+	stmt := &privateStmt{
+		conn:  nil,
+		query: "SELECT 1",
+	}
+
+	if stmt.NumInput() != -1 {
+		t.Errorf("NumInput: got %d, want -1", stmt.NumInput())
+	}
+
+	if err := stmt.Close(); err != nil {
+		t.Errorf("Close error: %v", err)
+	}
+}
+
+// TestPrivateTx tests privateTx
+func TestPrivateTx(t *testing.T) {
+	pc := &privateConn{inTx: true}
+	tx := &privateTx{conn: pc}
+
+	if err := tx.Commit(); err != nil {
+		t.Errorf("Commit error: %v", err)
+	}
+	if pc.inTx {
+		t.Error("inTx should be false after commit")
+	}
+
+	pc.inTx = true
+	if err := tx.Rollback(); err != nil {
+		t.Errorf("Rollback error: %v", err)
+	}
+	if pc.inTx {
+		t.Error("inTx should be false after rollback")
+	}
+}
+
+// TestPrivateConnCheckNamedValue tests CheckNamedValue
+func TestPrivateConnCheckNamedValue(t *testing.T) {
+	pc := &privateConn{}
+	nv := &driver.NamedValue{Name: "test", Value: "value"}
+
+	err := pc.CheckNamedValue(nv)
+	if err != nil {
+		t.Errorf("CheckNamedValue error: %v", err)
+	}
+}
+
+// TestPrivateConnResetSession tests ResetSession
+func TestPrivateConnResetSession(t *testing.T) {
+	pc := &privateConn{closed: false}
+	err := pc.ResetSession(context.Background())
+	if err != nil {
+		t.Errorf("ResetSession error: %v", err)
+	}
+
+	pc.closed = true
+	err = pc.ResetSession(context.Background())
+	if err != driver.ErrBadConn {
+		t.Errorf("ResetSession on closed: got %v, want ErrBadConn", err)
+	}
+}
+
+// TestReadFull tests readFull
+func TestReadFull(t *testing.T) {
+	server, client := net.Pipe()
+	defer server.Close()
+	defer client.Close()
+
+	go func() {
+		server.Write([]byte("hello world"))
+	}()
+
+	buf := make([]byte, 5)
+	n, err := readFull(client, buf)
+	if err != nil {
+		t.Errorf("readFull error: %v", err)
+	}
+	if n != 5 {
+		t.Errorf("readFull: got %d, want 5", n)
+	}
+	if string(buf) != "hello" {
+		t.Errorf("readFull: got %q, want 'hello'", string(buf))
+	}
+}
