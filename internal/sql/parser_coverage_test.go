@@ -2728,3 +2728,170 @@ func containsHelper(s, substr string) bool {
 	}
 	return false
 }
+// TestParseCreateFTS tests CREATE FTS statement parsing
+
+// TestParseCreateFTSFinal tests CREATE FTS statement parsing
+func TestParseCreateFTSFinal(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		wantErr  bool
+	}{
+		{
+			name:    "create fts index",
+			input:   "CREATE FTS INDEX idx_fts ON articles(title, content)",
+			wantErr: false,
+		},
+		{
+			name:    "create fts index with tokenizer",
+			input:   "CREATE FTS INDEX idx_docs ON documents(content) WITH TOKENIZER default",
+			wantErr: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			parser := NewParser(tt.input)
+			stmt, err := parser.Parse()
+			if (err != nil) != tt.wantErr {
+				t.Errorf("Parse() error = %v, wantErr %v", err, tt.wantErr)
+				return
+			}
+			if !tt.wantErr && stmt == nil {
+				t.Error("Parse() returned nil statement")
+			}
+		})
+	}
+}
+
+// TestParseCreateViewFinal tests CREATE VIEW statement parsing
+func TestParseCreateViewFinal(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		wantErr  bool
+	}{
+		{
+			name:    "create simple view",
+			input:   "CREATE VIEW v_users AS SELECT id, name FROM users",
+			wantErr: false,
+		},
+		{
+			name:    "create view with columns",
+			input:   "CREATE VIEW v_active_users(user_id, user_name) AS SELECT id, name FROM users WHERE active = 1",
+			wantErr: false,
+		},
+		{
+			name:    "create or replace view",
+			input:   "CREATE OR REPLACE VIEW v_orders AS SELECT * FROM orders",
+			wantErr: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			parser := NewParser(tt.input)
+			stmt, err := parser.Parse()
+			if (err != nil) != tt.wantErr {
+				t.Errorf("Parse() error = %v, wantErr %v", err, tt.wantErr)
+				return
+			}
+			if !tt.wantErr && stmt == nil {
+				t.Error("Parse() returned nil statement")
+			}
+		})
+	}
+}
+
+// TestParseDropViewFinal tests DROP VIEW statement parsing
+func TestParseDropViewFinal(t *testing.T) {
+	tests := []struct {
+		name    string
+		input   string
+		wantErr bool
+	}{
+		{
+			name:    "drop view",
+			input:   "DROP VIEW v_users",
+			wantErr: false,
+		},
+		{
+			name:    "drop view if exists",
+			input:   "DROP VIEW IF EXISTS v_users",
+			wantErr: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			parser := NewParser(tt.input)
+			stmt, err := parser.Parse()
+			if (err != nil) != tt.wantErr {
+				t.Errorf("Parse() error = %v, wantErr %v", err, tt.wantErr)
+				return
+			}
+			if !tt.wantErr && stmt == nil {
+				t.Error("Parse() returned nil statement")
+			}
+		})
+	}
+}
+
+// TestParseColumnDefFinal tests more column definition cases
+func TestParseColumnDefFinal(t *testing.T) {
+	tests := []struct {
+		name    string
+		input   string
+		wantErr bool
+	}{
+		{
+			name:    "column with default",
+			input:   "CREATE TABLE t (id INT DEFAULT 0)",
+			wantErr: false,
+		},
+		{
+			name:    "column with not null",
+			input:   "CREATE TABLE t (name VARCHAR(100) NOT NULL)",
+			wantErr: false,
+		},
+		{
+			name:    "column with unique",
+			input:   "CREATE TABLE t (email VARCHAR(100) UNIQUE)",
+			wantErr: false,
+		},
+		{
+			name:    "column with primary key",
+			input:   "CREATE TABLE t (id INT PRIMARY KEY)",
+			wantErr: false,
+		},
+		{
+			name:    "column with auto_increment",
+			input:   "CREATE TABLE t (id INT AUTO_INCREMENT)",
+			wantErr: false,
+		},
+		{
+			name:    "column with check constraint",
+			input:   "CREATE TABLE t (age INT CHECK (age >= 0))",
+			wantErr: true,
+		},
+		{
+			name:    "column with references",
+			input:   "CREATE TABLE t (user_id INT REFERENCES users(id))",
+			wantErr: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			parser := NewParser(tt.input)
+			stmt, err := parser.Parse()
+			if (err != nil) != tt.wantErr {
+				t.Errorf("Parse() error = %v, wantErr %v", err, tt.wantErr)
+				return
+			}
+			if !tt.wantErr && stmt == nil {
+				t.Error("Parse() returned nil statement")
+			}
+		})
+	}
+}

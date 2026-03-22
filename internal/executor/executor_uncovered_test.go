@@ -7761,3 +7761,433 @@ func TestNtile(t *testing.T) {
 		t.Logf("Result: %v", result)
 	}
 }
+
+// TestEvaluateCastExprWithParams tests evaluateCastExprWithParams function
+func TestEvaluateCastExprWithParams(t *testing.T) {
+	e := NewExecutor(nil)
+
+	t.Run("cast int to varchar", func(t *testing.T) {
+		expr := &sql.CastExpr{
+			Expr: &sql.Literal{Value: int64(42), Type: sql.LiteralNumber},
+			Type: &sql.DataType{Name: "VARCHAR"},
+		}
+		result, err := e.evaluateCastExprWithParams(expr, nil)
+		if err != nil {
+			t.Errorf("evaluateCastExprWithParams returned error: %v", err)
+		}
+		if result != "42" {
+			t.Errorf("cast int to varchar = %v, want '42'", result)
+		}
+	})
+
+	t.Run("cast string to int", func(t *testing.T) {
+		expr := &sql.CastExpr{
+			Expr: &sql.Literal{Value: "123", Type: sql.LiteralString},
+			Type: &sql.DataType{Name: "INT"},
+		}
+		result, err := e.evaluateCastExprWithParams(expr, nil)
+		if err != nil {
+			t.Errorf("evaluateCastExprWithParams returned error: %v", err)
+		}
+		if result != int64(123) {
+			t.Errorf("cast string to int = %v, want 123", result)
+		}
+	})
+
+	t.Run("cast with nil type", func(t *testing.T) {
+		expr := &sql.CastExpr{
+			Expr: &sql.Literal{Value: int64(42), Type: sql.LiteralNumber},
+			Type: nil,
+		}
+		result, err := e.evaluateCastExprWithParams(expr, nil)
+		if err != nil {
+			t.Errorf("evaluateCastExprWithParams returned error: %v", err)
+		}
+		if result != int64(42) {
+			t.Errorf("cast with nil type = %v, want 42", result)
+		}
+	})
+}
+
+// TestEvaluateUDFFunctionCall tests evaluateUDFFunctionCall function
+func TestEvaluateUDFFunctionCall(t *testing.T) {
+	e := NewExecutor(nil)
+
+	t.Run("UPPER function", func(t *testing.T) {
+		fc := &sql.FunctionCall{
+			Name: "UPPER",
+			Args: []sql.Expression{&sql.Literal{Value: "hello", Type: sql.LiteralString}},
+		}
+		result, err := e.evaluateUDFFunctionCall(fc, nil)
+		if err != nil {
+			t.Errorf("evaluateUDFFunctionCall returned error: %v", err)
+		}
+		if result != "HELLO" {
+			t.Errorf("UPPER('hello') = %v, want 'HELLO'", result)
+		}
+	})
+
+	t.Run("LOWER function", func(t *testing.T) {
+		fc := &sql.FunctionCall{
+			Name: "LOWER",
+			Args: []sql.Expression{&sql.Literal{Value: "HELLO", Type: sql.LiteralString}},
+		}
+		result, err := e.evaluateUDFFunctionCall(fc, nil)
+		if err != nil {
+			t.Errorf("evaluateUDFFunctionCall returned error: %v", err)
+		}
+		if result != "hello" {
+			t.Errorf("LOWER('HELLO') = %v, want 'hello'", result)
+		}
+	})
+
+	t.Run("LENGTH function with string", func(t *testing.T) {
+		fc := &sql.FunctionCall{
+			Name: "LENGTH",
+			Args: []sql.Expression{&sql.Literal{Value: "hello", Type: sql.LiteralString}},
+		}
+		result, err := e.evaluateUDFFunctionCall(fc, nil)
+		if err != nil {
+			t.Errorf("evaluateUDFFunctionCall returned error: %v", err)
+		}
+		if result != int64(5) {
+			t.Errorf("LENGTH('hello') = %v, want 5", result)
+		}
+	})
+
+	t.Run("LENGTH function with bytes", func(t *testing.T) {
+		fc := &sql.FunctionCall{
+			Name: "LENGTH",
+			Args: []sql.Expression{&sql.ColumnRef{Name: "data"}},
+		}
+		params := map[string]interface{}{"data": []byte("test")}
+		result, err := e.evaluateUDFFunctionCall(fc, params)
+		if err != nil {
+			t.Errorf("evaluateUDFFunctionCall returned error: %v", err)
+		}
+		if result != int64(4) {
+			t.Errorf("LENGTH(bytes) = %v, want 4", result)
+		}
+	})
+
+	t.Run("CONCAT function", func(t *testing.T) {
+		fc := &sql.FunctionCall{
+			Name: "CONCAT",
+			Args: []sql.Expression{
+				&sql.Literal{Value: "hello", Type: sql.LiteralString},
+				&sql.Literal{Value: " ", Type: sql.LiteralString},
+				&sql.Literal{Value: "world", Type: sql.LiteralString},
+			},
+		}
+		result, err := e.evaluateUDFFunctionCall(fc, nil)
+		if err != nil {
+			t.Errorf("evaluateUDFFunctionCall returned error: %v", err)
+		}
+		if result != "hello world" {
+			t.Errorf("CONCAT('hello', ' ', 'world') = %v, want 'hello world'", result)
+		}
+	})
+
+	t.Run("NOW function", func(t *testing.T) {
+		fc := &sql.FunctionCall{
+			Name: "NOW",
+			Args: []sql.Expression{},
+		}
+		result, err := e.evaluateUDFFunctionCall(fc, nil)
+		if err != nil {
+			t.Errorf("evaluateUDFFunctionCall returned error: %v", err)
+		}
+		// Just check it's a string (timestamp format)
+		_, ok := result.(string)
+		if !ok {
+			t.Errorf("NOW() should return string, got %T", result)
+		}
+	})
+
+	t.Run("UPPER with nil arg", func(t *testing.T) {
+		fc := &sql.FunctionCall{
+			Name: "UPPER",
+			Args: []sql.Expression{&sql.ColumnRef{Name: "x"}},
+		}
+		params := map[string]interface{}{"x": nil}
+		result, err := e.evaluateUDFFunctionCall(fc, params)
+		if err != nil {
+			t.Errorf("evaluateUDFFunctionCall returned error: %v", err)
+		}
+		if result != nil {
+			t.Errorf("UPPER(nil) = %v, want nil", result)
+		}
+	})
+
+	t.Run("UPPER with no args", func(t *testing.T) {
+		fc := &sql.FunctionCall{
+			Name: "UPPER",
+			Args: []sql.Expression{},
+		}
+		result, err := e.evaluateUDFFunctionCall(fc, nil)
+		if err != nil {
+			t.Errorf("evaluateUDFFunctionCall returned error: %v", err)
+		}
+		if result != nil {
+			t.Errorf("UPPER() with no args = %v, want nil", result)
+		}
+	})
+
+	t.Run("CONCAT with nil arg", func(t *testing.T) {
+		fc := &sql.FunctionCall{
+			Name: "CONCAT",
+			Args: []sql.Expression{
+				&sql.Literal{Value: "hello", Type: sql.LiteralString},
+				&sql.ColumnRef{Name: "x"},
+			},
+		}
+		params := map[string]interface{}{"x": nil}
+		result, err := e.evaluateUDFFunctionCall(fc, params)
+		if err != nil {
+			t.Errorf("evaluateUDFFunctionCall returned error: %v", err)
+		}
+		if result != nil {
+			t.Errorf("CONCAT with nil = %v, want nil", result)
+		}
+	})
+
+	t.Run("unknown function", func(t *testing.T) {
+		fc := &sql.FunctionCall{
+			Name: "UNKNOWN_FUNC",
+			Args: []sql.Expression{},
+		}
+		result, err := e.evaluateUDFFunctionCall(fc, nil)
+		if err != nil {
+			t.Errorf("evaluateUDFFunctionCall returned error: %v", err)
+		}
+		if result != nil {
+			t.Errorf("UNKNOWN_FUNC() = %v, want nil", result)
+		}
+	})
+
+	t.Run("LENGTH with int", func(t *testing.T) {
+		fc := &sql.FunctionCall{
+			Name: "LENGTH",
+			Args: []sql.Expression{&sql.Literal{Value: int64(123), Type: sql.LiteralNumber}},
+		}
+		result, err := e.evaluateUDFFunctionCall(fc, nil)
+		if err != nil {
+			t.Errorf("evaluateUDFFunctionCall returned error: %v", err)
+		}
+		if result != int64(3) {
+			t.Errorf("LENGTH(123) = %v, want 3", result)
+		}
+	})
+}
+
+// TestCompareValuesExtended tests compareValues with more operators
+func TestCompareValuesExtended(t *testing.T) {
+	e := NewExecutor(nil)
+
+	t.Run("NULL comparisons", func(t *testing.T) {
+		// NULL = NULL
+		result, err := e.compareValues(nil, sql.OpEq, nil)
+		if err != nil {
+			t.Errorf("compareValues returned error: %v", err)
+		}
+		if !result {
+			t.Errorf("NULL = NULL should be true")
+		}
+
+		// NULL = value
+		result, err = e.compareValues(nil, sql.OpEq, "value")
+		if err != nil {
+			t.Errorf("compareValues returned error: %v", err)
+		}
+		if result {
+			t.Errorf("NULL = 'value' should be false")
+		}
+
+		// value = NULL
+		result, err = e.compareValues("value", sql.OpEq, nil)
+		if err != nil {
+			t.Errorf("compareValues returned error: %v", err)
+		}
+		if result {
+			t.Errorf("'value' = NULL should be false")
+		}
+
+		// NULL != NULL
+		result, err = e.compareValues(nil, sql.OpNe, nil)
+		if err != nil {
+			t.Errorf("compareValues returned error: %v", err)
+		}
+		if result {
+			t.Errorf("NULL != NULL should be false")
+		}
+
+		// NULL != value
+		result, err = e.compareValues(nil, sql.OpNe, "value")
+		if err != nil {
+			t.Errorf("compareValues returned error: %v", err)
+		}
+		if !result {
+			t.Errorf("NULL != 'value' should be true")
+		}
+
+		// NULL < value
+		result, err = e.compareValues(nil, sql.OpLt, "value")
+		if err != nil {
+			t.Errorf("compareValues returned error: %v", err)
+		}
+		if result {
+			t.Errorf("NULL < 'value' should be false")
+		}
+	})
+
+	t.Run("BLOB comparisons", func(t *testing.T) {
+		blob1 := []byte{0x01, 0x02, 0x03}
+		blob2 := []byte{0x01, 0x02, 0x04}
+		blob3 := []byte{0x01, 0x02, 0x03}
+
+		// BLOB equality
+		result, err := e.compareValues(blob1, sql.OpEq, blob3)
+		if err != nil {
+			t.Errorf("compareValues returned error: %v", err)
+		}
+		if !result {
+			t.Errorf("equal BLOBs should be equal")
+		}
+
+		// BLOB inequality
+		result, err = e.compareValues(blob1, sql.OpLt, blob2)
+		if err != nil {
+			t.Errorf("compareValues returned error: %v", err)
+		}
+		if !result {
+			t.Errorf("blob1 < blob2 should be true")
+		}
+	})
+
+	t.Run("escape char for LIKE", func(t *testing.T) {
+		result, err := e.compareValues("test_value", sql.OpLike, "test\\_value", "\\")
+		if err != nil {
+			t.Errorf("compareValues returned error: %v", err)
+		}
+		if !result {
+			t.Errorf("'test_value' LIKE 'test\\_value' with escape '\\' should be true")
+		}
+	})
+}
+
+// TestCompareValuesMoreTypes tests compareValues with various type combinations
+func TestCompareValuesMoreTypes(t *testing.T) {
+	e := NewExecutor(nil)
+
+	t.Run("int comparisons", func(t *testing.T) {
+		result, err := e.compareValues(int64(5), sql.OpGt, int64(3))
+		if err != nil {
+			t.Errorf("compareValues returned error: %v", err)
+		}
+		if !result {
+			t.Errorf("5 > 3 should be true")
+		}
+
+		result, err = e.compareValues(int64(3), sql.OpGt, int64(5))
+		if err != nil {
+			t.Errorf("compareValues returned error: %v", err)
+		}
+		if result {
+			t.Errorf("3 > 5 should be false")
+		}
+
+		result, err = e.compareValues(int64(5), sql.OpEq, int64(5))
+		if err != nil {
+			t.Errorf("compareValues returned error: %v", err)
+		}
+		if !result {
+			t.Errorf("5 = 5 should be true")
+		}
+
+		result, err = e.compareValues(int64(5), sql.OpNe, int64(3))
+		if err != nil {
+			t.Errorf("compareValues returned error: %v", err)
+		}
+		if !result {
+			t.Errorf("5 != 3 should be true")
+		}
+
+		result, err = e.compareValues(int64(3), sql.OpLe, int64(3))
+		if err != nil {
+			t.Errorf("compareValues returned error: %v", err)
+		}
+		if !result {
+			t.Errorf("3 <= 3 should be true")
+		}
+
+		result, err = e.compareValues(int64(5), sql.OpGe, int64(3))
+		if err != nil {
+			t.Errorf("compareValues returned error: %v", err)
+		}
+		if !result {
+			t.Errorf("5 >= 3 should be true")
+		}
+	})
+
+	t.Run("float comparisons", func(t *testing.T) {
+		result, err := e.compareValues(5.5, sql.OpGt, 3.3)
+		if err != nil {
+			t.Errorf("compareValues returned error: %v", err)
+		}
+		if !result {
+			t.Errorf("5.5 > 3.3 should be true")
+		}
+	})
+
+	t.Run("string comparisons", func(t *testing.T) {
+		result, err := e.compareValues("abc", sql.OpLt, "def")
+		if err != nil {
+			t.Errorf("compareValues returned error: %v", err)
+		}
+		if !result {
+			t.Errorf("'abc' < 'def' should be true")
+		}
+
+		result, err = e.compareValues("def", sql.OpGt, "abc")
+		if err != nil {
+			t.Errorf("compareValues returned error: %v", err)
+		}
+		if !result {
+			t.Errorf("'def' > 'abc' should be true")
+		}
+	})
+
+	t.Run("LIKE pattern matching", func(t *testing.T) {
+		result, err := e.compareValues("hello world", sql.OpLike, "hello%")
+		if err != nil {
+			t.Errorf("compareValues returned error: %v", err)
+		}
+		if !result {
+			t.Errorf("'hello world' LIKE 'hello%%' should be true")
+		}
+
+		result, err = e.compareValues("hello world", sql.OpLike, "%world")
+		if err != nil {
+			t.Errorf("compareValues returned error: %v", err)
+		}
+		if !result {
+			t.Errorf("'hello world' LIKE '%%world' should be true")
+		}
+
+		result, err = e.compareValues("hello world", sql.OpLike, "%o%")
+		if err != nil {
+			t.Errorf("compareValues returned error: %v", err)
+		}
+		if !result {
+			t.Errorf("'hello world' LIKE '%%o%%' should be true")
+		}
+
+		result, err = e.compareValues("hello", sql.OpLike, "h_ll_")
+		if err != nil {
+			t.Errorf("compareValues returned error: %v", err)
+		}
+		if !result {
+			t.Errorf("'hello' LIKE 'h_ll_' should be true")
+		}
+	})
+}
