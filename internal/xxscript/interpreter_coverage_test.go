@@ -2706,3 +2706,210 @@ func TestRangeFunction(t *testing.T) {
 		})
 	}
 }
+
+// TestArithmeticAllTypes tests arithmetic operations with all type combinations
+func TestArithmeticAllTypes(t *testing.T) {
+	tests := []string{
+		// Addition
+		"5 + 3",
+		"5.5 + 2.5",
+		"5 + 2.5",
+		"5.0 + 3",
+
+		// Subtraction
+		"10 - 3",
+		"10.5 - 0.5",
+		"10 - 0.5",
+		"10.0 - 3",
+
+		// Multiplication
+		"4 * 3",
+		"2.5 * 4.0",
+		"3 * 2.5",
+		"4.0 * 3",
+
+		// Division
+		"10 / 2",
+		"10.0 / 2.0",
+		"10 / 2.0",
+		"10.0 / 2",
+
+		// Modulo
+		"17 % 5",
+
+		// String concatenation
+		"'hello' + ' world'",
+	}
+
+	for _, script := range tests {
+		t.Run(script, func(t *testing.T) {
+			result, err := Run(script, nil)
+			if err != nil {
+				t.Errorf("Run(%q) error: %v", script, err)
+				return
+			}
+			if result == nil {
+				t.Errorf("Run(%q) returned nil", script)
+			}
+		})
+	}
+}
+
+// TestCompareAllTypes tests compare function with all type combinations
+func TestCompareAllTypes(t *testing.T) {
+	tests := []string{
+		// Numeric comparisons
+		"5 > 3",
+		"3 > 5",
+		"5 < 3",
+		"3 < 5",
+		"5 >= 5",
+		"5 <= 5",
+
+		// Float comparisons
+		"5.0 > 3.0",
+		"3.0 > 5.0",
+		"5.5 >= 5.5",
+
+		// Mixed comparisons
+		"5 > 3.0",
+		"5.0 > 3",
+		"5 < 3.0",
+		"5.0 < 3",
+
+		// String comparisons
+		"'abc' < 'abd'",
+		"'abc' > 'abb'",
+		"'abc' >= 'abc'",
+		"'abc' <= 'abc'",
+
+		// Equality
+		"5 == 5",
+		"5 == 6",
+		"5.0 == 5",
+		"'a' == 'a'",
+		"'a' == 'b'",
+	}
+
+	for _, script := range tests {
+		t.Run(script, func(t *testing.T) {
+			result, err := Run(script, nil)
+			if err != nil {
+				t.Errorf("Run(%q) error: %v", script, err)
+				return
+			}
+			if result == nil {
+				t.Errorf("Run(%q) returned nil", script)
+			}
+		})
+	}
+}
+
+// TestUnaryExpressions tests unary operations
+func TestUnaryExpressions(t *testing.T) {
+	tests := []string{
+		"-5",
+		"-(-5)",
+		"-3.14",
+		"-(-3.14)",
+		"!true",
+		"!false",
+		"!0",
+		"!1",
+	}
+
+	for _, script := range tests {
+		t.Run(script, func(t *testing.T) {
+			result, err := Run(script, nil)
+			if err != nil {
+				t.Errorf("Run(%q) error: %v", script, err)
+				return
+			}
+			if result == nil {
+				t.Errorf("Run(%q) returned nil", script)
+			}
+		})
+	}
+}
+
+// TestArrayIndexAccess tests array index operations
+func TestArrayIndexAccess(t *testing.T) {
+	tests := []string{
+		"[1, 2, 3][0]",
+		"[1, 2, 3][1]",
+		"[1, 2, 3][2]",
+		"len([1, 2, 3])",
+		"len([])",
+	}
+
+	for _, script := range tests {
+		t.Run(script, func(t *testing.T) {
+			result, err := Run(script, nil)
+			if err != nil {
+				t.Errorf("Run(%q) error: %v", script, err)
+				return
+			}
+			if result == nil {
+				t.Errorf("Run(%q) returned nil", script)
+			}
+		})
+	}
+}
+
+// TestMapIndexAccess tests map index operations
+func TestMapIndexAccess(t *testing.T) {
+	tests := []string{
+		"{'a': 1, 'b': 2}['a']",
+		"{'a': 1, 'b': 2}['b']",
+		"len({'a': 1, 'b': 2})",
+		"len({})",
+	}
+
+	for _, script := range tests {
+		t.Run(script, func(t *testing.T) {
+			result, err := Run(script, nil)
+			if err != nil {
+				t.Errorf("Run(%q) error: %v", script, err)
+				return
+			}
+			if result == nil {
+				t.Errorf("Run(%q) returned nil", script)
+			}
+		})
+	}
+}
+
+// TestBuiltinFunctionsComprehensive tests builtin functions
+func TestBuiltinFunctionsComprehensive(t *testing.T) {
+	tests := []string{
+		"len('hello')",
+		"len([1, 2, 3])",
+		"int(42.5)",
+		"float(42)",
+		"string(42)",
+		"typeof(42)",
+		"abs(-5)",
+		"abs(-3.14)",
+		"upper('hello')",
+		"lower('HELLO')",
+		"trim('  hello  ')",
+		"split('a,b,c', ',')",
+		"join(['a', 'b'], '-')",
+		"replace('hello', 'l', 'x')",
+		"hasPrefix('hello', 'he')",
+		"hasSuffix('hello', 'lo')",
+	}
+
+	for _, script := range tests {
+		t.Run(script, func(t *testing.T) {
+			result, err := Run(script, nil)
+			if err != nil {
+				t.Errorf("Run(%q) error: %v", script, err)
+				return
+			}
+			if result == nil {
+				t.Errorf("Run(%q) returned nil", script)
+			}
+		})
+	}
+}

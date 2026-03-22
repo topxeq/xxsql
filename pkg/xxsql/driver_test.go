@@ -8,6 +8,7 @@ import (
 	"io"
 	"net"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -5013,5 +5014,143 @@ func TestReadFull(t *testing.T) {
 	}
 	if string(buf) != "hello" {
 		t.Errorf("readFull: got %q, want 'hello'", string(buf))
+	}
+}
+
+// TestPrivateConnPrepare tests Prepare
+func TestPrivateConnPrepare(t *testing.T) {
+	pc := &privateConn{closed: false}
+	stmt, err := pc.Prepare("SELECT 1")
+	if err != nil {
+		t.Errorf("Prepare error: %v", err)
+	}
+	if stmt == nil {
+		t.Error("Prepare returned nil stmt")
+	}
+
+	// Test on closed connection
+	pc.closed = true
+	_, err = pc.Prepare("SELECT 1")
+	if err != driver.ErrBadConn {
+		t.Errorf("Prepare on closed: got %v, want ErrBadConn", err)
+	}
+}
+
+// TestPrivateConnBegin tests Begin
+func TestPrivateConnBeginFinal(t *testing.T) {
+	pc := &privateConn{closed: false, inTx: false}
+	pc.mu = sync.Mutex{}
+
+	tx, err := pc.Begin()
+	if err != nil {
+		t.Errorf("Begin error: %v", err)
+	}
+	if tx == nil {
+		t.Error("Begin returned nil tx")
+	}
+	if !pc.inTx {
+		t.Error("Begin didn't set inTx flag")
+	}
+
+	// Test on closed connection
+	pc2 := &privateConn{closed: true}
+	pc2.mu = sync.Mutex{}
+	_, err = pc2.Begin()
+	if err != driver.ErrBadConn {
+		t.Errorf("Begin on closed: got %v, want ErrBadConn", err)
+	}
+}
+
+// TestPrivateConnBeginTx tests BeginTx
+func TestPrivateConnBeginTxFinal(t *testing.T) {
+	pc := &privateConn{closed: false, inTx: false}
+	pc.mu = sync.Mutex{}
+
+	tx, err := pc.BeginTx(context.Background(), driver.TxOptions{})
+	if err != nil {
+		t.Errorf("BeginTx error: %v", err)
+	}
+	if tx == nil {
+		t.Error("BeginTx returned nil tx")
+	}
+
+	// Test already in transaction
+	_, err = pc.BeginTx(context.Background(), driver.TxOptions{})
+	if err == nil {
+		t.Error("BeginTx when already in tx should fail")
+	}
+}
+
+// TestPrivateStmtExtra tests privateStmt methods
+func TestPrivateStmtExtra(t *testing.T) {
+	pc := &privateConn{closed: false}
+	pc.mu = sync.Mutex{}
+
+	stmt := &privateStmt{conn: pc, query: "SELECT 1"}
+
+	// Test Close
+	err := stmt.Close()
+	if err != nil {
+		t.Errorf("Stmt.Close error: %v", err)
+	}
+
+	// Test NumInput
+	if stmt.NumInput() != -1 {
+		t.Errorf("NumInput: got %d, want -1", stmt.NumInput())
+	}
+}
+
+// TestPrivateTxExtra tests privateTx methods
+func TestPrivateTxExtra(t *testing.T) {
+	pc := &privateConn{closed: false, inTx: true}
+	pc.mu = sync.Mutex{}
+
+	tx := &privateTx{conn: pc}
+
+	// Test Commit
+	err := tx.Commit()
+	if err != nil {
+		t.Errorf("Commit error: %v", err)
+	}
+	if pc.inTx {
+		t.Error("Commit didn't reset inTx flag")
+	}
+
+	// Test Rollback
+	pc.inTx = true
+	err = tx.Rollback()
+	if err != nil {
+		t.Errorf("Rollback error: %v", err)
+	}
+	if pc.inTx {
+		t.Error("Rollback didn't reset inTx flag")
+	}
+}
+
+// TestBuildQueryRequest tests buildQueryRequest
+func TestBuildQueryRequest(t *testing.T) {
+	pc := &privateConn{}
+	query := "SELECT * FROM users WHERE id = ?"
+	args := []driver.NamedValue{
+		{Ordinal: 1, Value: 42},
+	}
+
+	req := pc.buildQueryRequest(query, args)
+	if len(req) == 0 {
+		t.Error("buildQueryRequest returned empty")
+	}
+}
+
+// TestBuildMessage tests buildMessage
+func TestBuildMessage(t *testing.T) {
+	pc := &privateConn{}
+	payload := []byte("test payload")
+
+	msg, err := pc.buildMessage(0x01, payload)
+	if err != nil {
+		t.Errorf("buildMessage error: %v", err)
+	}
+	if len(msg) == 0 {
+		t.Error("buildMessage returned empty message")
 	}
 }
