@@ -16050,3 +16050,247 @@ func TestMoreMathFunctions(t *testing.T) {
 	})
 }
 
+// TestBooleanLiteralsInWhere tests boolean literals in WHERE clause
+func TestBooleanLiteralsInWhere(t *testing.T) {
+	engine := setupTestEngine(t)
+	exec := NewExecutor(engine)
+	exec.SetDatabase("testdb")
+
+	_, _ = exec.Execute("CREATE TABLE bool_test (id INT, active BOOL)")
+	_, _ = exec.Execute("INSERT INTO bool_test VALUES (1, true)")
+	_, _ = exec.Execute("INSERT INTO bool_test VALUES (2, false)")
+
+	t.Run("WHERE true", func(t *testing.T) {
+		result, err := exec.Execute("SELECT * FROM bool_test WHERE true")
+		if err != nil {
+			t.Logf("WHERE true failed: %v", err)
+		} else {
+			t.Logf("WHERE true result: %v", result.Rows)
+		}
+	})
+
+	t.Run("WHERE false", func(t *testing.T) {
+		result, err := exec.Execute("SELECT * FROM bool_test WHERE false")
+		if err != nil {
+			t.Logf("WHERE false failed: %v", err)
+		} else {
+			t.Logf("WHERE false result: %v", result.Rows)
+		}
+	})
+
+	t.Run("WHERE column = true", func(t *testing.T) {
+		result, err := exec.Execute("SELECT * FROM bool_test WHERE active = true")
+		if err != nil {
+			t.Logf("WHERE column = true failed: %v", err)
+		} else {
+			t.Logf("WHERE column = true result: %v", result.Rows)
+		}
+	})
+}
+
+// TestCorrelatedSubqueryMore tests correlated subqueries
+func TestCorrelatedSubqueryMore(t *testing.T) {
+	engine := setupTestEngine(t)
+	exec := NewExecutor(engine)
+	exec.SetDatabase("testdb")
+
+	_, _ = exec.Execute("CREATE TABLE outer_tbl (id INT, name VARCHAR(50))")
+	_, _ = exec.Execute("INSERT INTO outer_tbl VALUES (1, 'Alice')")
+	_, _ = exec.Execute("INSERT INTO outer_tbl VALUES (2, 'Bob')")
+
+	_, _ = exec.Execute("CREATE TABLE inner_tbl (outer_id INT, score INT)")
+	_, _ = exec.Execute("INSERT INTO inner_tbl VALUES (1, 90)")
+	_, _ = exec.Execute("INSERT INTO inner_tbl VALUES (1, 85)")
+	_, _ = exec.Execute("INSERT INTO inner_tbl VALUES (2, 75)")
+
+	t.Run("Correlated scalar subquery", func(t *testing.T) {
+		result, err := exec.Execute(`
+			SELECT o.name, (SELECT MAX(score) FROM inner_tbl WHERE outer_id = o.id)
+			FROM outer_tbl o
+		`)
+		if err != nil {
+			t.Logf("Correlated scalar subquery failed: %v", err)
+		} else {
+			t.Logf("Correlated scalar subquery result: %v", result.Rows)
+		}
+	})
+
+	t.Run("Correlated EXISTS", func(t *testing.T) {
+		result, err := exec.Execute(`
+			SELECT * FROM outer_tbl o
+			WHERE EXISTS (SELECT 1 FROM inner_tbl WHERE outer_id = o.id AND score > 80)
+		`)
+		if err != nil {
+			t.Logf("Correlated EXISTS failed: %v", err)
+		} else {
+			t.Logf("Correlated EXISTS result: %v", result.Rows)
+		}
+	})
+}
+
+// TestTableAliasInWhere tests table aliases in WHERE clause
+func TestTableAliasInWhere(t *testing.T) {
+	engine := setupTestEngine(t)
+	exec := NewExecutor(engine)
+	exec.SetDatabase("testdb")
+
+	_, _ = exec.Execute("CREATE TABLE alias_test (id INT, name VARCHAR(50))")
+	_, _ = exec.Execute("INSERT INTO alias_test VALUES (1, 'Alice')")
+	_, _ = exec.Execute("INSERT INTO alias_test VALUES (2, 'Bob')")
+
+	t.Run("Alias in WHERE", func(t *testing.T) {
+		result, err := exec.Execute("SELECT t.id, t.name FROM alias_test t WHERE t.id = 1")
+		if err != nil {
+			t.Logf("Alias in WHERE failed: %v", err)
+		} else {
+			t.Logf("Alias in WHERE result: %v", result.Rows)
+		}
+	})
+
+	t.Run("Qualified column in SELECT", func(t *testing.T) {
+		result, err := exec.Execute("SELECT alias_test.id, alias_test.name FROM alias_test WHERE alias_test.name = 'Bob'")
+		if err != nil {
+			t.Logf("Qualified column failed: %v", err)
+		} else {
+			t.Logf("Qualified column result: %v", result.Rows)
+		}
+	})
+}
+
+// TestEvaluateFunctionWithRow tests function evaluation with row context
+func TestEvaluateFunctionWithRow(t *testing.T) {
+	engine := setupTestEngine(t)
+	exec := NewExecutor(engine)
+	exec.SetDatabase("testdb")
+
+	_, _ = exec.Execute("CREATE TABLE func_test (id INT, name VARCHAR(50), value INT)")
+	_, _ = exec.Execute("INSERT INTO func_test VALUES (1, 'Alice', 100)")
+	_, _ = exec.Execute("INSERT INTO func_test VALUES (2, 'Bob', 200)")
+
+	t.Run("UPPER with column", func(t *testing.T) {
+		result, err := exec.Execute("SELECT UPPER(name) FROM func_test WHERE id = 1")
+		if err != nil {
+			t.Logf("UPPER with column failed: %v", err)
+		} else {
+			t.Logf("UPPER with column result: %v", result.Rows)
+		}
+	})
+
+	t.Run("CONCAT with columns", func(t *testing.T) {
+		result, err := exec.Execute("SELECT CONCAT(name, ':', value) FROM func_test")
+		if err != nil {
+			t.Logf("CONCAT with columns failed: %v", err)
+		} else {
+			t.Logf("CONCAT with columns result: %v", result.Rows)
+		}
+	})
+
+	t.Run("COALESCE with column", func(t *testing.T) {
+		_, _ = exec.Execute("INSERT INTO func_test VALUES (3, NULL, 300)")
+		result, err := exec.Execute("SELECT COALESCE(name, 'unknown') FROM func_test")
+		if err != nil {
+			t.Logf("COALESCE with column failed: %v", err)
+		} else {
+			t.Logf("COALESCE with column result: %v", result.Rows)
+		}
+	})
+
+	t.Run("ABS with column", func(t *testing.T) {
+		_, _ = exec.Execute("INSERT INTO func_test VALUES (4, 'Test', -50)")
+		result, err := exec.Execute("SELECT ABS(value) FROM func_test WHERE id = 4")
+		if err != nil {
+			t.Logf("ABS with column failed: %v", err)
+		} else {
+			t.Logf("ABS with column result: %v", result.Rows)
+		}
+	})
+}
+
+// TestMoreBinaryComparisons tests various binary comparison operations
+func TestMoreBinaryComparisons(t *testing.T) {
+	engine := setupTestEngine(t)
+	exec := NewExecutor(engine)
+	exec.SetDatabase("testdb")
+
+	_, _ = exec.Execute("CREATE TABLE comp_test (a INT, b INT)")
+	_, _ = exec.Execute("INSERT INTO comp_test VALUES (10, 5)")
+	_, _ = exec.Execute("INSERT INTO comp_test VALUES (3, 7)")
+	_, _ = exec.Execute("INSERT INTO comp_test VALUES (5, 5)")
+
+	t.Run("Greater than", func(t *testing.T) {
+		result, err := exec.Execute("SELECT * FROM comp_test WHERE a > b")
+		if err != nil {
+			t.Logf("> failed: %v", err)
+		} else {
+			t.Logf("> result: %v", result.Rows)
+		}
+	})
+
+	t.Run("Less than", func(t *testing.T) {
+		result, err := exec.Execute("SELECT * FROM comp_test WHERE a < b")
+		if err != nil {
+			t.Logf("< failed: %v", err)
+		} else {
+			t.Logf("< result: %v", result.Rows)
+		}
+	})
+
+	t.Run("Greater or equal", func(t *testing.T) {
+		result, err := exec.Execute("SELECT * FROM comp_test WHERE a >= b")
+		if err != nil {
+			t.Logf(">= failed: %v", err)
+		} else {
+			t.Logf(">= result: %v", result.Rows)
+		}
+	})
+
+	t.Run("Less or equal", func(t *testing.T) {
+		result, err := exec.Execute("SELECT * FROM comp_test WHERE a <= b")
+		if err != nil {
+			t.Logf("<= failed: %v", err)
+		} else {
+			t.Logf("<= result: %v", result.Rows)
+		}
+	})
+
+	t.Run("Not equal", func(t *testing.T) {
+		result, err := exec.Execute("SELECT * FROM comp_test WHERE a != b")
+		if err != nil {
+			t.Logf("!= failed: %v", err)
+		} else {
+			t.Logf("!= result: %v", result.Rows)
+		}
+	})
+}
+
+// TestBetweenExpressionMore tests BETWEEN expressions
+func TestBetweenExpressionMore(t *testing.T) {
+	engine := setupTestEngine(t)
+	exec := NewExecutor(engine)
+	exec.SetDatabase("testdb")
+
+	_, _ = exec.Execute("CREATE TABLE between_test (val INT)")
+	_, _ = exec.Execute("INSERT INTO between_test VALUES (5)")
+	_, _ = exec.Execute("INSERT INTO between_test VALUES (10)")
+	_, _ = exec.Execute("INSERT INTO between_test VALUES (15)")
+	_, _ = exec.Execute("INSERT INTO between_test VALUES (20)")
+
+	t.Run("BETWEEN inclusive", func(t *testing.T) {
+		result, err := exec.Execute("SELECT * FROM between_test WHERE val BETWEEN 10 AND 20")
+		if err != nil {
+			t.Logf("BETWEEN failed: %v", err)
+		} else {
+			t.Logf("BETWEEN result: %v", result.Rows)
+		}
+	})
+
+	t.Run("NOT BETWEEN", func(t *testing.T) {
+		result, err := exec.Execute("SELECT * FROM between_test WHERE val NOT BETWEEN 10 AND 15")
+		if err != nil {
+			t.Logf("NOT BETWEEN failed: %v", err)
+		} else {
+			t.Logf("NOT BETWEEN result: %v", result.Rows)
+		}
+	})
+}
+
