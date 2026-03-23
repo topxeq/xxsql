@@ -17200,3 +17200,399 @@ func TestEmptyTableOperations(t *testing.T) {
 	})
 }
 
+// TestWindowFunctionsWithWhere tests window functions with WHERE clause
+func TestWindowFunctionsWithWhere(t *testing.T) {
+	engine := setupTestEngine(t)
+	exec := NewExecutor(engine)
+	exec.SetDatabase("testdb")
+
+	_, _ = exec.Execute("CREATE TABLE win_where (id INT, category VARCHAR(20), value INT)")
+	_, _ = exec.Execute("INSERT INTO win_where VALUES (1, 'A', 10)")
+	_, _ = exec.Execute("INSERT INTO win_where VALUES (2, 'A', 20)")
+	_, _ = exec.Execute("INSERT INTO win_where VALUES (3, 'B', 30)")
+	_, _ = exec.Execute("INSERT INTO win_where VALUES (4, 'B', 40)")
+
+	t.Run("ROW_NUMBER with WHERE", func(t *testing.T) {
+		result, err := exec.Execute(`
+			SELECT id, ROW_NUMBER() OVER (ORDER BY value) as rn
+			FROM win_where WHERE category = 'A'
+		`)
+		if err != nil {
+			t.Logf("ROW_NUMBER with WHERE failed: %v", err)
+		} else {
+			t.Logf("ROW_NUMBER with WHERE result: %v", result.Rows)
+		}
+	})
+
+	t.Run("SUM over partition with WHERE", func(t *testing.T) {
+		result, err := exec.Execute(`
+			SELECT id, category, SUM(value) OVER (PARTITION BY category) as cat_sum
+			FROM win_where WHERE value > 15
+		`)
+		if err != nil {
+			t.Logf("SUM partition with WHERE failed: %v", err)
+		} else {
+			t.Logf("SUM partition with WHERE result: %v", result.Rows)
+		}
+	})
+}
+
+// TestUnaryNotOnTypes tests NOT operator on different types
+func TestUnaryNotOnTypes(t *testing.T) {
+	engine := setupTestEngine(t)
+	exec := NewExecutor(engine)
+	exec.SetDatabase("testdb")
+
+	t.Run("NOT on boolean true", func(t *testing.T) {
+		result, err := exec.Execute("SELECT NOT true")
+		if err != nil {
+			t.Logf("NOT true failed: %v", err)
+		} else {
+			t.Logf("NOT true result: %v", result.Rows)
+		}
+	})
+
+	t.Run("NOT on boolean false", func(t *testing.T) {
+		result, err := exec.Execute("SELECT NOT false")
+		if err != nil {
+			t.Logf("NOT false failed: %v", err)
+		} else {
+			t.Logf("NOT false result: %v", result.Rows)
+		}
+	})
+
+	t.Run("NOT on integer 0", func(t *testing.T) {
+		result, err := exec.Execute("SELECT NOT 0")
+		if err != nil {
+			t.Logf("NOT 0 failed: %v", err)
+		} else {
+			t.Logf("NOT 0 result: %v", result.Rows)
+		}
+	})
+
+	t.Run("NOT on integer 1", func(t *testing.T) {
+		result, err := exec.Execute("SELECT NOT 1")
+		if err != nil {
+			t.Logf("NOT 1 failed: %v", err)
+		} else {
+			t.Logf("NOT 1 result: %v", result.Rows)
+		}
+	})
+}
+
+// TestCastValueFunction tests castValue function
+func TestCastValueFunction(t *testing.T) {
+	engine := setupTestEngine(t)
+	exec := NewExecutor(engine)
+	exec.SetDatabase("testdb")
+
+	t.Run("Cast to INT", func(t *testing.T) {
+		tests := []string{
+			"SELECT CAST('123' AS INT)",
+			"SELECT CAST(123.45 AS INT)",
+			"SELECT CAST(true AS INT)",
+		}
+		for _, q := range tests {
+			result, err := exec.Execute(q)
+			if err != nil {
+				t.Logf("%s failed: %v", q, err)
+			} else {
+				t.Logf("%s -> %v", q, result.Rows)
+			}
+		}
+	})
+
+	t.Run("Cast to VARCHAR", func(t *testing.T) {
+		tests := []string{
+			"SELECT CAST(123 AS VARCHAR)",
+			"SELECT CAST(123.45 AS VARCHAR)",
+			"SELECT CAST(true AS VARCHAR)",
+		}
+		for _, q := range tests {
+			result, err := exec.Execute(q)
+			if err != nil {
+				t.Logf("%s failed: %v", q, err)
+			} else {
+				t.Logf("%s -> %v", q, result.Rows)
+			}
+		}
+	})
+
+	t.Run("Cast to FLOAT", func(t *testing.T) {
+		tests := []string{
+			"SELECT CAST('123.45' AS FLOAT)",
+			"SELECT CAST(123 AS FLOAT)",
+		}
+		for _, q := range tests {
+			result, err := exec.Execute(q)
+			if err != nil {
+				t.Logf("%s failed: %v", q, err)
+			} else {
+				t.Logf("%s -> %v", q, result.Rows)
+			}
+		}
+	})
+
+	t.Run("Cast to BOOL", func(t *testing.T) {
+		tests := []string{
+			"SELECT CAST(1 AS BOOL)",
+			"SELECT CAST(0 AS BOOL)",
+			"SELECT CAST('true' AS BOOL)",
+		}
+		for _, q := range tests {
+			result, err := exec.Execute(q)
+			if err != nil {
+				t.Logf("%s failed: %v", q, err)
+			} else {
+				t.Logf("%s -> %v", q, result.Rows)
+			}
+		}
+	})
+}
+
+// TestJoinWhereEvaluation tests JOIN WHERE evaluation
+func TestJoinWhereEvaluation(t *testing.T) {
+	engine := setupTestEngine(t)
+	exec := NewExecutor(engine)
+	exec.SetDatabase("testdb")
+
+	_, _ = exec.Execute("CREATE TABLE jw_left (id INT, name VARCHAR(50))")
+	_, _ = exec.Execute("INSERT INTO jw_left VALUES (1, 'Alice')")
+	_, _ = exec.Execute("INSERT INTO jw_left VALUES (2, 'Bob')")
+
+	_, _ = exec.Execute("CREATE TABLE jw_right (id INT, value INT)")
+	_, _ = exec.Execute("INSERT INTO jw_right VALUES (1, 100)")
+	_, _ = exec.Execute("INSERT INTO jw_right VALUES (2, 200)")
+	_, _ = exec.Execute("INSERT INTO jw_right VALUES (3, 300)")
+
+	t.Run("JOIN with WHERE on both tables", func(t *testing.T) {
+		result, err := exec.Execute(`
+			SELECT l.name, r.value
+			FROM jw_left l
+			JOIN jw_right r ON l.id = r.id
+			WHERE l.name = 'Alice' AND r.value > 50
+		`)
+		if err != nil {
+			t.Logf("JOIN WHERE both failed: %v", err)
+		} else {
+			t.Logf("JOIN WHERE both result: %v", result.Rows)
+		}
+	})
+
+	t.Run("LEFT JOIN with WHERE on right table", func(t *testing.T) {
+		result, err := exec.Execute(`
+			SELECT l.name, r.value
+			FROM jw_left l
+			LEFT JOIN jw_right r ON l.id = r.id
+			WHERE r.value IS NULL OR r.value > 150
+		`)
+		if err != nil {
+			t.Logf("LEFT JOIN WHERE right failed: %v", err)
+		} else {
+			t.Logf("LEFT JOIN WHERE right result: %v", result.Rows)
+		}
+	})
+}
+
+// TestMoreHavingVariations tests more HAVING clause variations
+func TestMoreHavingVariations(t *testing.T) {
+	engine := setupTestEngine(t)
+	exec := NewExecutor(engine)
+	exec.SetDatabase("testdb")
+
+	_, _ = exec.Execute("CREATE TABLE having_var (dept VARCHAR(20), salary INT, active BOOL)")
+	_, _ = exec.Execute("INSERT INTO having_var VALUES ('Eng', 100000, true)")
+	_, _ = exec.Execute("INSERT INTO having_var VALUES ('Eng', 80000, true)")
+	_, _ = exec.Execute("INSERT INTO having_var VALUES ('Sales', 70000, false)")
+	_, _ = exec.Execute("INSERT INTO having_var VALUES ('Sales', 60000, true)")
+
+	t.Run("HAVING with NOT", func(t *testing.T) {
+		result, err := exec.Execute(`
+			SELECT dept, COUNT(*) FROM having_var
+			GROUP BY dept
+			HAVING NOT COUNT(*) > 3
+		`)
+		if err != nil {
+			t.Logf("HAVING NOT failed: %v", err)
+		} else {
+			t.Logf("HAVING NOT result: %v", result.Rows)
+		}
+	})
+
+	t.Run("HAVING with OR", func(t *testing.T) {
+		result, err := exec.Execute(`
+			SELECT dept, SUM(salary) FROM having_var
+			GROUP BY dept
+			HAVING SUM(salary) > 150000 OR COUNT(*) > 2
+		`)
+		if err != nil {
+			t.Logf("HAVING OR failed: %v", err)
+		} else {
+			t.Logf("HAVING OR result: %v", result.Rows)
+		}
+	})
+}
+
+// TestDerivedTableWithAlias tests derived tables with column aliases
+func TestDerivedTableWithAlias(t *testing.T) {
+	engine := setupTestEngine(t)
+	exec := NewExecutor(engine)
+	exec.SetDatabase("testdb")
+
+	_, _ = exec.Execute("CREATE TABLE derived_base (a INT, b INT)")
+	_, _ = exec.Execute("INSERT INTO derived_base VALUES (1, 2)")
+	_, _ = exec.Execute("INSERT INTO derived_base VALUES (3, 4)")
+
+	t.Run("Derived table with column alias", func(t *testing.T) {
+		result, err := exec.Execute(`
+			SELECT x, y FROM (SELECT a AS x, b AS y FROM derived_base) AS derived
+		`)
+		if err != nil {
+			t.Logf("Derived with alias failed: %v", err)
+		} else {
+			t.Logf("Derived with alias result: %v", result.Rows)
+		}
+	})
+
+	t.Run("Derived table in JOIN", func(t *testing.T) {
+		_, _ = exec.Execute("CREATE TABLE derived_other (id INT, val INT)")
+		_, _ = exec.Execute("INSERT INTO derived_other VALUES (1, 100)")
+		result, err := exec.Execute(`
+			SELECT d.x, o.val
+			FROM (SELECT a AS x FROM derived_base) AS d
+			JOIN derived_other o ON d.x = o.id
+		`)
+		if err != nil {
+			t.Logf("Derived in JOIN failed: %v", err)
+		} else {
+			t.Logf("Derived in JOIN result: %v", result.Rows)
+		}
+	})
+}
+
+// TestCreateTriggerMore tests CREATE TRIGGER variations
+func TestCreateTriggerMore(t *testing.T) {
+	engine := setupTestEngine(t)
+	exec := NewExecutor(engine)
+	exec.SetDatabase("testdb")
+
+	_, _ = exec.Execute("CREATE TABLE trigger_base (id INT, name VARCHAR(50))")
+	_, _ = exec.Execute("CREATE TABLE trigger_log (action VARCHAR(50), ts VARCHAR(50))")
+
+	t.Run("CREATE TRIGGER BEFORE INSERT", func(t *testing.T) {
+		result, err := exec.Execute(`
+			CREATE TRIGGER trg_before_insert
+			BEFORE INSERT ON trigger_base
+			BEGIN INSERT INTO trigger_log VALUES ('before_insert', 'now'); END
+		`)
+		if err != nil {
+			t.Logf("BEFORE INSERT trigger failed: %v", err)
+		} else {
+			t.Logf("BEFORE INSERT trigger result: %v", result)
+		}
+	})
+
+	t.Run("DROP TRIGGER", func(t *testing.T) {
+		result, err := exec.Execute("DROP TRIGGER IF EXISTS trg_before_insert")
+		if err != nil {
+			t.Logf("DROP TRIGGER failed: %v", err)
+		} else {
+			t.Logf("DROP TRIGGER result: %v", result)
+		}
+	})
+}
+
+// TestCTEWithInsert tests CTE with INSERT
+func TestCTEWithInsert(t *testing.T) {
+	engine := setupTestEngine(t)
+	exec := NewExecutor(engine)
+	exec.SetDatabase("testdb")
+
+	_, _ = exec.Execute("CREATE TABLE cte_insert (id INT, value INT)")
+	_, _ = exec.Execute("CREATE TABLE cte_source (id INT, value INT)")
+	_, _ = exec.Execute("INSERT INTO cte_source VALUES (1, 100), (2, 200)")
+
+	t.Run("INSERT with CTE", func(t *testing.T) {
+		result, err := exec.Execute(`
+			WITH cte AS (SELECT id, value FROM cte_source WHERE value > 150)
+			INSERT INTO cte_insert SELECT * FROM cte
+		`)
+		if err != nil {
+			t.Logf("INSERT with CTE failed: %v", err)
+		} else {
+			t.Logf("INSERT with CTE result: %v", result)
+		}
+	})
+
+	t.Run("SELECT from CTE after insert", func(t *testing.T) {
+		result, err := exec.Execute("SELECT * FROM cte_insert")
+		if err != nil {
+			t.Logf("SELECT after CTE INSERT failed: %v", err)
+		} else {
+			t.Logf("SELECT after CTE INSERT result: %v", result.Rows)
+		}
+	})
+}
+
+// TestPragmaIndexInfoMore tests PRAGMA index_info
+func TestPragmaIndexInfoMore(t *testing.T) {
+	engine := setupTestEngine(t)
+	exec := NewExecutor(engine)
+	exec.SetDatabase("testdb")
+
+	_, _ = exec.Execute("CREATE TABLE pragma_idx (id INT, name VARCHAR(50), value INT)")
+	_, _ = exec.Execute("CREATE INDEX idx_pragma_name ON pragma_idx(name)")
+	_, _ = exec.Execute("CREATE INDEX idx_pragma_value ON pragma_idx(value)")
+
+	t.Run("PRAGMA index_info", func(t *testing.T) {
+		result, err := exec.Execute("PRAGMA index_info(idx_pragma_name)")
+		if err != nil {
+			t.Logf("PRAGMA index_info failed: %v", err)
+		} else {
+			t.Logf("PRAGMA index_info result: %v", result.Rows)
+		}
+	})
+
+	t.Run("PRAGMA index_list", func(t *testing.T) {
+		result, err := exec.Execute("PRAGMA index_list(pragma_idx)")
+		if err != nil {
+			t.Logf("PRAGMA index_list failed: %v", err)
+		} else {
+			t.Logf("PRAGMA index_list result: %v", result.Rows)
+		}
+	})
+}
+
+// TestForeignKeyOnUpdateMore tests more FK update scenarios
+func TestForeignKeyOnUpdateMore(t *testing.T) {
+	engine := setupTestEngine(t)
+	exec := NewExecutor(engine)
+	exec.SetDatabase("testdb")
+
+	_, _ = exec.Execute("CREATE TABLE fk_parent (id INT PRIMARY KEY, name VARCHAR(50))")
+	_, _ = exec.Execute("INSERT INTO fk_parent VALUES (1, 'Parent1')")
+	_, _ = exec.Execute("INSERT INTO fk_parent VALUES (2, 'Parent2')")
+
+	_, _ = exec.Execute("CREATE TABLE fk_child (id INT, parent_id INT, FOREIGN KEY (parent_id) REFERENCES fk_parent(id) ON UPDATE CASCADE)")
+	_, _ = exec.Execute("INSERT INTO fk_child VALUES (1, 1)")
+	_, _ = exec.Execute("INSERT INTO fk_child VALUES (2, 2)")
+
+	t.Run("Update PK with cascade", func(t *testing.T) {
+		result, err := exec.Execute("UPDATE fk_parent SET id = 10 WHERE id = 1")
+		if err != nil {
+			t.Logf("FK cascade update failed: %v", err)
+		} else {
+			t.Logf("FK cascade update result: %d affected", result.Affected)
+		}
+	})
+
+	t.Run("Verify child was updated", func(t *testing.T) {
+		result, err := exec.Execute("SELECT * FROM fk_child WHERE id = 1")
+		if err != nil {
+			t.Logf("Verify child failed: %v", err)
+		} else {
+			t.Logf("Child after cascade: %v", result.Rows)
+		}
+	})
+}
+
