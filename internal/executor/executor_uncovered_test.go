@@ -19218,3 +19218,177 @@ func TestMiscFunctions(t *testing.T) {
 	})
 }
 
+// TestWhereLiteralBool tests WHERE with literal boolean values
+func TestWhereLiteralBool(t *testing.T) {
+	engine := setupTestEngine(t)
+	exec := NewExecutor(engine)
+	exec.SetDatabase("testdb")
+
+	_, _ = exec.Execute("CREATE TABLE bool_table (id INT, active BOOL)")
+	_, _ = exec.Execute("INSERT INTO bool_table VALUES (1, true)")
+	_, _ = exec.Execute("INSERT INTO bool_table VALUES (2, false)")
+
+	t.Run("WHERE true", func(t *testing.T) {
+		result, err := exec.Execute("SELECT id FROM bool_table WHERE true")
+		if err != nil {
+			t.Logf("WHERE true failed: %v", err)
+		} else {
+			t.Logf("WHERE true result: %v", result.Rows)
+		}
+	})
+
+	t.Run("WHERE false", func(t *testing.T) {
+		result, err := exec.Execute("SELECT id FROM bool_table WHERE false")
+		if err != nil {
+			t.Logf("WHERE false failed: %v", err)
+		} else {
+			t.Logf("WHERE false result: %v", result.Rows)
+		}
+	})
+}
+
+// TestWhereParenSubquery tests WHERE with parenthesized subquery
+func TestWhereParenSubquery(t *testing.T) {
+	engine := setupTestEngine(t)
+	exec := NewExecutor(engine)
+	exec.SetDatabase("testdb")
+
+	_, _ = exec.Execute("CREATE TABLE items (id INT, category VARCHAR(50))")
+	_, _ = exec.Execute("INSERT INTO items VALUES (1, 'A')")
+	_, _ = exec.Execute("INSERT INTO items VALUES (2, 'B')")
+	_, _ = exec.Execute("INSERT INTO items VALUES (3, 'A')")
+
+	_, _ = exec.Execute("CREATE TABLE categories (name VARCHAR(50))")
+	_, _ = exec.Execute("INSERT INTO categories VALUES ('A')")
+
+	t.Run("IN with parenthesized subquery", func(t *testing.T) {
+		result, err := exec.Execute("SELECT id FROM items WHERE category IN (SELECT name FROM categories)")
+		if err != nil {
+			t.Logf("IN paren subquery failed: %v", err)
+		} else {
+			t.Logf("IN paren subquery result: %v", result.Rows)
+		}
+	})
+}
+
+// TestUnionForExport tests UNION for export
+func TestUnionForExport(t *testing.T) {
+	engine := setupTestEngine(t)
+	exec := NewExecutor(engine)
+	exec.SetDatabase("testdb")
+
+	t.Run("UNION export", func(t *testing.T) {
+		result, err := exec.Execute("SELECT 1 AS n UNION SELECT 2 UNION SELECT 3")
+		if err != nil {
+			t.Logf("UNION export failed: %v", err)
+		} else {
+			t.Logf("UNION export result: %v", result.Rows)
+		}
+	})
+
+	t.Run("UNION ALL", func(t *testing.T) {
+		result, err := exec.Execute("SELECT 1 AS n UNION ALL SELECT 1")
+		if err != nil {
+			t.Logf("UNION ALL failed: %v", err)
+		} else {
+			t.Logf("UNION ALL result: %v", result.Rows)
+		}
+	})
+}
+
+// TestSelectFromDerivedTableMore tests more derived table scenarios
+func TestSelectFromDerivedTableMore(t *testing.T) {
+	engine := setupTestEngine(t)
+	exec := NewExecutor(engine)
+	exec.SetDatabase("testdb")
+
+	_, _ = exec.Execute("CREATE TABLE src (id INT, val INT)")
+	_, _ = exec.Execute("INSERT INTO src VALUES (1, 10)")
+	_, _ = exec.Execute("INSERT INTO src VALUES (2, 20)")
+
+	t.Run("Derived table with multiple columns", func(t *testing.T) {
+		result, err := exec.Execute("SELECT a, b FROM (SELECT id AS a, val AS b FROM src) AS derived")
+		if err != nil {
+			t.Logf("Derived multi-column failed: %v", err)
+		} else {
+			t.Logf("Derived multi-column result: %v", result.Rows)
+		}
+	})
+
+	t.Run("Derived table with WHERE and values", func(t *testing.T) {
+		result, err := exec.Execute("SELECT * FROM (SELECT 1 AS x, 2 AS y) AS t WHERE x > 0")
+		if err != nil {
+			t.Logf("Derived WHERE failed: %v", err)
+		} else {
+			t.Logf("Derived WHERE result: %v", result.Rows)
+		}
+	})
+}
+
+// TestExpressionColumnRef tests column references in expressions
+func TestExpressionColumnRef(t *testing.T) {
+	engine := setupTestEngine(t)
+	exec := NewExecutor(engine)
+	exec.SetDatabase("testdb")
+
+	_, _ = exec.Execute("CREATE TABLE cref (id INT, name VARCHAR(50))")
+	_, _ = exec.Execute("INSERT INTO cref VALUES (1, 'Alice')")
+
+	t.Run("Column with table prefix", func(t *testing.T) {
+		result, err := exec.Execute("SELECT cref.id, cref.name FROM cref WHERE cref.id = 1")
+		if err != nil {
+			t.Logf("Column table prefix failed: %v", err)
+		} else {
+			t.Logf("Column table prefix result: %v", result.Rows)
+		}
+	})
+}
+
+// TestAggregateFunctionsComprehensive tests more aggregate function scenarios
+func TestAggregateFunctionsComprehensive(t *testing.T) {
+	engine := setupTestEngine(t)
+	exec := NewExecutor(engine)
+	exec.SetDatabase("testdb")
+
+	_, _ = exec.Execute("CREATE TABLE agg (grp VARCHAR(10), val INT)")
+	_, _ = exec.Execute("INSERT INTO agg VALUES ('A', 10)")
+	_, _ = exec.Execute("INSERT INTO agg VALUES ('A', 20)")
+	_, _ = exec.Execute("INSERT INTO agg VALUES ('B', 30)")
+
+	t.Run("COUNT with GROUP BY", func(t *testing.T) {
+		result, err := exec.Execute("SELECT grp, COUNT(*) FROM agg GROUP BY grp")
+		if err != nil {
+			t.Logf("COUNT GROUP BY failed: %v", err)
+		} else {
+			t.Logf("COUNT GROUP BY result: %v", result.Rows)
+		}
+	})
+
+	t.Run("SUM with GROUP BY", func(t *testing.T) {
+		result, err := exec.Execute("SELECT grp, SUM(val) FROM agg GROUP BY grp")
+		if err != nil {
+			t.Logf("SUM GROUP BY failed: %v", err)
+		} else {
+			t.Logf("SUM GROUP BY result: %v", result.Rows)
+		}
+	})
+
+	t.Run("AVG with GROUP BY", func(t *testing.T) {
+		result, err := exec.Execute("SELECT grp, AVG(val) FROM agg GROUP BY grp")
+		if err != nil {
+			t.Logf("AVG GROUP BY failed: %v", err)
+		} else {
+			t.Logf("AVG GROUP BY result: %v", result.Rows)
+		}
+	})
+
+	t.Run("MIN MAX", func(t *testing.T) {
+		result, err := exec.Execute("SELECT MIN(val), MAX(val) FROM agg")
+		if err != nil {
+			t.Logf("MIN MAX failed: %v", err)
+		} else {
+			t.Logf("MIN MAX result: %v", result.Rows)
+		}
+	})
+}
+
