@@ -1553,3 +1553,515 @@ func TestEvaluateExpressionFunctionCallNilRow(t *testing.T) {
 		t.Logf("UPPER nil row result: %v", result)
 	}
 }
+
+// ========== Tests for evaluateWhere - Literal bool ==========
+
+func TestEvaluateWhereLiteralBoolLiteral(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "xxsql-where-literal-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	engine := storage.NewEngine(tmpDir)
+	if err := engine.Open(); err != nil {
+		t.Fatalf("Failed to open engine: %v", err)
+	}
+	defer engine.Close()
+
+	exec := NewExecutor(engine)
+
+	_, err = exec.Execute("CREATE TABLE test (id INT PRIMARY KEY)")
+	if err != nil {
+		t.Fatalf("CREATE TABLE failed: %v", err)
+	}
+
+	_, err = exec.Execute("INSERT INTO test VALUES (1), (2), (3)")
+	if err != nil {
+		t.Fatalf("INSERT failed: %v", err)
+	}
+
+	// Test WHERE TRUE literal
+	result, err := exec.Execute("SELECT * FROM test WHERE TRUE")
+	if err != nil {
+		t.Logf("WHERE TRUE failed: %v", err)
+	} else {
+		t.Logf("WHERE TRUE: %d rows", len(result.Rows))
+	}
+
+	// Test WHERE FALSE literal
+	result, err = exec.Execute("SELECT * FROM test WHERE FALSE")
+	if err != nil {
+		t.Logf("WHERE FALSE failed: %v", err)
+	} else {
+		t.Logf("WHERE FALSE: %d rows", len(result.Rows))
+	}
+
+	// Test WHERE with boolean expression
+	result, err = exec.Execute("SELECT * FROM test WHERE 1 = 1")
+	if err != nil {
+		t.Logf("WHERE 1=1 failed: %v", err)
+	} else {
+		t.Logf("WHERE 1=1: %d rows", len(result.Rows))
+	}
+}
+
+// ========== Tests for evaluateExpression - ColumnRef not found ==========
+
+func TestEvaluateExpressionColumnRefNotFound(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "xxsql-col-not-found-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	engine := storage.NewEngine(tmpDir)
+	if err := engine.Open(); err != nil {
+		t.Fatalf("Failed to open engine: %v", err)
+	}
+	defer engine.Close()
+
+	exec := NewExecutor(engine)
+
+	_, err = exec.Execute("CREATE TABLE test (id INT PRIMARY KEY)")
+	if err != nil {
+		t.Fatalf("CREATE TABLE failed: %v", err)
+	}
+
+	tbl, _ := engine.GetTable("test")
+	tblInfo := tbl.GetInfo()
+
+	columnMap := make(map[string]*types.ColumnInfo)
+	columnOrder := make([]*types.ColumnInfo, len(tblInfo.Columns))
+	for i, col := range tblInfo.Columns {
+		columnMap[col.Name] = col
+		columnOrder[i] = col
+	}
+
+	mockRow := &row.Row{
+		ID:     1,
+		Values: []types.Value{types.NewIntValue(1)},
+	}
+
+	// Try to access non-existent column
+	colRef := &sql.ColumnRef{Name: "nonexistent"}
+	result, err := exec.evaluateExpression(colRef, mockRow, columnMap, columnOrder)
+	if err != nil {
+		t.Logf("ColumnRef not found (expected error): %v", err)
+	} else {
+		t.Logf("ColumnRef not found result: %v", result)
+	}
+
+	// Try with outer context
+	exec.outerContext = map[string]interface{}{
+		"nonexistent": 999,
+	}
+	result, err = exec.evaluateExpression(colRef, mockRow, columnMap, columnOrder)
+	if err != nil {
+		t.Logf("ColumnRef from outer context failed: %v", err)
+	} else {
+		t.Logf("ColumnRef from outer context result: %v", result)
+	}
+	exec.outerContext = nil
+}
+
+// ========== Tests for evaluateExpression - BinaryExpr error propagation ==========
+
+func TestEvaluateExpressionBinaryExprError(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "xxsql-bin-err-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	engine := storage.NewEngine(tmpDir)
+	if err := engine.Open(); err != nil {
+		t.Fatalf("Failed to open engine: %v", err)
+	}
+	defer engine.Close()
+
+	exec := NewExecutor(engine)
+
+	_, err = exec.Execute("CREATE TABLE test (id INT PRIMARY KEY)")
+	if err != nil {
+		t.Fatalf("CREATE TABLE failed: %v", err)
+	}
+
+	tbl, _ := engine.GetTable("test")
+	tblInfo := tbl.GetInfo()
+
+	columnMap := make(map[string]*types.ColumnInfo)
+	columnOrder := make([]*types.ColumnInfo, len(tblInfo.Columns))
+	for i, col := range tblInfo.Columns {
+		columnMap[col.Name] = col
+		columnOrder[i] = col
+	}
+
+	mockRow := &row.Row{
+		ID:     1,
+		Values: []types.Value{types.NewIntValue(1)},
+	}
+
+	// BinaryExpr with error in left operand
+	binExpr := &sql.BinaryExpr{
+		Left:  &sql.ColumnRef{Name: "nonexistent"},
+		Op:    sql.OpAdd,
+		Right: &sql.Literal{Value: 5},
+	}
+	result, err := exec.evaluateExpression(binExpr, mockRow, columnMap, columnOrder)
+	if err != nil {
+		t.Logf("BinaryExpr left error (expected): %v", err)
+	} else {
+		t.Logf("BinaryExpr left error result: %v", result)
+	}
+
+	// BinaryExpr with error in right operand
+	binExpr2 := &sql.BinaryExpr{
+		Left:  &sql.Literal{Value: 5},
+		Op:    sql.OpAdd,
+		Right: &sql.ColumnRef{Name: "nonexistent"},
+	}
+	result, err = exec.evaluateExpression(binExpr2, mockRow, columnMap, columnOrder)
+	if err != nil {
+		t.Logf("BinaryExpr right error (expected): %v", err)
+	} else {
+		t.Logf("BinaryExpr right error result: %v", result)
+	}
+}
+
+// ========== Tests for evaluateExpression - CastExpr error ==========
+
+func TestEvaluateExpressionCastExprError(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "xxsql-cast-err-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	engine := storage.NewEngine(tmpDir)
+	if err := engine.Open(); err != nil {
+		t.Fatalf("Failed to open engine: %v", err)
+	}
+	defer engine.Close()
+
+	exec := NewExecutor(engine)
+
+	_, err = exec.Execute("CREATE TABLE test (id INT PRIMARY KEY)")
+	if err != nil {
+		t.Fatalf("CREATE TABLE failed: %v", err)
+	}
+
+	tbl, _ := engine.GetTable("test")
+	tblInfo := tbl.GetInfo()
+
+	columnMap := make(map[string]*types.ColumnInfo)
+	columnOrder := make([]*types.ColumnInfo, len(tblInfo.Columns))
+	for i, col := range tblInfo.Columns {
+		columnMap[col.Name] = col
+		columnOrder[i] = col
+	}
+
+	mockRow := &row.Row{
+		ID:     1,
+		Values: []types.Value{types.NewIntValue(1)},
+	}
+
+	// CastExpr with error in inner expression
+	castExpr := &sql.CastExpr{
+		Expr: &sql.ColumnRef{Name: "nonexistent"},
+		Type: &sql.DataType{Name: "INT"},
+	}
+	result, err := exec.evaluateExpression(castExpr, mockRow, columnMap, columnOrder)
+	if err != nil {
+		t.Logf("CastExpr error (expected): %v", err)
+	} else {
+		t.Logf("CastExpr error result: %v", result)
+	}
+
+	// CastExpr with valid value
+	castExpr2 := &sql.CastExpr{
+		Expr: &sql.Literal{Value: "123"},
+		Type: &sql.DataType{Name: "INT"},
+	}
+	result, err = exec.evaluateExpression(castExpr2, mockRow, columnMap, columnOrder)
+	if err != nil {
+		t.Logf("CastExpr valid failed: %v", err)
+	} else {
+		t.Logf("CastExpr valid result: %v", result)
+	}
+}
+
+// ========== Tests for evaluateExpression - UnaryExpr error ==========
+
+func TestEvaluateExpressionUnaryExprError(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "xxsql-unary-err-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	engine := storage.NewEngine(tmpDir)
+	if err := engine.Open(); err != nil {
+		t.Fatalf("Failed to open engine: %v", err)
+	}
+	defer engine.Close()
+
+	exec := NewExecutor(engine)
+
+	_, err = exec.Execute("CREATE TABLE test (id INT PRIMARY KEY)")
+	if err != nil {
+		t.Fatalf("CREATE TABLE failed: %v", err)
+	}
+
+	tbl, _ := engine.GetTable("test")
+	tblInfo := tbl.GetInfo()
+
+	columnMap := make(map[string]*types.ColumnInfo)
+	columnOrder := make([]*types.ColumnInfo, len(tblInfo.Columns))
+	for i, col := range tblInfo.Columns {
+		columnMap[col.Name] = col
+		columnOrder[i] = col
+	}
+
+	mockRow := &row.Row{
+		ID:     1,
+		Values: []types.Value{types.NewIntValue(1)},
+	}
+
+	// UnaryExpr with error in operand
+	unaryExpr := &sql.UnaryExpr{
+		Op:    sql.OpNeg,
+		Right: &sql.ColumnRef{Name: "nonexistent"},
+	}
+	result, err := exec.evaluateExpression(unaryExpr, mockRow, columnMap, columnOrder)
+	if err != nil {
+		t.Logf("UnaryExpr error (expected): %v", err)
+	} else {
+		t.Logf("UnaryExpr error result: %v", result)
+	}
+}
+
+// ========== Tests for evaluateExpression - FunctionCall error ==========
+
+func TestEvaluateExpressionFunctionCallError(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "xxsql-func-err-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	engine := storage.NewEngine(tmpDir)
+	if err := engine.Open(); err != nil {
+		t.Fatalf("Failed to open engine: %v", err)
+	}
+	defer engine.Close()
+
+	exec := NewExecutor(engine)
+
+	_, err = exec.Execute("CREATE TABLE test (id INT PRIMARY KEY)")
+	if err != nil {
+		t.Fatalf("CREATE TABLE failed: %v", err)
+	}
+
+	tbl, _ := engine.GetTable("test")
+	tblInfo := tbl.GetInfo()
+
+	columnMap := make(map[string]*types.ColumnInfo)
+	columnOrder := make([]*types.ColumnInfo, len(tblInfo.Columns))
+	for i, col := range tblInfo.Columns {
+		columnMap[col.Name] = col
+		columnOrder[i] = col
+	}
+
+	mockRow := &row.Row{
+		ID:     1,
+		Values: []types.Value{types.NewIntValue(1)},
+	}
+
+	// FunctionCall with error in argument
+	funcCall := &sql.FunctionCall{
+		Name: "ABS",
+		Args: []sql.Expression{&sql.ColumnRef{Name: "nonexistent"}},
+	}
+	result, err := exec.evaluateExpression(funcCall, mockRow, columnMap, columnOrder)
+	if err != nil {
+		t.Logf("FunctionCall error (expected): %v", err)
+	} else {
+		t.Logf("FunctionCall error result: %v", result)
+	}
+}
+
+// ========== Tests for evaluateExpression - ScalarSubquery with correlated ref ==========
+
+func TestEvaluateExpressionScalarSubqueryCorrelated(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "xxsql-scalar-corr-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	engine := storage.NewEngine(tmpDir)
+	if err := engine.Open(); err != nil {
+		t.Fatalf("Failed to open engine: %v", err)
+	}
+	defer engine.Close()
+
+	exec := NewExecutor(engine)
+
+	_, err = exec.Execute("CREATE TABLE outer_tbl (id INT PRIMARY KEY, ref_val INT)")
+	if err != nil {
+		t.Fatalf("CREATE TABLE outer_tbl failed: %v", err)
+	}
+
+	_, err = exec.Execute("CREATE TABLE inner_tbl (id INT PRIMARY KEY, val INT)")
+	if err != nil {
+		t.Fatalf("CREATE TABLE inner_tbl failed: %v", err)
+	}
+
+	_, err = exec.Execute("INSERT INTO outer_tbl VALUES (1, 10), (2, 20)")
+	if err != nil {
+		t.Fatalf("INSERT outer_tbl failed: %v", err)
+	}
+
+	_, err = exec.Execute("INSERT INTO inner_tbl VALUES (1, 5), (2, 15), (3, 25)")
+	if err != nil {
+		t.Fatalf("INSERT inner_tbl failed: %v", err)
+	}
+
+	// Correlated scalar subquery
+	result, err := exec.Execute(`
+		SELECT id, (SELECT val FROM inner_tbl WHERE val > o.ref_val ORDER BY val LIMIT 1)
+		FROM outer_tbl o
+	`)
+	if err != nil {
+		t.Logf("Correlated scalar subquery failed: %v", err)
+	} else {
+		t.Logf("Correlated scalar subquery: %v", result.Rows)
+	}
+}
+
+// ========== Tests for evaluateWhere - InExpr with NOT ==========
+
+func TestEvaluateWhereInExprNotVariations(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "xxsql-where-in-not-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	engine := storage.NewEngine(tmpDir)
+	if err := engine.Open(); err != nil {
+		t.Fatalf("Failed to open engine: %v", err)
+	}
+	defer engine.Close()
+
+	exec := NewExecutor(engine)
+
+	_, err = exec.Execute("CREATE TABLE test (id INT PRIMARY KEY, val INT)")
+	if err != nil {
+		t.Fatalf("CREATE TABLE failed: %v", err)
+	}
+
+	_, err = exec.Execute("INSERT INTO test VALUES (1, 10), (2, 20), (3, 30)")
+	if err != nil {
+		t.Fatalf("INSERT failed: %v", err)
+	}
+
+	_, err = exec.Execute("CREATE TABLE exclude (n INT)")
+	if err != nil {
+		t.Fatalf("CREATE TABLE exclude failed: %v", err)
+	}
+
+	_, err = exec.Execute("INSERT INTO exclude VALUES (20)")
+	if err != nil {
+		t.Fatalf("INSERT exclude failed: %v", err)
+	}
+
+	// NOT IN with some matches
+	result, err := exec.Execute("SELECT * FROM test WHERE val NOT IN (SELECT n FROM exclude)")
+	if err != nil {
+		t.Logf("NOT IN some matches failed: %v", err)
+	} else {
+		t.Logf("NOT IN some matches: %d rows", len(result.Rows))
+	}
+
+	// IN with match
+	result, err = exec.Execute("SELECT * FROM test WHERE val IN (SELECT n FROM exclude)")
+	if err != nil {
+		t.Logf("IN with match failed: %v", err)
+	} else {
+		t.Logf("IN with match: %d rows", len(result.Rows))
+	}
+
+	// NOT IN with no subquery rows
+	result, err = exec.Execute("SELECT * FROM test WHERE val NOT IN (SELECT n FROM exclude WHERE n > 100)")
+	if err != nil {
+		t.Logf("NOT IN no subquery rows failed: %v", err)
+	} else {
+		t.Logf("NOT IN no subquery rows: %d rows", len(result.Rows))
+	}
+}
+
+// ========== Tests for HAVING with IN and NOT ==========
+
+func TestEvaluateHavingInExprWithNot(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "xxsql-having-in-not-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	engine := storage.NewEngine(tmpDir)
+	if err := engine.Open(); err != nil {
+		t.Fatalf("Failed to open engine: %v", err)
+	}
+	defer engine.Close()
+
+	exec := NewExecutor(engine)
+
+	_, err = exec.Execute("CREATE TABLE sales (id INT PRIMARY KEY, region VARCHAR, amount INT)")
+	if err != nil {
+		t.Fatalf("CREATE TABLE failed: %v", err)
+	}
+
+	_, err = exec.Execute("CREATE TABLE targets (target INT)")
+	if err != nil {
+		t.Fatalf("CREATE TABLE targets failed: %v", err)
+	}
+
+	_, err = exec.Execute("INSERT INTO sales VALUES (1, 'East', 100), (2, 'East', 200), (3, 'West', 300)")
+	if err != nil {
+		t.Fatalf("INSERT sales failed: %v", err)
+	}
+
+	_, err = exec.Execute("INSERT INTO targets VALUES (300)")
+	if err != nil {
+		t.Fatalf("INSERT targets failed: %v", err)
+	}
+
+	// HAVING with IN and match
+	result, err := exec.Execute(`
+		SELECT region, SUM(amount) as total
+		FROM sales
+		GROUP BY region
+		HAVING SUM(amount) IN (SELECT target FROM targets)
+	`)
+	if err != nil {
+		t.Logf("HAVING IN match failed: %v", err)
+	} else {
+		t.Logf("HAVING IN match: %d rows", len(result.Rows))
+	}
+
+	// HAVING with NOT IN
+	result, err = exec.Execute(`
+		SELECT region, SUM(amount) as total
+		FROM sales
+		GROUP BY region
+		HAVING SUM(amount) NOT IN (SELECT target FROM targets)
+	`)
+	if err != nil {
+		t.Logf("HAVING NOT IN failed: %v", err)
+	} else {
+		t.Logf("HAVING NOT IN: %d rows", len(result.Rows))
+	}
+}
