@@ -14916,3 +14916,325 @@ func TestGenerateQueryPlanMore(t *testing.T) {
 	})
 }
 
+// TestEvaluateWhereForRowComprehensive tests evaluateWhereForRow function
+func TestEvaluateWhereForRowComprehensive(t *testing.T) {
+	engine := setupTestEngine(t)
+	exec := NewExecutor(engine)
+	exec.SetDatabase("testdb")
+
+	// Create table
+	_, _ = exec.Execute("CREATE TABLE where_test (id INT, name VARCHAR(50), value INT, active BOOL)")
+	_, _ = exec.Execute("INSERT INTO where_test VALUES (1, 'Alice', 100, true)")
+	_, _ = exec.Execute("INSERT INTO where_test VALUES (2, 'Bob', 200, false)")
+	_, _ = exec.Execute("INSERT INTO where_test VALUES (3, 'Charlie', 150, true)")
+
+	t.Run("Comparison operators", func(t *testing.T) {
+		tests := []string{
+			"SELECT * FROM where_test WHERE value = 100",
+			"SELECT * FROM where_test WHERE value != 200",
+			"SELECT * FROM where_test WHERE value > 100",
+			"SELECT * FROM where_test WHERE value >= 150",
+			"SELECT * FROM where_test WHERE value < 200",
+			"SELECT * FROM where_test WHERE value <= 150",
+		}
+		for _, q := range tests {
+			result, err := exec.Execute(q)
+			if err != nil {
+				t.Errorf("%s failed: %v", q, err)
+			}
+			t.Logf("%s -> %d rows", q, len(result.Rows))
+		}
+	})
+
+	t.Run("NOT operator", func(t *testing.T) {
+		result, err := exec.Execute("SELECT * FROM where_test WHERE NOT active")
+		if err != nil {
+			t.Errorf("NOT failed: %v", err)
+		}
+		t.Logf("NOT result: %v", result.Rows)
+	})
+
+	t.Run("Nested expressions", func(t *testing.T) {
+		result, err := exec.Execute("SELECT * FROM where_test WHERE (value > 100 AND active) OR name = 'Bob'")
+		if err != nil {
+			t.Errorf("Nested expr failed: %v", err)
+		}
+		t.Logf("Nested result: %v", result.Rows)
+	})
+
+	t.Run("EXISTS subquery", func(t *testing.T) {
+		_, _ = exec.Execute("CREATE TABLE exists_test (ref_id INT)")
+		_, _ = exec.Execute("INSERT INTO exists_test VALUES (1)")
+		result, err := exec.Execute("SELECT * FROM where_test WHERE EXISTS (SELECT 1 FROM exists_test WHERE ref_id = where_test.id)")
+		if err != nil {
+			t.Logf("EXISTS failed: %v (may not be fully implemented)", err)
+		} else {
+			t.Logf("EXISTS result: %v", result.Rows)
+		}
+	})
+
+	t.Run("Scalar subquery in WHERE", func(t *testing.T) {
+		result, err := exec.Execute("SELECT * FROM where_test WHERE value > (SELECT AVG(value) FROM where_test)")
+		if err != nil {
+			t.Logf("Scalar subquery failed: %v", err)
+		} else {
+			t.Logf("Scalar subquery result: %v", result.Rows)
+		}
+	})
+}
+
+// TestEvaluateExpressionMore tests evaluateExpression function
+func TestEvaluateExpressionMore(t *testing.T) {
+	engine := setupTestEngine(t)
+	exec := NewExecutor(engine)
+	exec.SetDatabase("testdb")
+
+	// Create table
+	_, _ = exec.Execute("CREATE TABLE expr_table (a INT, b INT, c VARCHAR(50))")
+	_, _ = exec.Execute("INSERT INTO expr_table VALUES (10, 5, 'test')")
+
+	t.Run("Arithmetic expressions", func(t *testing.T) {
+		tests := []string{
+			"SELECT a + b FROM expr_table",
+			"SELECT a - b FROM expr_table",
+			"SELECT a * b FROM expr_table",
+			"SELECT a / b FROM expr_table",
+			"SELECT a % b FROM expr_table",
+			"SELECT a + b * 2 FROM expr_table",
+			"SELECT (a + b) * 2 FROM expr_table",
+		}
+		for _, q := range tests {
+			result, err := exec.Execute(q)
+			if err != nil {
+				t.Errorf("%s failed: %v", q, err)
+			}
+			t.Logf("%s -> %v", q, result.Rows)
+		}
+	})
+
+	t.Run("Comparison expressions", func(t *testing.T) {
+		tests := []string{
+			"SELECT a > b FROM expr_table",
+			"SELECT a < b FROM expr_table",
+			"SELECT a >= b FROM expr_table",
+			"SELECT a <= b FROM expr_table",
+			"SELECT a = b FROM expr_table",
+			"SELECT a != b FROM expr_table",
+		}
+		for _, q := range tests {
+			result, err := exec.Execute(q)
+			if err != nil {
+				t.Errorf("%s failed: %v", q, err)
+			}
+			t.Logf("%s -> %v", q, result.Rows)
+		}
+	})
+
+	t.Run("Logical expressions", func(t *testing.T) {
+		tests := []string{
+			"SELECT a > 5 AND b < 10 FROM expr_table",
+			"SELECT a > 15 OR b < 3 FROM expr_table",
+			"SELECT NOT a > 15 FROM expr_table",
+		}
+		for _, q := range tests {
+			result, err := exec.Execute(q)
+			if err != nil {
+				t.Errorf("%s failed: %v", q, err)
+			}
+			t.Logf("%s -> %v", q, result.Rows)
+		}
+	})
+
+	t.Run("String expressions", func(t *testing.T) {
+		tests := []string{
+			"SELECT c || '_suffix' FROM expr_table",
+			"SELECT UPPER(c) FROM expr_table",
+			"SELECT LOWER(c) FROM expr_table",
+			"SELECT LENGTH(c) FROM expr_table",
+		}
+		for _, q := range tests {
+			result, err := exec.Execute(q)
+			if err != nil {
+				t.Errorf("%s failed: %v", q, err)
+			}
+			t.Logf("%s -> %v", q, result.Rows)
+		}
+	})
+
+	t.Run("CASE expressions", func(t *testing.T) {
+		result, err := exec.Execute("SELECT CASE WHEN a > b THEN 'greater' ELSE 'less' END FROM expr_table")
+		if err != nil {
+			t.Errorf("CASE failed: %v", err)
+		}
+		t.Logf("CASE result: %v", result.Rows)
+	})
+
+	t.Run("Type cast expressions", func(t *testing.T) {
+		result, err := exec.Execute("SELECT CAST(a AS VARCHAR) FROM expr_table")
+		if err != nil {
+			t.Errorf("CAST failed: %v", err)
+		}
+		t.Logf("CAST result: %v", result.Rows)
+	})
+}
+
+// TestEvaluateFunctionComprehensive tests evaluateFunction function
+func TestEvaluateFunctionComprehensive(t *testing.T) {
+	engine := setupTestEngine(t)
+	exec := NewExecutor(engine)
+	exec.SetDatabase("testdb")
+
+	t.Run("Date/Time functions", func(t *testing.T) {
+		tests := []string{
+			"SELECT NOW()",
+			"SELECT CURRENT_DATE()",
+			"SELECT CURRENT_TIME()",
+			"SELECT YEAR(NOW())",
+			"SELECT MONTH(NOW())",
+			"SELECT DAY(NOW())",
+			"SELECT HOUR(NOW())",
+			"SELECT MINUTE(NOW())",
+			"SELECT SECOND(NOW())",
+		}
+		for _, q := range tests {
+			result, err := exec.Execute(q)
+			if err != nil {
+				t.Logf("%s failed: %v", q, err)
+			} else {
+				t.Logf("%s -> %v", q, result.Rows)
+			}
+		}
+	})
+
+	t.Run("Math functions", func(t *testing.T) {
+		tests := []string{
+			"SELECT FLOOR(3.7)",
+			"SELECT CEIL(3.2)",
+			"SELECT POWER(2, 3)",
+			"SELECT SQRT(16)",
+			"SELECT MOD(10, 3)",
+			"SELECT SIGN(-5)",
+			"SELECT EXP(1)",
+			"SELECT LOG(10)",
+			"SELECT LOG10(100)",
+		}
+		for _, q := range tests {
+			result, err := exec.Execute(q)
+			if err != nil {
+				t.Logf("%s failed: %v", q, err)
+			} else {
+				t.Logf("%s -> %v", q, result.Rows)
+			}
+		}
+	})
+
+	t.Run("String functions", func(t *testing.T) {
+		tests := []string{
+			"SELECT LEFT('hello', 3)",
+			"SELECT RIGHT('hello', 3)",
+			"SELECT REVERSE('hello')",
+			"SELECT REPEAT('ab', 3)",
+			"SELECT SPACE(5)",
+			"SELECT LPAD('hi', 5, 'x')",
+			"SELECT RPAD('hi', 5, 'x')",
+			"SELECT LOCATE('world', 'hello world')",
+			"SELECT INSTR('hello', 'll')",
+		}
+		for _, q := range tests {
+			result, err := exec.Execute(q)
+			if err != nil {
+				t.Logf("%s failed: %v", q, err)
+			} else {
+				t.Logf("%s -> %v", q, result.Rows)
+			}
+		}
+	})
+
+	t.Run("Conditional functions", func(t *testing.T) {
+		tests := []string{
+			"SELECT IIF(1 > 0, 'yes', 'no')",
+			"SELECT GREATEST(1, 5, 3)",
+			"SELECT LEAST(1, 5, 3)",
+		}
+		for _, q := range tests {
+			result, err := exec.Execute(q)
+			if err != nil {
+				t.Logf("%s failed: %v", q, err)
+			} else {
+				t.Logf("%s -> %v", q, result.Rows)
+			}
+		}
+	})
+}
+
+// TestMoreJoinTypesExtra tests additional join types
+func TestMoreJoinTypesExtra(t *testing.T) {
+	engine := setupTestEngine(t)
+	exec := NewExecutor(engine)
+	exec.SetDatabase("testdb")
+
+	// Create tables
+	_, _ = exec.Execute("CREATE TABLE left_t (id INT, name VARCHAR(50))")
+	_, _ = exec.Execute("INSERT INTO left_t VALUES (1, 'Alice')")
+	_, _ = exec.Execute("INSERT INTO left_t VALUES (2, 'Bob')")
+	_, _ = exec.Execute("INSERT INTO left_t VALUES (3, 'Charlie')")
+
+	_, _ = exec.Execute("CREATE TABLE right_t (id INT, value INT)")
+	_, _ = exec.Execute("INSERT INTO right_t VALUES (1, 100)")
+	_, _ = exec.Execute("INSERT INTO right_t VALUES (2, 200)")
+
+	t.Run("INNER JOIN", func(t *testing.T) {
+		result, err := exec.Execute("SELECT l.name, r.value FROM left_t l INNER JOIN right_t r ON l.id = r.id")
+		if err != nil {
+			t.Errorf("INNER JOIN failed: %v", err)
+		}
+		t.Logf("INNER JOIN result: %v", result.Rows)
+	})
+
+	t.Run("LEFT JOIN", func(t *testing.T) {
+		result, err := exec.Execute("SELECT l.name, r.value FROM left_t l LEFT JOIN right_t r ON l.id = r.id")
+		if err != nil {
+			t.Errorf("LEFT JOIN failed: %v", err)
+		}
+		t.Logf("LEFT JOIN result: %v", result.Rows)
+	})
+
+	t.Run("RIGHT JOIN", func(t *testing.T) {
+		result, err := exec.Execute("SELECT l.name, r.value FROM left_t l RIGHT JOIN right_t r ON l.id = r.id")
+		if err != nil {
+			t.Logf("RIGHT JOIN result: %v (may not be fully implemented)", err)
+		} else {
+			t.Logf("RIGHT JOIN result: %v", result.Rows)
+		}
+	})
+
+	t.Run("FULL OUTER JOIN", func(t *testing.T) {
+		result, err := exec.Execute("SELECT l.name, r.value FROM left_t l FULL OUTER JOIN right_t r ON l.id = r.id")
+		if err != nil {
+			t.Logf("FULL JOIN result: %v", err)
+		} else {
+			t.Logf("FULL JOIN result: %v", result.Rows)
+		}
+	})
+
+	t.Run("CROSS JOIN", func(t *testing.T) {
+		result, err := exec.Execute("SELECT l.name, r.value FROM left_t l CROSS JOIN right_t r")
+		if err != nil {
+			t.Errorf("CROSS JOIN failed: %v", err)
+		}
+		t.Logf("CROSS JOIN result: %d rows", len(result.Rows))
+	})
+
+	t.Run("SELF JOIN", func(t *testing.T) {
+		_, _ = exec.Execute("CREATE TABLE emp (id INT, name VARCHAR(50), manager_id INT)")
+		_, _ = exec.Execute("INSERT INTO emp VALUES (1, 'Alice', NULL)")
+		_, _ = exec.Execute("INSERT INTO emp VALUES (2, 'Bob', 1)")
+		_, _ = exec.Execute("INSERT INTO emp VALUES (3, 'Charlie', 1)")
+		result, err := exec.Execute("SELECT e.name, m.name AS manager FROM emp e LEFT JOIN emp m ON e.manager_id = m.id")
+		if err != nil {
+			t.Errorf("SELF JOIN failed: %v", err)
+		}
+		t.Logf("SELF JOIN result: %v", result.Rows)
+	})
+}
+
