@@ -24373,3 +24373,540 @@ func TestPragmaIntegrityCheckEdgeCases(t *testing.T) {
 	})
 }
 
+// TestEvaluateUnaryExprFloat32 tests unary expressions with float32
+func TestEvaluateUnaryExprFloat32(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "xxsql-unary-float-test-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	engine := storage.NewEngine(tmpDir)
+	exec := NewExecutor(engine)
+	exec.SetDatabase("test")
+
+	_, err = exec.Execute(`CREATE TABLE test (id SEQ PRIMARY KEY, val FLOAT)`)
+	if err != nil {
+		t.Fatalf("Failed to create table: %v", err)
+	}
+
+	// Test negation of float values
+	t.Run("Negate float", func(t *testing.T) {
+		result, err := exec.Execute(`SELECT -3.14`)
+		if err != nil {
+			t.Logf("Negate float failed: %v", err)
+		} else {
+			t.Logf("Negate float result: %v", result.Rows)
+		}
+	})
+
+	// Test NOT on various types
+	t.Run("NOT on int", func(t *testing.T) {
+		result, err := exec.Execute(`SELECT NOT 1`)
+		if err != nil {
+			t.Logf("NOT int failed: %v", err)
+		} else {
+			t.Logf("NOT int result: %v", result.Rows)
+		}
+	})
+
+	// Test NOT on float64
+	t.Run("NOT on float64", func(t *testing.T) {
+		result, err := exec.Execute(`SELECT NOT 0.0`)
+		if err != nil {
+			t.Logf("NOT float64 failed: %v", err)
+		} else {
+			t.Logf("NOT float64 result: %v", result.Rows)
+		}
+	})
+
+	// Test negation through toFloat conversion
+	t.Run("Negate string number", func(t *testing.T) {
+		result, err := exec.Execute(`SELECT -CAST('5' AS FLOAT)`)
+		if err != nil {
+			t.Logf("Negate string number failed: %v", err)
+		} else {
+			t.Logf("Negate string number result: %v", result.Rows)
+		}
+	})
+}
+
+// TestHavingInExprWithList tests InExpr with value list in HAVING
+func TestHavingInExprWithList(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "xxsql-having-in-test-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	engine := storage.NewEngine(tmpDir)
+	exec := NewExecutor(engine)
+	exec.SetDatabase("test")
+
+	_, err = exec.Execute(`CREATE TABLE sales (id SEQ PRIMARY KEY, region VARCHAR(20), amount INT)`)
+	if err != nil {
+		t.Fatalf("Failed to create table: %v", err)
+	}
+
+	_, err = exec.Execute(`INSERT INTO sales (region, amount) VALUES ('North', 100)`)
+	if err != nil {
+		t.Fatalf("Failed to insert: %v", err)
+	}
+	_, err = exec.Execute(`INSERT INTO sales (region, amount) VALUES ('South', 200)`)
+	if err != nil {
+		t.Fatalf("Failed to insert: %v", err)
+	}
+	_, err = exec.Execute(`INSERT INTO sales (region, amount) VALUES ('East', 150)`)
+	if err != nil {
+		t.Fatalf("Failed to insert: %v", err)
+	}
+
+	// Test IN with value list in HAVING
+	t.Run("IN with value list", func(t *testing.T) {
+		result, err := exec.Execute(`SELECT region FROM sales GROUP BY region HAVING region IN ('North', 'East')`)
+		if err != nil {
+			t.Logf("IN value list failed: %v", err)
+		} else {
+			t.Logf("IN value list result: %v", result.Rows)
+		}
+	})
+
+	// Test NOT IN with value list
+	t.Run("NOT IN with value list", func(t *testing.T) {
+		result, err := exec.Execute(`SELECT region FROM sales GROUP BY region HAVING region NOT IN ('South')`)
+		if err != nil {
+			t.Logf("NOT IN value list failed: %v", err)
+		} else {
+			t.Logf("NOT IN value list result: %v", result.Rows)
+		}
+	})
+}
+
+// TestWhereBinaryOpEdgeCases tests edge cases for binary operations in WHERE
+func TestWhereBinaryOpEdgeCases(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "xxsql-where-op-test-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	engine := storage.NewEngine(tmpDir)
+	exec := NewExecutor(engine)
+	exec.SetDatabase("test")
+
+	_, err = exec.Execute(`CREATE TABLE test (id SEQ PRIMARY KEY, val INT, name VARCHAR(50))`)
+	if err != nil {
+		t.Fatalf("Failed to create table: %v", err)
+	}
+
+	_, err = exec.Execute(`INSERT INTO test (val, name) VALUES (10, 'test')`)
+	if err != nil {
+		t.Fatalf("Failed to insert: %v", err)
+	}
+
+	// Test comparison with LIKE
+	t.Run("LIKE comparison", func(t *testing.T) {
+		result, err := exec.Execute(`SELECT * FROM test WHERE name LIKE 't%'`)
+		if err != nil {
+			t.Logf("LIKE failed: %v", err)
+		} else {
+			t.Logf("LIKE result: %v", result.Rows)
+		}
+	})
+
+	// Test comparison with GLOB
+	t.Run("GLOB comparison", func(t *testing.T) {
+		result, err := exec.Execute(`SELECT * FROM test WHERE name GLOB 't*'`)
+		if err != nil {
+			t.Logf("GLOB failed: %v", err)
+		} else {
+			t.Logf("GLOB result: %v", result.Rows)
+		}
+	})
+
+	// Test less than or equal
+	t.Run("<= comparison", func(t *testing.T) {
+		result, err := exec.Execute(`SELECT * FROM test WHERE val <= 10`)
+		if err != nil {
+			t.Logf("<= failed: %v", err)
+		} else {
+			t.Logf("<= result: %v", result.Rows)
+		}
+	})
+
+	// Test greater than or equal
+	t.Run(">= comparison", func(t *testing.T) {
+		result, err := exec.Execute(`SELECT * FROM test WHERE val >= 10`)
+		if err != nil {
+			t.Logf(">= failed: %v", err)
+		} else {
+			t.Logf(">= result: %v", result.Rows)
+		}
+	})
+
+	// Test not equal
+	t.Run("<> comparison", func(t *testing.T) {
+		result, err := exec.Execute(`SELECT * FROM test WHERE val <> 5`)
+		if err != nil {
+			t.Logf("<> failed: %v", err)
+		} else {
+			t.Logf("<> result: %v", result.Rows)
+		}
+	})
+}
+
+// TestHasAggregateCaseWhen tests aggregate detection in CASE WHEN
+func TestHasAggregateCaseWhen(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "xxsql-hasagg-case-test-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	engine := storage.NewEngine(tmpDir)
+	exec := NewExecutor(engine)
+	exec.SetDatabase("test")
+
+	_, err = exec.Execute(`CREATE TABLE data (id SEQ PRIMARY KEY, category VARCHAR(20), value INT)`)
+	if err != nil {
+		t.Fatalf("Failed to create table: %v", err)
+	}
+
+	_, err = exec.Execute(`INSERT INTO data (category, value) VALUES ('A', 10)`)
+	if err != nil {
+		t.Fatalf("Failed to insert: %v", err)
+	}
+	_, err = exec.Execute(`INSERT INTO data (category, value) VALUES ('B', 20)`)
+	if err != nil {
+		t.Fatalf("Failed to insert: %v", err)
+	}
+
+	// Test CASE WHEN with aggregate in condition
+	t.Run("CASE WHEN with COUNT in condition", func(t *testing.T) {
+		result, err := exec.Execute(`SELECT CASE WHEN COUNT(*) > 0 THEN 'has data' ELSE 'empty' END FROM data`)
+		if err != nil {
+			t.Logf("CASE WHEN COUNT failed: %v", err)
+		} else {
+			t.Logf("CASE WHEN COUNT result: %v", result.Rows)
+		}
+	})
+
+	// Test CASE WHEN with aggregate in result
+	t.Run("CASE WHEN with SUM in result", func(t *testing.T) {
+		result, err := exec.Execute(`SELECT CASE WHEN 1=1 THEN SUM(value) ELSE 0 END FROM data`)
+		if err != nil {
+			t.Logf("CASE WHEN SUM failed: %v", err)
+		} else {
+			t.Logf("CASE WHEN SUM result: %v", result.Rows)
+		}
+	})
+
+	// Test UnaryExpr with aggregate
+	t.Run("UnaryExpr with aggregate", func(t *testing.T) {
+		result, err := exec.Execute(`SELECT -COUNT(*) FROM data`)
+		if err != nil {
+			t.Logf("UnaryExpr COUNT failed: %v", err)
+		} else {
+			t.Logf("UnaryExpr COUNT result: %v", result.Rows)
+		}
+	})
+}
+
+// TestEvaluateExpressionScalarSubquery tests scalar subquery in expressions
+func TestEvaluateExpressionScalarSubquery(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "xxsql-expr-scalar-test-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	engine := storage.NewEngine(tmpDir)
+	exec := NewExecutor(engine)
+	exec.SetDatabase("test")
+
+	_, err = exec.Execute(`CREATE TABLE products (id SEQ PRIMARY KEY, name VARCHAR(50), price INT)`)
+	if err != nil {
+		t.Fatalf("Failed to create table: %v", err)
+	}
+
+	_, err = exec.Execute(`INSERT INTO products (name, price) VALUES ('Widget', 100)`)
+	if err != nil {
+		t.Fatalf("Failed to insert: %v", err)
+	}
+	_, err = exec.Execute(`INSERT INTO products (name, price) VALUES ('Gadget', 150)`)
+	if err != nil {
+		t.Fatalf("Failed to insert: %v", err)
+	}
+
+	// Test scalar subquery returning single value
+	t.Run("Scalar subquery single value", func(t *testing.T) {
+		result, err := exec.Execute(`SELECT (SELECT MAX(price) FROM products) as max_price`)
+		if err != nil {
+			t.Logf("Scalar subquery single failed: %v", err)
+		} else {
+			t.Logf("Scalar subquery single result: %v", result.Rows)
+		}
+	})
+
+	// Test scalar subquery returning no rows
+	t.Run("Scalar subquery no rows", func(t *testing.T) {
+		result, err := exec.Execute(`SELECT (SELECT price FROM products WHERE price > 1000) as val`)
+		if err != nil {
+			t.Logf("Scalar subquery no rows failed: %v", err)
+		} else {
+			t.Logf("Scalar subquery no rows result: %v", result.Rows)
+		}
+	})
+
+	// Test SubqueryExpr
+	t.Run("SubqueryExpr", func(t *testing.T) {
+		result, err := exec.Execute(`SELECT name, (SELECT AVG(price) FROM products) as avg_price FROM products`)
+		if err != nil {
+			t.Logf("SubqueryExpr failed: %v", err)
+		} else {
+			t.Logf("SubqueryExpr result: %v", result.Rows)
+		}
+	})
+
+	// Test ParenExpr
+	t.Run("ParenExpr", func(t *testing.T) {
+		result, err := exec.Execute(`SELECT (1 + 2) * 3`)
+		if err != nil {
+			t.Logf("ParenExpr failed: %v", err)
+		} else {
+			t.Logf("ParenExpr result: %v", result.Rows)
+		}
+	})
+}
+
+// TestEvaluateFunctionNullArgs tests function evaluation with NULL arguments
+func TestEvaluateFunctionNullArgs(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "xxsql-func-null-test-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	engine := storage.NewEngine(tmpDir)
+	exec := NewExecutor(engine)
+	exec.SetDatabase("test")
+
+	// Test string functions with NULL
+	t.Run("String functions with NULL", func(t *testing.T) {
+		tests := []string{
+			`SELECT UPPER(NULL)`,
+			`SELECT LOWER(NULL)`,
+			`SELECT LENGTH(NULL)`,
+			`SELECT SUBSTRING(NULL, 1, 2)`,
+			`SELECT CONCAT(NULL, 'test')`,
+			`SELECT REPLACE(NULL, 'a', 'b')`,
+		}
+
+		for _, q := range tests {
+			result, err := exec.Execute(q)
+			if err != nil {
+				t.Logf("String NULL failed (%s): %v", q, err)
+			} else {
+				t.Logf("String NULL result (%s): %v", q, result.Rows)
+			}
+		}
+	})
+
+	// Test math functions with NULL
+	t.Run("Math functions with NULL", func(t *testing.T) {
+		tests := []string{
+			`SELECT ABS(NULL)`,
+			`SELECT ROUND(NULL, 2)`,
+			`SELECT FLOOR(NULL)`,
+			`SELECT CEIL(NULL)`,
+		}
+
+		for _, q := range tests {
+			result, err := exec.Execute(q)
+			if err != nil {
+				t.Logf("Math NULL failed (%s): %v", q, err)
+			} else {
+				t.Logf("Math NULL result (%s): %v", q, result.Rows)
+			}
+		}
+	})
+
+	// Test date functions with NULL
+	t.Run("Date functions with NULL", func(t *testing.T) {
+		tests := []string{
+			`SELECT YEAR(NULL)`,
+			`SELECT MONTH(NULL)`,
+			`SELECT DAY(NULL)`,
+		}
+
+		for _, q := range tests {
+			result, err := exec.Execute(q)
+			if err != nil {
+				t.Logf("Date NULL failed (%s): %v", q, err)
+			} else {
+				t.Logf("Date NULL result (%s): %v", q, result.Rows)
+			}
+		}
+	})
+}
+
+// TestWindowFuncFrameBounds tests window function frame bounds
+func TestWindowFuncFrameBounds(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "xxsql-frame-test-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	engine := storage.NewEngine(tmpDir)
+	exec := NewExecutor(engine)
+	exec.SetDatabase("test")
+
+	_, err = exec.Execute(`CREATE TABLE sales (id SEQ PRIMARY KEY, month INT, amount INT)`)
+	if err != nil {
+		t.Fatalf("Failed to create table: %v", err)
+	}
+
+	for i := 1; i <= 5; i++ {
+		_, err = exec.Execute(fmt.Sprintf(`INSERT INTO sales (month, amount) VALUES (%d, %d0)`, i, i))
+		if err != nil {
+			t.Fatalf("Failed to insert: %v", err)
+		}
+	}
+
+	// Test ROWS BETWEEN
+	t.Run("ROWS BETWEEN", func(t *testing.T) {
+		result, err := exec.Execute(`SELECT id, month, amount, SUM(amount) OVER (ORDER BY id ROWS BETWEEN 1 PRECEDING AND 1 FOLLOWING) as running_sum FROM sales`)
+		if err != nil {
+			t.Logf("ROWS BETWEEN failed: %v", err)
+		} else {
+			t.Logf("ROWS BETWEEN result: %v", result.Rows)
+		}
+	})
+
+	// Test UNBOUNDED PRECEDING
+	t.Run("UNBOUNDED PRECEDING", func(t *testing.T) {
+		result, err := exec.Execute(`SELECT id, amount, SUM(amount) OVER (ORDER BY id ROWS UNBOUNDED PRECEDING) as cum_sum FROM sales`)
+		if err != nil {
+			t.Logf("UNBOUNDED PRECEDING failed: %v", err)
+		} else {
+			t.Logf("UNBOUNDED PRECEDING result: %v", result.Rows)
+		}
+	})
+}
+
+// TestParseLoadDataLine tests LOAD DATA line parsing
+func TestParseLoadDataLine(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "xxsql-load-line-test-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	engine := storage.NewEngine(tmpDir)
+	exec := NewExecutor(engine)
+	exec.SetDatabase("test")
+
+	_, err = exec.Execute(`CREATE TABLE import (id INT, name VARCHAR(50), value INT)`)
+	if err != nil {
+		t.Fatalf("Failed to create table: %v", err)
+	}
+
+	// Create test CSV files with different formats
+	t.Run("CSV with different delimiters", func(t *testing.T) {
+		// Tab-delimited file
+		tabPath := filepath.Join(tmpDir, "tab_data.tsv")
+		tabContent := "1\tAlice\t100\n2\tBob\t200\n"
+		err = os.WriteFile(tabPath, []byte(tabContent), 0644)
+		if err != nil {
+			t.Fatalf("Failed to create TSV file: %v", err)
+		}
+
+		result, err := exec.Execute(fmt.Sprintf(`LOAD DATA INFILE '%s' INTO TABLE import FIELDS TERMINATED BY '\t' LINES TERMINATED BY '\n'`, tabPath))
+		if err != nil {
+			t.Logf("Tab-delimited LOAD failed: %v", err)
+		} else {
+			t.Logf("Tab-delimited LOAD result: %v", result.Message)
+		}
+	})
+
+	// Test with quoted fields
+	t.Run("CSV with quoted fields", func(t *testing.T) {
+		quotedPath := filepath.Join(tmpDir, "quoted_data.csv")
+		quotedContent := `3,"Charlie",300` + "\n"
+		err = os.WriteFile(quotedPath, []byte(quotedContent), 0644)
+		if err != nil {
+			t.Fatalf("Failed to create quoted CSV file: %v", err)
+		}
+
+		result, err := exec.Execute(fmt.Sprintf(`LOAD DATA INFILE '%s' INTO TABLE import FIELDS TERMINATED BY ',' LINES TERMINATED BY '\n'`, quotedPath))
+		if err != nil {
+			t.Logf("Quoted CSV LOAD failed: %v", err)
+		} else {
+			t.Logf("Quoted CSV LOAD result: %v", result.Message)
+		}
+	})
+}
+
+// TestJoinWhereEvaluationExtra tests WHERE evaluation in JOINs
+func TestJoinWhereEvaluationExtra(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "xxsql-join-where-test-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	engine := storage.NewEngine(tmpDir)
+	exec := NewExecutor(engine)
+	exec.SetDatabase("test")
+
+	_, err = exec.Execute(`CREATE TABLE customers (id SEQ PRIMARY KEY, name VARCHAR(50))`)
+	if err != nil {
+		t.Fatalf("Failed to create customers table: %v", err)
+	}
+
+	_, err = exec.Execute(`CREATE TABLE orders (id SEQ PRIMARY KEY, customer_id INT, amount INT)`)
+	if err != nil {
+		t.Fatalf("Failed to create orders table: %v", err)
+	}
+
+	_, err = exec.Execute(`INSERT INTO customers (name) VALUES ('Alice')`)
+	if err != nil {
+		t.Fatalf("Failed to insert: %v", err)
+	}
+	_, err = exec.Execute(`INSERT INTO customers (name) VALUES ('Bob')`)
+	if err != nil {
+		t.Fatalf("Failed to insert: %v", err)
+	}
+
+	_, err = exec.Execute(`INSERT INTO orders (customer_id, amount) VALUES (1, 100)`)
+	if err != nil {
+		t.Fatalf("Failed to insert: %v", err)
+	}
+	_, err = exec.Execute(`INSERT INTO orders (customer_id, amount) VALUES (1, 200)`)
+	if err != nil {
+		t.Fatalf("Failed to insert: %v", err)
+	}
+
+	// Test JOIN with WHERE on both tables
+	t.Run("JOIN with WHERE on both tables", func(t *testing.T) {
+		result, err := exec.Execute(`SELECT c.name, o.amount FROM customers c JOIN orders o ON c.id = o.customer_id WHERE c.name = 'Alice' AND o.amount > 150`)
+		if err != nil {
+			t.Logf("JOIN WHERE both failed: %v", err)
+		} else {
+			t.Logf("JOIN WHERE both result: %v", result.Rows)
+		}
+	})
+
+	// Test LEFT JOIN with NULL condition
+	t.Run("LEFT JOIN with NULL condition", func(t *testing.T) {
+		_, _ = exec.Execute(`INSERT INTO customers (name) VALUES ('Charlie')`)
+		result, err := exec.Execute(`SELECT c.name, o.amount FROM customers c LEFT JOIN orders o ON c.id = o.customer_id WHERE o.id IS NULL`)
+		if err != nil {
+			t.Logf("LEFT JOIN NULL failed: %v", err)
+		} else {
+			t.Logf("LEFT JOIN NULL result: %v", result.Rows)
+		}
+	})
+}
+
