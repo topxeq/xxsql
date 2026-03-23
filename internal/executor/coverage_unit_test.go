@@ -619,3 +619,581 @@ func TestEvaluateHavingDefaultFalse(t *testing.T) {
 		t.Logf("HAVING TRUE: %d rows", len(result.Rows))
 	}
 }
+
+// ========== Tests for evaluateExpression - CastExpr ==========
+
+func TestEvaluateExpressionCastExprDirect(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "xxsql-cast-direct-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	engine := storage.NewEngine(tmpDir)
+	if err := engine.Open(); err != nil {
+		t.Fatalf("Failed to open engine: %v", err)
+	}
+	defer engine.Close()
+
+	exec := NewExecutor(engine)
+
+	// Test CAST to INT
+	result, err := exec.Execute("SELECT CAST('123' AS INT)")
+	if err != nil {
+		t.Logf("CAST to INT failed: %v", err)
+	} else {
+		t.Logf("CAST to INT: %v", result.Rows)
+	}
+
+	// Test CAST to FLOAT
+	result, err = exec.Execute("SELECT CAST('123.45' AS FLOAT)")
+	if err != nil {
+		t.Logf("CAST to FLOAT failed: %v", err)
+	} else {
+		t.Logf("CAST to FLOAT: %v", result.Rows)
+	}
+
+	// Test CAST to VARCHAR
+	result, err = exec.Execute("SELECT CAST(123 AS VARCHAR)")
+	if err != nil {
+		t.Logf("CAST to VARCHAR failed: %v", err)
+	} else {
+		t.Logf("CAST to VARCHAR: %v", result.Rows)
+	}
+
+	// Test CAST to BOOL
+	result, err = exec.Execute("SELECT CAST(1 AS BOOL)")
+	if err != nil {
+		t.Logf("CAST to BOOL failed: %v", err)
+	} else {
+		t.Logf("CAST to BOOL: %v", result.Rows)
+	}
+
+	// Test CAST NULL
+	result, err = exec.Execute("SELECT CAST(NULL AS INT)")
+	if err != nil {
+		t.Logf("CAST NULL failed: %v", err)
+	} else {
+		t.Logf("CAST NULL: %v", result.Rows)
+	}
+}
+
+// ========== Tests for evaluateExpression - CollateExpr ==========
+
+func TestEvaluateExpressionCollateExprDirect(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "xxsql-collate-direct-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	engine := storage.NewEngine(tmpDir)
+	if err := engine.Open(); err != nil {
+		t.Fatalf("Failed to open engine: %v", err)
+	}
+	defer engine.Close()
+
+	exec := NewExecutor(engine)
+
+	// Test COLLATE expression
+	result, err := exec.Execute("SELECT 'hello' COLLATE BINARY")
+	if err != nil {
+		t.Logf("COLLATE expression failed: %v", err)
+	} else {
+		t.Logf("COLLATE expression: %v", result.Rows)
+	}
+}
+
+// ========== Tests for evaluateExpression - ParenExpr ==========
+
+func TestEvaluateExpressionParenExprDirect(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "xxsql-paren-direct-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	engine := storage.NewEngine(tmpDir)
+	if err := engine.Open(); err != nil {
+		t.Fatalf("Failed to open engine: %v", err)
+	}
+	defer engine.Close()
+
+	exec := NewExecutor(engine)
+
+	// Test nested parentheses
+	tests := []string{
+		"SELECT (1)",
+		"SELECT ((1))",
+		"SELECT ((1 + 2))",
+		"SELECT (1 + (2 * 3))",
+		"SELECT ((1 + 2) * (3 + 4))",
+	}
+
+	for _, tc := range tests {
+		result, err := exec.Execute(tc)
+		if err != nil {
+			t.Logf("ParenExpr failed: %s, error: %v", tc, err)
+		} else {
+			t.Logf("ParenExpr: %s -> %v", tc, result.Rows)
+		}
+	}
+}
+
+// ========== Tests for evaluateExpression - ScalarSubquery edge cases ==========
+
+func TestEvaluateExpressionScalarSubqueryEdgeCases(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "xxsql-scalar-edge-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	engine := storage.NewEngine(tmpDir)
+	if err := engine.Open(); err != nil {
+		t.Fatalf("Failed to open engine: %v", err)
+	}
+	defer engine.Close()
+
+	exec := NewExecutor(engine)
+
+	_, err = exec.Execute("CREATE TABLE nums (id INT PRIMARY KEY, val INT)")
+	if err != nil {
+		t.Fatalf("CREATE TABLE failed: %v", err)
+	}
+
+	_, err = exec.Execute("INSERT INTO nums VALUES (1, 10), (2, 20), (3, 30)")
+	if err != nil {
+		t.Fatalf("INSERT failed: %v", err)
+	}
+
+	// Scalar subquery returning empty result
+	result, err := exec.Execute("SELECT (SELECT val FROM nums WHERE val > 100)")
+	if err != nil {
+		t.Logf("Scalar subquery empty result failed: %v", err)
+	} else {
+		t.Logf("Scalar subquery empty result: %v", result.Rows)
+	}
+
+	// Scalar subquery returning one row
+	result, err = exec.Execute("SELECT (SELECT val FROM nums WHERE id = 1)")
+	if err != nil {
+		t.Logf("Scalar subquery one row failed: %v", err)
+	} else {
+		t.Logf("Scalar subquery one row: %v", result.Rows)
+	}
+
+	// Scalar subquery returning multiple rows (should error)
+	result, err = exec.Execute("SELECT (SELECT val FROM nums)")
+	if err != nil {
+		t.Logf("Scalar subquery multiple rows (expected error): %v", err)
+	} else {
+		t.Logf("Scalar subquery multiple rows: %v", result.Rows)
+	}
+}
+
+// ========== Tests for evaluateExpression - AnyAllExpr ==========
+
+func TestEvaluateExpressionAnyAllExprDirect(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "xxsql-anyall-direct-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	engine := storage.NewEngine(tmpDir)
+	if err := engine.Open(); err != nil {
+		t.Fatalf("Failed to open engine: %v", err)
+	}
+	defer engine.Close()
+
+	exec := NewExecutor(engine)
+
+	_, err = exec.Execute("CREATE TABLE nums (id INT PRIMARY KEY, val INT)")
+	if err != nil {
+		t.Fatalf("CREATE TABLE failed: %v", err)
+	}
+
+	_, err = exec.Execute("INSERT INTO nums VALUES (1, 10), (2, 20), (3, 30)")
+	if err != nil {
+		t.Fatalf("INSERT failed: %v", err)
+	}
+
+	// ANY with true condition
+	result, err := exec.Execute("SELECT 15 > ANY (SELECT val FROM nums)")
+	if err != nil {
+		t.Logf("ANY true failed: %v", err)
+	} else {
+		t.Logf("ANY true: %v", result.Rows)
+	}
+
+	// ANY with false condition
+	result, err = exec.Execute("SELECT 5 > ANY (SELECT val FROM nums)")
+	if err != nil {
+		t.Logf("ANY false failed: %v", err)
+	} else {
+		t.Logf("ANY false: %v", result.Rows)
+	}
+
+	// ALL with true condition
+	result, err = exec.Execute("SELECT 5 < ALL (SELECT val FROM nums)")
+	if err != nil {
+		t.Logf("ALL true failed: %v", err)
+	} else {
+		t.Logf("ALL true: %v", result.Rows)
+	}
+
+	// ALL with false condition
+	result, err = exec.Execute("SELECT 25 < ALL (SELECT val FROM nums)")
+	if err != nil {
+		t.Logf("ALL false failed: %v", err)
+	} else {
+		t.Logf("ALL false: %v", result.Rows)
+	}
+}
+
+// ========== Tests for evaluateExpression - RankExpr ==========
+
+func TestEvaluateExpressionRankExprDirect(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "xxsql-rank-direct-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	engine := storage.NewEngine(tmpDir)
+	if err := engine.Open(); err != nil {
+		t.Fatalf("Failed to open engine: %v", err)
+	}
+	defer engine.Close()
+
+	exec := NewExecutor(engine)
+
+	// Test RankExpr without FTS manager (should return 0.0)
+	result, err := exec.Execute("SELECT RANK()")
+	if err != nil {
+		t.Logf("RANK without FTS failed: %v", err)
+	} else {
+		t.Logf("RANK without FTS: %v", result.Rows)
+	}
+
+	// Test with outerContext set
+	exec.outerContext = map[string]interface{}{
+		"__fts_rank": 0.75,
+	}
+
+	result, err = exec.Execute("SELECT RANK()")
+	if err != nil {
+		t.Logf("RANK with outer context failed: %v", err)
+	} else {
+		t.Logf("RANK with outer context: %v", result.Rows)
+	}
+	exec.outerContext = nil
+}
+
+// ========== Tests for evaluateWhere - BinaryExpr with various operators ==========
+
+func TestEvaluateWhereBinaryExprOperators(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "xxsql-where-bin-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	engine := storage.NewEngine(tmpDir)
+	if err := engine.Open(); err != nil {
+		t.Fatalf("Failed to open engine: %v", err)
+	}
+	defer engine.Close()
+
+	exec := NewExecutor(engine)
+
+	_, err = exec.Execute("CREATE TABLE test (id INT PRIMARY KEY, a INT, b INT)")
+	if err != nil {
+		t.Fatalf("CREATE TABLE failed: %v", err)
+	}
+
+	_, err = exec.Execute("INSERT INTO test VALUES (1, 10, 20), (2, 20, 10), (3, 15, 15)")
+	if err != nil {
+		t.Fatalf("INSERT failed: %v", err)
+	}
+
+	// Test various comparison operators in WHERE
+	tests := []string{
+		"SELECT * FROM test WHERE a = 10",
+		"SELECT * FROM test WHERE a != 10",
+		"SELECT * FROM test WHERE a < 15",
+		"SELECT * FROM test WHERE a > 15",
+		"SELECT * FROM test WHERE a <= 15",
+		"SELECT * FROM test WHERE a >= 15",
+		"SELECT * FROM test WHERE a < b",
+		"SELECT * FROM test WHERE a > b",
+		"SELECT * FROM test WHERE a = b",
+	}
+
+	for _, tc := range tests {
+		result, err := exec.Execute(tc)
+		if err != nil {
+			t.Logf("WHERE binary failed: %s, error: %v", tc, err)
+		} else {
+			t.Logf("WHERE binary: %s -> %d rows", tc, len(result.Rows))
+		}
+	}
+}
+
+// ========== Tests for evaluateHaving - complex conditions ==========
+
+func TestEvaluateHavingComplexConditionsExtra(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "xxsql-having-complex-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	engine := storage.NewEngine(tmpDir)
+	if err := engine.Open(); err != nil {
+		t.Fatalf("Failed to open engine: %v", err)
+	}
+	defer engine.Close()
+
+	exec := NewExecutor(engine)
+
+	_, err = exec.Execute("CREATE TABLE sales (id INT PRIMARY KEY, region VARCHAR, amount INT)")
+	if err != nil {
+		t.Fatalf("CREATE TABLE failed: %v", err)
+	}
+
+	for i := 1; i <= 10; i++ {
+		region := "East"
+		if i > 5 {
+			region = "West"
+		}
+		_, err = exec.Execute(fmt.Sprintf("INSERT INTO sales VALUES (%d, '%s', %d)", i, region, i*100))
+		if err != nil {
+			t.Fatalf("INSERT failed: %v", err)
+		}
+	}
+
+	// HAVING with AND
+	result, err := exec.Execute(`
+		SELECT region, COUNT(*) as cnt, SUM(amount) as total
+		FROM sales
+		GROUP BY region
+		HAVING COUNT(*) > 1 AND SUM(amount) > 500
+	`)
+	if err != nil {
+		t.Logf("HAVING AND failed: %v", err)
+	} else {
+		t.Logf("HAVING AND: %d rows", len(result.Rows))
+	}
+
+	// HAVING with OR
+	result, err = exec.Execute(`
+		SELECT region, COUNT(*) as cnt
+		FROM sales
+		GROUP BY region
+		HAVING COUNT(*) > 10 OR SUM(amount) > 1000
+	`)
+	if err != nil {
+		t.Logf("HAVING OR failed: %v", err)
+	} else {
+		t.Logf("HAVING OR: %d rows", len(result.Rows))
+	}
+
+	// HAVING with NOT
+	result, err = exec.Execute(`
+		SELECT region, COUNT(*) as cnt
+		FROM sales
+		GROUP BY region
+		HAVING NOT (COUNT(*) < 3)
+	`)
+	if err != nil {
+		t.Logf("HAVING NOT failed: %v", err)
+	} else {
+		t.Logf("HAVING NOT: %d rows", len(result.Rows))
+	}
+}
+
+// ========== Tests for evaluateWhere - InExpr ==========
+
+func TestEvaluateWhereInExprDirect(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "xxsql-where-in-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	engine := storage.NewEngine(tmpDir)
+	if err := engine.Open(); err != nil {
+		t.Fatalf("Failed to open engine: %v", err)
+	}
+	defer engine.Close()
+
+	exec := NewExecutor(engine)
+
+	_, err = exec.Execute("CREATE TABLE test (id INT PRIMARY KEY, val INT)")
+	if err != nil {
+		t.Fatalf("CREATE TABLE failed: %v", err)
+	}
+
+	_, err = exec.Execute("INSERT INTO test VALUES (1, 10), (2, 20), (3, 30), (4, 40)")
+	if err != nil {
+		t.Fatalf("INSERT failed: %v", err)
+	}
+
+	// IN with list
+	result, err := exec.Execute("SELECT * FROM test WHERE val IN (10, 20, 30)")
+	if err != nil {
+		t.Logf("IN list failed: %v", err)
+	} else {
+		t.Logf("IN list: %d rows", len(result.Rows))
+	}
+
+	// NOT IN with list
+	result, err = exec.Execute("SELECT * FROM test WHERE val NOT IN (10, 20)")
+	if err != nil {
+		t.Logf("NOT IN list failed: %v", err)
+	} else {
+		t.Logf("NOT IN list: %d rows", len(result.Rows))
+	}
+}
+
+// ========== Tests for evaluateWhere - IsNullExpr ==========
+
+func TestEvaluateWhereIsNullExprDirect(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "xxsql-where-isnull-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	engine := storage.NewEngine(tmpDir)
+	if err := engine.Open(); err != nil {
+		t.Fatalf("Failed to open engine: %v", err)
+	}
+	defer engine.Close()
+
+	exec := NewExecutor(engine)
+
+	_, err = exec.Execute("CREATE TABLE test (id INT PRIMARY KEY, val INT)")
+	if err != nil {
+		t.Fatalf("CREATE TABLE failed: %v", err)
+	}
+
+	_, err = exec.Execute("INSERT INTO test VALUES (1, 10), (2, NULL), (3, 30)")
+	if err != nil {
+		t.Fatalf("INSERT failed: %v", err)
+	}
+
+	// IS NULL
+	result, err := exec.Execute("SELECT * FROM test WHERE val IS NULL")
+	if err != nil {
+		t.Logf("IS NULL failed: %v", err)
+	} else {
+		t.Logf("IS NULL: %d rows", len(result.Rows))
+	}
+
+	// IS NOT NULL
+	result, err = exec.Execute("SELECT * FROM test WHERE val IS NOT NULL")
+	if err != nil {
+		t.Logf("IS NOT NULL failed: %v", err)
+	} else {
+		t.Logf("IS NOT NULL: %d rows", len(result.Rows))
+	}
+}
+
+// ========== Tests for evaluateWhere - BetweenExpr ==========
+
+func TestEvaluateWhereBetweenExprDirect(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "xxsql-where-between-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	engine := storage.NewEngine(tmpDir)
+	if err := engine.Open(); err != nil {
+		t.Fatalf("Failed to open engine: %v", err)
+	}
+	defer engine.Close()
+
+	exec := NewExecutor(engine)
+
+	_, err = exec.Execute("CREATE TABLE test (id INT PRIMARY KEY, val INT)")
+	if err != nil {
+		t.Fatalf("CREATE TABLE failed: %v", err)
+	}
+
+	_, err = exec.Execute("INSERT INTO test VALUES (1, 10), (2, 20), (3, 30), (4, 40), (5, 50)")
+	if err != nil {
+		t.Fatalf("INSERT failed: %v", err)
+	}
+
+	// BETWEEN
+	result, err := exec.Execute("SELECT * FROM test WHERE val BETWEEN 20 AND 40")
+	if err != nil {
+		t.Logf("BETWEEN failed: %v", err)
+	} else {
+		t.Logf("BETWEEN: %d rows", len(result.Rows))
+	}
+
+	// NOT BETWEEN
+	result, err = exec.Execute("SELECT * FROM test WHERE val NOT BETWEEN 20 AND 40")
+	if err != nil {
+		t.Logf("NOT BETWEEN failed: %v", err)
+	} else {
+		t.Logf("NOT BETWEEN: %d rows", len(result.Rows))
+	}
+}
+
+// ========== Tests for evaluateWhere - LikeExpr ==========
+
+func TestEvaluateWhereLikeExprDirect(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "xxsql-where-like-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	engine := storage.NewEngine(tmpDir)
+	if err := engine.Open(); err != nil {
+		t.Fatalf("Failed to open engine: %v", err)
+	}
+	defer engine.Close()
+
+	exec := NewExecutor(engine)
+
+	_, err = exec.Execute("CREATE TABLE test (id INT PRIMARY KEY, name VARCHAR)")
+	if err != nil {
+		t.Fatalf("CREATE TABLE failed: %v", err)
+	}
+
+	_, err = exec.Execute("INSERT INTO test VALUES (1, 'Alice'), (2, 'Bob'), (3, 'Charlie'), (4, 'David')")
+	if err != nil {
+		t.Fatalf("INSERT failed: %v", err)
+	}
+
+	// LIKE with %
+	result, err := exec.Execute("SELECT * FROM test WHERE name LIKE 'A%'")
+	if err != nil {
+		t.Logf("LIKE %s failed: %v", "%", err)
+	} else {
+		t.Logf("LIKE %s: %d rows", "%", len(result.Rows))
+	}
+
+	// LIKE with _
+	result, err = exec.Execute("SELECT * FROM test WHERE name LIKE '_ob'")
+	if err != nil {
+		t.Logf("LIKE _ failed: %v", err)
+	} else {
+		t.Logf("LIKE _: %d rows", len(result.Rows))
+	}
+
+	// NOT LIKE
+	result, err = exec.Execute("SELECT * FROM test WHERE name NOT LIKE 'A%'")
+	if err != nil {
+		t.Logf("NOT LIKE failed: %v", err)
+	} else {
+		t.Logf("NOT LIKE: %d rows", len(result.Rows))
+	}
+}
