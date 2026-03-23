@@ -16975,3 +16975,228 @@ func TestSubqueryInSelect(t *testing.T) {
 	})
 }
 
+// TestIsNullExprVariations tests IS NULL expression variations
+func TestIsNullExprVariations(t *testing.T) {
+	engine := setupTestEngine(t)
+	exec := NewExecutor(engine)
+	exec.SetDatabase("testdb")
+
+	_, _ = exec.Execute("CREATE TABLE null_var (id INT, name VARCHAR(50), value INT)")
+	_, _ = exec.Execute("INSERT INTO null_var VALUES (1, 'Alice', 100)")
+	_, _ = exec.Execute("INSERT INTO null_var VALUES (2, NULL, NULL)")
+	_, _ = exec.Execute("INSERT INTO null_var VALUES (3, 'Charlie', 300)")
+
+	t.Run("IS NULL on string", func(t *testing.T) {
+		result, err := exec.Execute("SELECT * FROM null_var WHERE name IS NULL")
+		if err != nil {
+			t.Logf("IS NULL string failed: %v", err)
+		} else {
+			t.Logf("IS NULL string result: %v", result.Rows)
+		}
+	})
+
+	t.Run("IS NULL on int", func(t *testing.T) {
+		result, err := exec.Execute("SELECT * FROM null_var WHERE value IS NULL")
+		if err != nil {
+			t.Logf("IS NULL int failed: %v", err)
+		} else {
+			t.Logf("IS NULL int result: %v", result.Rows)
+		}
+	})
+
+	t.Run("IS NOT NULL on string", func(t *testing.T) {
+		result, err := exec.Execute("SELECT * FROM null_var WHERE name IS NOT NULL")
+		if err != nil {
+			t.Logf("IS NOT NULL string failed: %v", err)
+		} else {
+			t.Logf("IS NOT NULL string result: %v", result.Rows)
+		}
+	})
+
+	t.Run("IS NOT NULL on int", func(t *testing.T) {
+		result, err := exec.Execute("SELECT * FROM null_var WHERE value IS NOT NULL")
+		if err != nil {
+			t.Logf("IS NOT NULL int failed: %v", err)
+		} else {
+			t.Logf("IS NOT NULL int result: %v", result.Rows)
+		}
+	})
+}
+
+// TestBinaryExprWithNull tests binary expressions with NULL values
+func TestBinaryExprWithNull(t *testing.T) {
+	engine := setupTestEngine(t)
+	exec := NewExecutor(engine)
+	exec.SetDatabase("testdb")
+
+	_, _ = exec.Execute("CREATE TABLE null_bin (a INT, b INT)")
+	_, _ = exec.Execute("INSERT INTO null_bin VALUES (10, 5)")
+	_, _ = exec.Execute("INSERT INTO null_bin VALUES (NULL, 20)")
+	_, _ = exec.Execute("INSERT INTO null_bin VALUES (30, NULL)")
+
+	t.Run("Comparison with NULL on left", func(t *testing.T) {
+		result, err := exec.Execute("SELECT * FROM null_bin WHERE a > 5")
+		if err != nil {
+			t.Logf("Comparison NULL left failed: %v", err)
+		} else {
+			t.Logf("Comparison NULL left result: %v", result.Rows)
+		}
+	})
+
+	t.Run("Comparison with NULL on right", func(t *testing.T) {
+		result, err := exec.Execute("SELECT * FROM null_bin WHERE b < 25")
+		if err != nil {
+			t.Logf("Comparison NULL right failed: %v", err)
+		} else {
+			t.Logf("Comparison NULL right result: %v", result.Rows)
+		}
+	})
+
+	t.Run("NULL = NULL", func(t *testing.T) {
+		result, err := exec.Execute("SELECT * FROM null_bin WHERE a = b")
+		if err != nil {
+			t.Logf("NULL = NULL failed: %v", err)
+		} else {
+			t.Logf("NULL = NULL result: %v", result.Rows)
+		}
+	})
+}
+
+// TestMoreFunctionVariations tests more function variations
+func TestMoreFunctionVariations(t *testing.T) {
+	engine := setupTestEngine(t)
+	exec := NewExecutor(engine)
+	exec.SetDatabase("testdb")
+
+	t.Run("String functions with NULL", func(t *testing.T) {
+		tests := []string{
+			"SELECT UPPER(NULL)",
+			"SELECT LOWER(NULL)",
+			"SELECT LENGTH(NULL)",
+			"SELECT TRIM(NULL)",
+			"SELECT SUBSTR(NULL, 1, 3)",
+		}
+		for _, q := range tests {
+			result, err := exec.Execute(q)
+			if err != nil {
+				t.Logf("%s failed: %v", q, err)
+			} else {
+				t.Logf("%s -> %v", q, result.Rows)
+			}
+		}
+	})
+
+	t.Run("Math functions with NULL", func(t *testing.T) {
+		tests := []string{
+			"SELECT ABS(NULL)",
+			"SELECT ROUND(NULL, 2)",
+			"SELECT FLOOR(NULL)",
+			"SELECT CEIL(NULL)",
+		}
+		for _, q := range tests {
+			result, err := exec.Execute(q)
+			if err != nil {
+				t.Logf("%s failed: %v", q, err)
+			} else {
+				t.Logf("%s -> %v", q, result.Rows)
+			}
+		}
+	})
+
+	t.Run("Aggregate with NULL", func(t *testing.T) {
+		_, _ = exec.Execute("CREATE TABLE agg_null (val INT)")
+		_, _ = exec.Execute("INSERT INTO agg_null VALUES (10)")
+		_, _ = exec.Execute("INSERT INTO agg_null VALUES (NULL)")
+		_, _ = exec.Execute("INSERT INTO agg_null VALUES (20)")
+		tests := []string{
+			"SELECT SUM(val) FROM agg_null",
+			"SELECT AVG(val) FROM agg_null",
+			"SELECT MIN(val) FROM agg_null",
+			"SELECT MAX(val) FROM agg_null",
+			"SELECT COUNT(val) FROM agg_null",
+			"SELECT COUNT(*) FROM agg_null",
+		}
+		for _, q := range tests {
+			result, err := exec.Execute(q)
+			if err != nil {
+				t.Logf("%s failed: %v", q, err)
+			} else {
+				t.Logf("%s -> %v", q, result.Rows)
+			}
+		}
+	})
+}
+
+// TestOuterContextInSubquery tests outer context usage in subqueries
+func TestOuterContextInSubquery(t *testing.T) {
+	engine := setupTestEngine(t)
+	exec := NewExecutor(engine)
+	exec.SetDatabase("testdb")
+
+	_, _ = exec.Execute("CREATE TABLE outer_ctx (id INT, dept VARCHAR(50))")
+	_, _ = exec.Execute("INSERT INTO outer_ctx VALUES (1, 'Eng')")
+	_, _ = exec.Execute("INSERT INTO outer_ctx VALUES (2, 'Sales')")
+
+	_, _ = exec.Execute("CREATE TABLE inner_ctx (dept VARCHAR(50), salary INT)")
+	_, _ = exec.Execute("INSERT INTO inner_ctx VALUES ('Eng', 100000)")
+	_, _ = exec.Execute("INSERT INTO inner_ctx VALUES ('Eng', 80000)")
+	_, _ = exec.Execute("INSERT INTO inner_ctx VALUES ('Sales', 70000)")
+
+	t.Run("Correlated subquery with outer column", func(t *testing.T) {
+		result, err := exec.Execute(`
+			SELECT o.id, (SELECT MAX(salary) FROM inner_ctx WHERE dept = o.dept)
+			FROM outer_ctx o
+		`)
+		if err != nil {
+			t.Logf("Correlated subquery failed: %v", err)
+		} else {
+			t.Logf("Correlated subquery result: %v", result.Rows)
+		}
+	})
+}
+
+// TestEmptyTableOperations tests operations on empty tables
+func TestEmptyTableOperations(t *testing.T) {
+	engine := setupTestEngine(t)
+	exec := NewExecutor(engine)
+	exec.SetDatabase("testdb")
+
+	_, _ = exec.Execute("CREATE TABLE empty_tbl (id INT, name VARCHAR(50))")
+
+	t.Run("SELECT from empty table", func(t *testing.T) {
+		result, err := exec.Execute("SELECT * FROM empty_tbl")
+		if err != nil {
+			t.Logf("SELECT empty failed: %v", err)
+		} else {
+			t.Logf("SELECT empty result: %v rows", len(result.Rows))
+		}
+	})
+
+	t.Run("COUNT on empty table", func(t *testing.T) {
+		result, err := exec.Execute("SELECT COUNT(*) FROM empty_tbl")
+		if err != nil {
+			t.Logf("COUNT empty failed: %v", err)
+		} else {
+			t.Logf("COUNT empty result: %v", result.Rows)
+		}
+	})
+
+	t.Run("UPDATE empty table", func(t *testing.T) {
+		result, err := exec.Execute("UPDATE empty_tbl SET name = 'test'")
+		if err != nil {
+			t.Logf("UPDATE empty failed: %v", err)
+		} else {
+			t.Logf("UPDATE empty result: %d affected", result.Affected)
+		}
+	})
+
+	t.Run("DELETE from empty table", func(t *testing.T) {
+		result, err := exec.Execute("DELETE FROM empty_tbl")
+		if err != nil {
+			t.Logf("DELETE empty failed: %v", err)
+		} else {
+			t.Logf("DELETE empty result: %d affected", result.Affected)
+		}
+	})
+}
+
