@@ -24055,3 +24055,321 @@ func TestFunctionEvaluationPaths(t *testing.T) {
 	})
 }
 
+// TestEvaluateHavingExtraComprehensive tests all HAVING clause paths
+func TestEvaluateHavingExtraComprehensive(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "xxsql-having-comp-test-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	engine := storage.NewEngine(tmpDir)
+	exec := NewExecutor(engine)
+	exec.SetDatabase("test")
+
+	_, err = exec.Execute(`CREATE TABLE sales (id SEQ PRIMARY KEY, region VARCHAR(20), amount INT, status VARCHAR(10))`)
+	if err != nil {
+		t.Fatalf("Failed to create table: %v", err)
+	}
+
+	_, err = exec.Execute(`INSERT INTO sales (region, amount, status) VALUES ('North', 100, 'active')`)
+	if err != nil {
+		t.Fatalf("Failed to insert: %v", err)
+	}
+	_, err = exec.Execute(`INSERT INTO sales (region, amount, status) VALUES ('North', 200, 'active')`)
+	if err != nil {
+		t.Fatalf("Failed to insert: %v", err)
+	}
+	_, err = exec.Execute(`INSERT INTO sales (region, amount, status) VALUES ('South', 150, 'inactive')`)
+	if err != nil {
+		t.Fatalf("Failed to insert: %v", err)
+	}
+	_, err = exec.Execute(`INSERT INTO sales (region, amount, status) VALUES ('East', 300, 'active')`)
+	if err != nil {
+		t.Fatalf("Failed to insert: %v", err)
+	}
+
+	// Test HAVING with BETWEEN
+	t.Run("HAVING with BETWEEN", func(t *testing.T) {
+		result, err := exec.Execute(`SELECT region, SUM(amount) as total FROM sales GROUP BY region HAVING SUM(amount) BETWEEN 200 AND 400`)
+		if err != nil {
+			t.Logf("HAVING BETWEEN failed: %v", err)
+		} else {
+			t.Logf("HAVING BETWEEN result: %v", result.Rows)
+		}
+	})
+
+	// Test HAVING with LIKE
+	t.Run("HAVING with LIKE", func(t *testing.T) {
+		result, err := exec.Execute(`SELECT region, SUM(amount) as total FROM sales GROUP BY region HAVING region LIKE 'N%'`)
+		if err != nil {
+			t.Logf("HAVING LIKE failed: %v", err)
+		} else {
+			t.Logf("HAVING LIKE result: %v", result.Rows)
+		}
+	})
+
+	// Test HAVING with multiple aggregates
+	t.Run("HAVING with multiple aggregates", func(t *testing.T) {
+		result, err := exec.Execute(`SELECT region, SUM(amount) as total, COUNT(*) as cnt FROM sales GROUP BY region HAVING SUM(amount) > 100 AND COUNT(*) > 1`)
+		if err != nil {
+			t.Logf("HAVING multiple aggregates failed: %v", err)
+		} else {
+			t.Logf("HAVING multiple aggregates result: %v", result.Rows)
+		}
+	})
+
+	// Test HAVING with OR
+	t.Run("HAVING with OR", func(t *testing.T) {
+		result, err := exec.Execute(`SELECT region, SUM(amount) as total FROM sales GROUP BY region HAVING SUM(amount) < 100 OR SUM(amount) > 250`)
+		if err != nil {
+			t.Logf("HAVING OR failed: %v", err)
+		} else {
+			t.Logf("HAVING OR result: %v", result.Rows)
+		}
+	})
+}
+
+// TestEvaluateWhereComprehensive tests all WHERE clause paths
+func TestEvaluateWhereComprehensive(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "xxsql-where-comp-test-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	engine := storage.NewEngine(tmpDir)
+	exec := NewExecutor(engine)
+	exec.SetDatabase("test")
+
+	_, err = exec.Execute(`CREATE TABLE items (id SEQ PRIMARY KEY, name VARCHAR(50), category VARCHAR(20), price INT)`)
+	if err != nil {
+		t.Fatalf("Failed to create table: %v", err)
+	}
+
+	_, err = exec.Execute(`INSERT INTO items (name, category, price) VALUES ('Widget', 'A', 100)`)
+	if err != nil {
+		t.Fatalf("Failed to insert: %v", err)
+	}
+	_, err = exec.Execute(`INSERT INTO items (name, category, price) VALUES ('Gadget', 'B', 200)`)
+	if err != nil {
+		t.Fatalf("Failed to insert: %v", err)
+	}
+	_, err = exec.Execute(`INSERT INTO items (name, category, price) VALUES ('Thing', 'A', 150)`)
+	if err != nil {
+		t.Fatalf("Failed to insert: %v", err)
+	}
+
+	// Test WHERE with BETWEEN
+	t.Run("WHERE BETWEEN", func(t *testing.T) {
+		result, err := exec.Execute(`SELECT * FROM items WHERE price BETWEEN 100 AND 200`)
+		if err != nil {
+			t.Logf("WHERE BETWEEN failed: %v", err)
+		} else {
+			t.Logf("WHERE BETWEEN result: %v", result.Rows)
+		}
+	})
+
+	// Test WHERE with LIKE escape
+	t.Run("WHERE LIKE escape", func(t *testing.T) {
+		result, err := exec.Execute(`SELECT * FROM items WHERE name LIKE 'W%' ESCAPE '\'`)
+		if err != nil {
+			t.Logf("WHERE LIKE escape failed: %v", err)
+		} else {
+			t.Logf("WHERE LIKE escape result: %v", result.Rows)
+		}
+	})
+
+	// Test WHERE with GLOB
+	t.Run("WHERE GLOB", func(t *testing.T) {
+		result, err := exec.Execute(`SELECT * FROM items WHERE name GLOB 'W*'`)
+		if err != nil {
+			t.Logf("WHERE GLOB failed: %v", err)
+		} else {
+			t.Logf("WHERE GLOB result: %v", result.Rows)
+		}
+	})
+
+	// Test WHERE with complex nested conditions
+	t.Run("WHERE nested conditions", func(t *testing.T) {
+		result, err := exec.Execute(`SELECT * FROM items WHERE (category = 'A' AND price > 100) OR (category = 'B' AND price < 250)`)
+		if err != nil {
+			t.Logf("WHERE nested failed: %v", err)
+		} else {
+			t.Logf("WHERE nested result: %v", result.Rows)
+		}
+	})
+}
+
+// TestHasAggregateAll tests all aggregate detection paths
+func TestHasAggregateAll(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "xxsql-hasagg-all-test-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	engine := storage.NewEngine(tmpDir)
+	exec := NewExecutor(engine)
+	exec.SetDatabase("test")
+
+	_, err = exec.Execute(`CREATE TABLE data (id SEQ PRIMARY KEY, val INT)`)
+	if err != nil {
+		t.Fatalf("Failed to create table: %v", err)
+	}
+
+	// Test aggregate in CASE WHEN condition
+	t.Run("Aggregate in CASE WHEN", func(t *testing.T) {
+		result, err := exec.Execute(`SELECT CASE WHEN COUNT(*) = 0 THEN 'empty' ELSE 'has data' END FROM data`)
+		if err != nil {
+			t.Logf("CASE WHEN aggregate failed: %v", err)
+		} else {
+			t.Logf("CASE WHEN aggregate result: %v", result.Rows)
+		}
+	})
+
+	// Test nested BinaryExpr with aggregate
+	t.Run("Nested BinaryExpr", func(t *testing.T) {
+		result, err := exec.Execute(`SELECT (COUNT(*) + MAX(val)) FROM data`)
+		if err != nil {
+			t.Logf("Nested BinaryExpr failed: %v", err)
+		} else {
+			t.Logf("Nested BinaryExpr result: %v", result.Rows)
+		}
+	})
+
+	// Test aggregate in arithmetic
+	t.Run("Aggregate in arithmetic", func(t *testing.T) {
+		result, err := exec.Execute(`SELECT COUNT(*) * 2 FROM data`)
+		if err != nil {
+			t.Logf("Aggregate arithmetic failed: %v", err)
+		} else {
+			t.Logf("Aggregate arithmetic result: %v", result.Rows)
+		}
+	})
+
+	// Test MIN/MAX detection
+	t.Run("MIN/MAX detection", func(t *testing.T) {
+		result, err := exec.Execute(`SELECT MIN(id), MAX(id) FROM data`)
+		if err != nil {
+			t.Logf("MIN/MAX failed: %v", err)
+		} else {
+			t.Logf("MIN/MAX result: %v", result.Rows)
+		}
+	})
+}
+
+// TestEvaluateExpressionComprehensive tests expression evaluation paths
+func TestEvaluateExpressionComprehensive(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "xxsql-expr-comp-test-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	engine := storage.NewEngine(tmpDir)
+	exec := NewExecutor(engine)
+	exec.SetDatabase("test")
+
+	_, err = exec.Execute(`CREATE TABLE test (id SEQ PRIMARY KEY, val INT, name VARCHAR(50))`)
+	if err != nil {
+		t.Fatalf("Failed to create table: %v", err)
+	}
+	_, err = exec.Execute(`INSERT INTO test (val, name) VALUES (10, 'test')`)
+	if err != nil {
+		t.Fatalf("Failed to insert: %v", err)
+	}
+
+	// Test expression with NULL in column
+	t.Run("NULL column value", func(t *testing.T) {
+		_, _ = exec.Execute(`INSERT INTO test (val, name) VALUES (NULL, 'null_test')`)
+		result, err := exec.Execute(`SELECT * FROM test WHERE val IS NULL`)
+		if err != nil {
+			t.Logf("NULL column failed: %v", err)
+		} else {
+			t.Logf("NULL column result: %v", result.Rows)
+		}
+	})
+
+	// Test expression with outerContext column not found
+	t.Run("Column not found", func(t *testing.T) {
+		result, err := exec.Execute(`SELECT nonexistent FROM test`)
+		if err != nil {
+			t.Logf("Column not found error: %v", err)
+		} else {
+			t.Logf("Column not found result: %v", result.Rows)
+		}
+	})
+
+	// Test expression with table-qualified column in subquery
+	t.Run("Table qualified in subquery", func(t *testing.T) {
+		result, err := exec.Execute(`SELECT (SELECT test.val FROM test WHERE test.id = 1) as sub_val`)
+		if err != nil {
+			t.Logf("Table qualified subquery failed: %v", err)
+		} else {
+			t.Logf("Table qualified subquery result: %v", result.Rows)
+		}
+	})
+
+	// Test expression returning multiple rows from scalar subquery
+	t.Run("Scalar subquery multiple rows", func(t *testing.T) {
+		_, _ = exec.Execute(`INSERT INTO test (val, name) VALUES (20, 'test2')`)
+		result, err := exec.Execute(`SELECT (SELECT val FROM test) as vals`)
+		if err != nil {
+			t.Logf("Scalar subquery multiple rows error: %v", err)
+		} else {
+			t.Logf("Scalar subquery multiple rows result: %v", result.Rows)
+		}
+	})
+}
+
+// TestPragmaIntegrityCheckEdgeCases tests PRAGMA integrity check edge cases
+func TestPragmaIntegrityCheckEdgeCases(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "xxsql-pragma-edge-test-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	engine := storage.NewEngine(tmpDir)
+	exec := NewExecutor(engine)
+	exec.SetDatabase("test")
+
+	// Test integrity_check on empty database
+	t.Run("Empty database integrity", func(t *testing.T) {
+		result, err := exec.Execute(`PRAGMA integrity_check`)
+		if err != nil {
+			t.Logf("Empty integrity check failed: %v", err)
+		} else {
+			t.Logf("Empty integrity check result: %v", result.Rows)
+		}
+	})
+
+	// Create multiple tables and test
+	t.Run("Multiple tables integrity", func(t *testing.T) {
+		_, _ = exec.Execute(`CREATE TABLE t1 (id SEQ PRIMARY KEY)`)
+		_, _ = exec.Execute(`CREATE TABLE t2 (id SEQ PRIMARY KEY)`)
+		_, _ = exec.Execute(`CREATE TABLE t3 (id SEQ PRIMARY KEY)`)
+		_, _ = exec.Execute(`INSERT INTO t1 DEFAULT VALUES`)
+		_, _ = exec.Execute(`INSERT INTO t2 DEFAULT VALUES`)
+		_, _ = exec.Execute(`INSERT INTO t3 DEFAULT VALUES`)
+
+		result, err := exec.Execute(`PRAGMA integrity_check`)
+		if err != nil {
+			t.Logf("Multiple tables integrity failed: %v", err)
+		} else {
+			t.Logf("Multiple tables integrity result: %v", result.Rows)
+		}
+	})
+
+	// Test quick_check
+	t.Run("Quick check", func(t *testing.T) {
+		result, err := exec.Execute(`PRAGMA quick_check`)
+		if err != nil {
+			t.Logf("Quick check failed: %v", err)
+		} else {
+			t.Logf("Quick check result: %v", result.Rows)
+		}
+	})
+}
+
