@@ -20884,3 +20884,311 @@ func TestLateralExecutionPaths(t *testing.T) {
 	})
 }
 
+// TestHavingExprEvaluationMore tests evaluateHavingExpr paths
+func TestHavingExprEvaluationMore(t *testing.T) {
+	engine := setupTestEngine(t)
+	exec := NewExecutor(engine)
+	exec.SetDatabase("testdb")
+
+	_, _ = exec.Execute("CREATE TABLE having_expr (grp VARCHAR(20), val INT)")
+	_, _ = exec.Execute("INSERT INTO having_expr VALUES ('A', 10)")
+	_, _ = exec.Execute("INSERT INTO having_expr VALUES ('A', 20)")
+	_, _ = exec.Execute("INSERT INTO having_expr VALUES ('B', 30)")
+
+	t.Run("HAVING with column alias", func(t *testing.T) {
+		result, err := exec.Execute(`
+			SELECT grp AS category, SUM(val) AS total
+			FROM having_expr GROUP BY grp
+			HAVING total > 20
+		`)
+		if err != nil {
+			t.Logf("HAVING alias failed: %v", err)
+		} else {
+			t.Logf("HAVING alias result: %v", result.Rows)
+		}
+	})
+
+	t.Run("HAVING with aggregate in arithmetic", func(t *testing.T) {
+		result, err := exec.Execute(`
+			SELECT grp, SUM(val)
+			FROM having_expr GROUP BY grp
+			HAVING SUM(val) * 2 > 50
+		`)
+		if err != nil {
+			t.Logf("HAVING arithmetic failed: %v", err)
+		} else {
+			t.Logf("HAVING arithmetic result: %v", result.Rows)
+		}
+	})
+
+	t.Run("HAVING with multiple aggregates", func(t *testing.T) {
+		result, err := exec.Execute(`
+			SELECT grp, SUM(val), COUNT(*)
+			FROM having_expr GROUP BY grp
+			HAVING SUM(val) > COUNT(*) * 10
+		`)
+		if err != nil {
+			t.Logf("HAVING multiple failed: %v", err)
+		} else {
+			t.Logf("HAVING multiple result: %v", result.Rows)
+		}
+	})
+
+	t.Run("HAVING with scalar subquery returning value", func(t *testing.T) {
+		_, _ = exec.Execute("CREATE TABLE threshold (min_val INT)")
+		_, _ = exec.Execute("INSERT INTO threshold VALUES (25)")
+		result, err := exec.Execute(`
+			SELECT grp, SUM(val)
+			FROM having_expr GROUP BY grp
+			HAVING SUM(val) > (SELECT MIN(min_val) FROM threshold)
+		`)
+		if err != nil {
+			t.Logf("HAVING scalar value failed: %v", err)
+		} else {
+			t.Logf("HAVING scalar value result: %v", result.Rows)
+		}
+	})
+}
+
+// TestMoreEvaluateExpressionPaths tests more evaluateExpression paths
+func TestMoreEvaluateExpressionPaths(t *testing.T) {
+	engine := setupTestEngine(t)
+	exec := NewExecutor(engine)
+	exec.SetDatabase("testdb")
+
+	_, _ = exec.Execute("CREATE TABLE expr_tbl (id INT, name VARCHAR(50), value FLOAT)")
+	_, _ = exec.Execute("INSERT INTO expr_tbl VALUES (1, 'test', 3.14)")
+
+	t.Run("Expression with column ref in WHERE", func(t *testing.T) {
+		result, err := exec.Execute("SELECT id FROM expr_tbl WHERE id = 1")
+		if err != nil {
+			t.Logf("Column ref WHERE failed: %v", err)
+		} else {
+			t.Logf("Column ref WHERE result: %v", result.Rows)
+		}
+	})
+
+	t.Run("Expression with float column", func(t *testing.T) {
+		result, err := exec.Execute("SELECT value, value * 2 FROM expr_tbl")
+		if err != nil {
+			t.Logf("Float column failed: %v", err)
+		} else {
+			t.Logf("Float column result: %v", result.Rows)
+		}
+	})
+
+	t.Run("Expression with unary on float", func(t *testing.T) {
+		result, err := exec.Execute("SELECT -value FROM expr_tbl")
+		if err != nil {
+			t.Logf("Unary float failed: %v", err)
+		} else {
+			t.Logf("Unary float result: %v", result.Rows)
+		}
+	})
+
+	t.Run("Expression with CAST to float", func(t *testing.T) {
+		result, err := exec.Execute("SELECT CAST('3.14' AS FLOAT), CAST(id AS FLOAT) FROM expr_tbl")
+		if err != nil {
+			t.Logf("CAST float failed: %v", err)
+		} else {
+			t.Logf("CAST float result: %v", result.Rows)
+		}
+	})
+
+	t.Run("Expression with COLLATE", func(t *testing.T) {
+		result, err := exec.Execute("SELECT name COLLATE NOCASE FROM expr_tbl WHERE name COLLATE NOCASE = 'TEST'")
+		if err != nil {
+			t.Logf("COLLATE failed: %v", err)
+		} else {
+			t.Logf("COLLATE result: %v", result.Rows)
+		}
+	})
+}
+
+// TestMoreFunctionEvaluation tests more function evaluation paths
+func TestMoreFunctionEvaluation(t *testing.T) {
+	engine := setupTestEngine(t)
+	exec := NewExecutor(engine)
+	exec.SetDatabase("testdb")
+
+	t.Run("NULL argument functions", func(t *testing.T) {
+		result, err := exec.Execute("SELECT LENGTH(NULL), UPPER(NULL), LOWER(NULL)")
+		if err != nil {
+			t.Logf("NULL args failed: %v", err)
+		} else {
+			t.Logf("NULL args result: %v", result.Rows)
+		}
+	})
+
+	t.Run("Nested function calls", func(t *testing.T) {
+		result, err := exec.Execute("SELECT UPPER(SUBSTR(LOWER('HELLO'), 1, 3))")
+		if err != nil {
+			t.Logf("Nested failed: %v", err)
+		} else {
+			t.Logf("Nested result: %v", result.Rows)
+		}
+	})
+
+	t.Run("CASE in function", func(t *testing.T) {
+		result, err := exec.Execute("SELECT UPPER(CASE WHEN 1 > 0 THEN 'yes' ELSE 'no' END)")
+		if err != nil {
+			t.Logf("CASE in function failed: %v", err)
+		} else {
+			t.Logf("CASE in function result: %v", result.Rows)
+		}
+	})
+
+	t.Run("Function with no args", func(t *testing.T) {
+		result, err := exec.Execute("SELECT PI(), RANDOM()")
+		if err != nil {
+			t.Logf("No args failed: %v", err)
+		} else {
+			t.Logf("No args result: %v", result.Rows)
+		}
+	})
+}
+
+// TestMoreUnionOperations tests more UNION operations
+func TestMoreUnionOperations(t *testing.T) {
+	engine := setupTestEngine(t)
+	exec := NewExecutor(engine)
+	exec.SetDatabase("testdb")
+
+	_, _ = exec.Execute("CREATE TABLE union_a (id INT, name VARCHAR(50))")
+	_, _ = exec.Execute("INSERT INTO union_a VALUES (1, 'Alice')")
+	_, _ = exec.Execute("INSERT INTO union_a VALUES (2, 'Bob')")
+
+	_, _ = exec.Execute("CREATE TABLE union_b (id INT, name VARCHAR(50))")
+	_, _ = exec.Execute("INSERT INTO union_b VALUES (2, 'Bob')")
+	_, _ = exec.Execute("INSERT INTO union_b VALUES (3, 'Charlie')")
+
+	t.Run("UNION with tables", func(t *testing.T) {
+		result, err := exec.Execute("SELECT id, name FROM union_a UNION SELECT id, name FROM union_b")
+		if err != nil {
+			t.Logf("UNION tables failed: %v", err)
+		} else {
+			t.Logf("UNION tables result: %v", result.Rows)
+		}
+	})
+
+	t.Run("UNION ALL with tables", func(t *testing.T) {
+		result, err := exec.Execute("SELECT id, name FROM union_a UNION ALL SELECT id, name FROM union_b")
+		if err != nil {
+			t.Logf("UNION ALL tables failed: %v", err)
+		} else {
+			t.Logf("UNION ALL tables result: %v", result.Rows)
+		}
+	})
+}
+
+// TestMoreWhereExpressions tests more WHERE expression paths
+func TestMoreWhereExpressions(t *testing.T) {
+	engine := setupTestEngine(t)
+	exec := NewExecutor(engine)
+	exec.SetDatabase("testdb")
+
+	_, _ = exec.Execute("CREATE TABLE where_expr (id INT, status VARCHAR(20), priority INT)")
+	_, _ = exec.Execute("INSERT INTO where_expr VALUES (1, 'active', 10)")
+	_, _ = exec.Execute("INSERT INTO where_expr VALUES (2, 'inactive', 20)")
+	_, _ = exec.Execute("INSERT INTO where_expr VALUES (3, 'active', 30)")
+
+	_, _ = exec.Execute("CREATE TABLE priority_ref (min_priority INT)")
+	_, _ = exec.Execute("INSERT INTO priority_ref VALUES (15)")
+
+	t.Run("WHERE with binary AND", func(t *testing.T) {
+		result, err := exec.Execute("SELECT id FROM where_expr WHERE status = 'active' AND priority > 15")
+		if err != nil {
+			t.Logf("Binary AND failed: %v", err)
+		} else {
+			t.Logf("Binary AND result: %v", result.Rows)
+		}
+	})
+
+	t.Run("WHERE with scalar subquery comparison", func(t *testing.T) {
+		result, err := exec.Execute(`
+			SELECT id FROM where_expr
+			WHERE priority > (SELECT MIN(min_priority) FROM priority_ref)
+		`)
+		if err != nil {
+			t.Logf("Scalar comparison failed: %v", err)
+		} else {
+			t.Logf("Scalar comparison result: %v", result.Rows)
+		}
+	})
+
+	t.Run("WHERE with ANY", func(t *testing.T) {
+		result, err := exec.Execute(`
+			SELECT id FROM where_expr WHERE priority > ANY (SELECT min_priority FROM priority_ref)
+		`)
+		if err != nil {
+			t.Logf("ANY failed: %v", err)
+		} else {
+			t.Logf("ANY result: %v", result.Rows)
+		}
+	})
+
+	t.Run("WHERE with ALL", func(t *testing.T) {
+		result, err := exec.Execute(`
+			SELECT id FROM where_expr WHERE priority >= ALL (SELECT min_priority FROM priority_ref)
+		`)
+		if err != nil {
+			t.Logf("ALL failed: %v", err)
+		} else {
+			t.Logf("ALL result: %v", result.Rows)
+		}
+	})
+}
+
+// TestMoreJoinOperations tests more JOIN operations
+func TestMoreJoinOperations(t *testing.T) {
+	engine := setupTestEngine(t)
+	exec := NewExecutor(engine)
+	exec.SetDatabase("testdb")
+
+	_, _ = exec.Execute("CREATE TABLE dept_tbl (id INT, name VARCHAR(50))")
+	_, _ = exec.Execute("INSERT INTO dept_tbl VALUES (1, 'Engineering')")
+	_, _ = exec.Execute("INSERT INTO dept_tbl VALUES (2, 'Sales')")
+
+	_, _ = exec.Execute("CREATE TABLE emp_tbl (id INT, name VARCHAR(50), dept_id INT)")
+	_, _ = exec.Execute("INSERT INTO emp_tbl VALUES (1, 'Alice', 1)")
+	_, _ = exec.Execute("INSERT INTO emp_tbl VALUES (2, 'Bob', 1)")
+	_, _ = exec.Execute("INSERT INTO emp_tbl VALUES (3, 'Charlie', NULL)")
+
+	t.Run("LEFT JOIN with NULL", func(t *testing.T) {
+		result, err := exec.Execute(`
+			SELECT e.name, d.name AS dept
+			FROM emp_tbl e LEFT JOIN dept_tbl d ON e.dept_id = d.id
+		`)
+		if err != nil {
+			t.Logf("LEFT JOIN failed: %v", err)
+		} else {
+			t.Logf("LEFT JOIN result: %v", result.Rows)
+		}
+	})
+
+	t.Run("INNER JOIN", func(t *testing.T) {
+		result, err := exec.Execute(`
+			SELECT e.name, d.name AS dept
+			FROM emp_tbl e INNER JOIN dept_tbl d ON e.dept_id = d.id
+		`)
+		if err != nil {
+			t.Logf("INNER JOIN failed: %v", err)
+		} else {
+			t.Logf("INNER JOIN result: %v", result.Rows)
+		}
+	})
+
+	t.Run("JOIN with WHERE on joined table", func(t *testing.T) {
+		result, err := exec.Execute(`
+			SELECT e.name FROM emp_tbl e
+			JOIN dept_tbl d ON e.dept_id = d.id
+			WHERE d.name = 'Engineering'
+		`)
+		if err != nil {
+			t.Logf("JOIN WHERE failed: %v", err)
+		} else {
+			t.Logf("JOIN WHERE result: %v", result.Rows)
+		}
+	})
+}
+
