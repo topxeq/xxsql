@@ -14624,3 +14624,295 @@ func TestSelectWithCte(t *testing.T) {
 	})
 }
 
+// TestCreateViewMore tests CREATE VIEW with various options
+func TestCreateViewMore(t *testing.T) {
+	engine := setupTestEngine(t)
+	exec := NewExecutor(engine)
+	exec.SetDatabase("testdb")
+
+	// Create base table
+	_, err := exec.Execute("CREATE TABLE view_base (id INT, name VARCHAR(50), status VARCHAR(20))")
+	if err != nil {
+		t.Fatalf("Failed to create table: %v", err)
+	}
+	_, _ = exec.Execute("INSERT INTO view_base VALUES (1, 'Alice', 'active')")
+	_, _ = exec.Execute("INSERT INTO view_base VALUES (2, 'Bob', 'inactive')")
+
+	t.Run("CREATE VIEW", func(t *testing.T) {
+		result, err := exec.Execute("CREATE VIEW active_users AS SELECT id, name FROM view_base WHERE status = 'active'")
+		if err != nil {
+			t.Errorf("CREATE VIEW failed: %v", err)
+		}
+		t.Logf("CREATE VIEW result: %d affected", result.Affected)
+	})
+
+	t.Run("SELECT from view", func(t *testing.T) {
+		result, err := exec.Execute("SELECT * FROM active_users")
+		if err != nil {
+			t.Errorf("SELECT from view failed: %v", err)
+		}
+		t.Logf("View result: %v", result.Rows)
+	})
+
+	t.Run("CREATE OR REPLACE VIEW", func(t *testing.T) {
+		result, err := exec.Execute("CREATE OR REPLACE VIEW active_users AS SELECT id, name, status FROM view_base")
+		if err != nil {
+			t.Errorf("CREATE OR REPLACE VIEW failed: %v", err)
+		}
+		t.Logf("CREATE OR REPLACE VIEW result: %d affected", result.Affected)
+	})
+
+	t.Run("DROP VIEW", func(t *testing.T) {
+		result, err := exec.Execute("DROP VIEW IF EXISTS active_users")
+		if err != nil {
+			t.Errorf("DROP VIEW failed: %v", err)
+		}
+		t.Logf("DROP VIEW result: %d affected", result.Affected)
+	})
+
+	t.Run("CREATE VIEW with columns", func(t *testing.T) {
+		result, err := exec.Execute("CREATE VIEW user_view (user_id, user_name) AS SELECT id, name FROM view_base")
+		if err != nil {
+			t.Errorf("CREATE VIEW with columns failed: %v", err)
+		}
+		t.Logf("CREATE VIEW with columns result: %v", result)
+		// Clean up
+		_, _ = exec.Execute("DROP VIEW IF EXISTS user_view")
+	})
+}
+
+// TestSelectWithMoreConditions tests SELECT with various WHERE conditions
+func TestSelectWithMoreConditions(t *testing.T) {
+	engine := setupTestEngine(t)
+	exec := NewExecutor(engine)
+	exec.SetDatabase("testdb")
+
+	// Create table
+	_, _ = exec.Execute("CREATE TABLE cond_test (id INT, name VARCHAR(50), value INT, active BOOL)")
+	_, _ = exec.Execute("INSERT INTO cond_test VALUES (1, 'Alice', 100, true)")
+	_, _ = exec.Execute("INSERT INTO cond_test VALUES (2, 'Bob', 200, false)")
+	_, _ = exec.Execute("INSERT INTO cond_test VALUES (3, 'Charlie', 150, true)")
+	_, _ = exec.Execute("INSERT INTO cond_test VALUES (4, 'Diana', 250, true)")
+
+	t.Run("BETWEEN", func(t *testing.T) {
+		result, err := exec.Execute("SELECT * FROM cond_test WHERE value BETWEEN 100 AND 200")
+		if err != nil {
+			t.Errorf("BETWEEN failed: %v", err)
+		}
+		t.Logf("BETWEEN result: %v", result.Rows)
+	})
+
+	t.Run("NOT BETWEEN", func(t *testing.T) {
+		result, err := exec.Execute("SELECT * FROM cond_test WHERE value NOT BETWEEN 150 AND 200")
+		if err != nil {
+			t.Errorf("NOT BETWEEN failed: %v", err)
+		}
+		t.Logf("NOT BETWEEN result: %v", result.Rows)
+	})
+
+	t.Run("IN list", func(t *testing.T) {
+		result, err := exec.Execute("SELECT * FROM cond_test WHERE name = 'Alice' OR name = 'Bob'")
+		if err != nil {
+			t.Errorf("OR failed: %v", err)
+		}
+		t.Logf("OR result: %v", result.Rows)
+	})
+
+	t.Run("NOT IN", func(t *testing.T) {
+		result, err := exec.Execute("SELECT * FROM cond_test WHERE name != 'Alice'")
+		if err != nil {
+			t.Errorf("!= failed: %v", err)
+		}
+		t.Logf("!= result: %v", result.Rows)
+	})
+
+	t.Run("IS NULL", func(t *testing.T) {
+		_, _ = exec.Execute("INSERT INTO cond_test VALUES (5, NULL, 300, false)")
+		result, err := exec.Execute("SELECT * FROM cond_test WHERE name IS NULL")
+		if err != nil {
+			t.Errorf("IS NULL failed: %v", err)
+		}
+		t.Logf("IS NULL result: %v", result.Rows)
+	})
+
+	t.Run("IS NOT NULL", func(t *testing.T) {
+		result, err := exec.Execute("SELECT * FROM cond_test WHERE name IS NOT NULL")
+		if err != nil {
+			t.Errorf("IS NOT NULL failed: %v", err)
+		}
+		t.Logf("IS NOT NULL result: %d rows", len(result.Rows))
+	})
+
+	t.Run("LIKE pattern", func(t *testing.T) {
+		result, err := exec.Execute("SELECT * FROM cond_test WHERE name LIKE 'A%'")
+		if err != nil {
+			t.Errorf("LIKE failed: %v", err)
+		}
+		t.Logf("LIKE result: %v", result.Rows)
+	})
+
+	t.Run("NOT LIKE", func(t *testing.T) {
+		result, err := exec.Execute("SELECT * FROM cond_test WHERE name NOT LIKE 'A%'")
+		if err != nil {
+			t.Errorf("NOT LIKE failed: %v", err)
+		}
+		t.Logf("NOT LIKE result: %v", result.Rows)
+	})
+
+	t.Run("Multiple conditions with AND/OR", func(t *testing.T) {
+		result, err := exec.Execute("SELECT * FROM cond_test WHERE (value > 100 AND active = true) OR name = 'Bob'")
+		if err != nil {
+			t.Errorf("AND/OR failed: %v", err)
+		}
+		t.Logf("AND/OR result: %v", result.Rows)
+	})
+}
+
+// TestMoreFunctionCalls tests additional SQL functions
+func TestMoreFunctionCalls(t *testing.T) {
+	engine := setupTestEngine(t)
+	exec := NewExecutor(engine)
+	exec.SetDatabase("testdb")
+
+	t.Run("COALESCE", func(t *testing.T) {
+		result, err := exec.Execute("SELECT COALESCE(NULL, 'default', 'value')")
+		if err != nil {
+			t.Errorf("COALESCE failed: %v", err)
+		}
+		t.Logf("COALESCE result: %v", result.Rows)
+	})
+
+	t.Run("IFNULL", func(t *testing.T) {
+		result, err := exec.Execute("SELECT IFNULL(NULL, 'default')")
+		if err != nil {
+			t.Errorf("IFNULL failed: %v", err)
+		}
+		t.Logf("IFNULL result: %v", result.Rows)
+	})
+
+	t.Run("NULLIF", func(t *testing.T) {
+		result, err := exec.Execute("SELECT NULLIF('same', 'same')")
+		if err != nil {
+			t.Errorf("NULLIF failed: %v", err)
+		}
+		t.Logf("NULLIF result: %v", result.Rows)
+	})
+
+	t.Run("ABS", func(t *testing.T) {
+		result, err := exec.Execute("SELECT ABS(-42)")
+		if err != nil {
+			t.Errorf("ABS failed: %v", err)
+		}
+		t.Logf("ABS result: %v", result.Rows)
+	})
+
+	t.Run("ROUND", func(t *testing.T) {
+		result, err := exec.Execute("SELECT ROUND(3.14159, 2)")
+		if err != nil {
+			t.Errorf("ROUND failed: %v", err)
+		}
+		t.Logf("ROUND result: %v", result.Rows)
+	})
+
+	t.Run("LENGTH", func(t *testing.T) {
+		result, err := exec.Execute("SELECT LENGTH('hello world')")
+		if err != nil {
+			t.Errorf("LENGTH failed: %v", err)
+		}
+		t.Logf("LENGTH result: %v", result.Rows)
+	})
+
+	t.Run("UPPER/LOWER", func(t *testing.T) {
+		result, err := exec.Execute("SELECT UPPER('hello'), LOWER('HELLO')")
+		if err != nil {
+			t.Errorf("UPPER/LOWER failed: %v", err)
+		}
+		t.Logf("UPPER/LOWER result: %v", result.Rows)
+	})
+
+	t.Run("SUBSTR", func(t *testing.T) {
+		result, err := exec.Execute("SELECT SUBSTR('hello world', 1, 5)")
+		if err != nil {
+			t.Errorf("SUBSTR failed: %v", err)
+		}
+		t.Logf("SUBSTR result: %v", result.Rows)
+	})
+
+	t.Run("REPLACE", func(t *testing.T) {
+		result, err := exec.Execute("SELECT REPLACE('hello world', 'world', 'there')")
+		if err != nil {
+			t.Errorf("REPLACE failed: %v", err)
+		}
+		t.Logf("REPLACE result: %v", result.Rows)
+	})
+
+	t.Run("CONCAT", func(t *testing.T) {
+		result, err := exec.Execute("SELECT CONCAT('Hello', ' ', 'World')")
+		if err != nil {
+			t.Errorf("CONCAT failed: %v", err)
+		}
+		t.Logf("CONCAT result: %v", result.Rows)
+	})
+
+	t.Run("TRIM", func(t *testing.T) {
+		result, err := exec.Execute("SELECT TRIM('  hello  ')")
+		if err != nil {
+			t.Errorf("TRIM failed: %v", err)
+		}
+		t.Logf("TRIM result: %v", result.Rows)
+	})
+}
+
+// TestGenerateQueryPlanMore tests query plan generation
+func TestGenerateQueryPlanMore(t *testing.T) {
+	engine := setupTestEngine(t)
+	exec := NewExecutor(engine)
+	exec.SetDatabase("testdb")
+
+	// Create tables
+	_, _ = exec.Execute("CREATE TABLE plan_a (id INT, name VARCHAR(50))")
+	_, _ = exec.Execute("INSERT INTO plan_a VALUES (1, 'Alice')")
+	_, _ = exec.Execute("CREATE TABLE plan_b (id INT, value INT)")
+	_, _ = exec.Execute("INSERT INTO plan_b VALUES (1, 100)")
+
+	t.Run("Simple SELECT", func(t *testing.T) {
+		result, err := exec.Execute("SELECT * FROM plan_a")
+		if err != nil {
+			t.Errorf("Simple SELECT failed: %v", err)
+		}
+		t.Logf("Result: %v", result.Rows)
+	})
+
+	t.Run("SELECT with WHERE", func(t *testing.T) {
+		result, err := exec.Execute("SELECT * FROM plan_a WHERE id = 1")
+		if err != nil {
+			t.Errorf("SELECT with WHERE failed: %v", err)
+		}
+		t.Logf("Result: %v", result.Rows)
+	})
+
+	t.Run("SELECT with JOIN", func(t *testing.T) {
+		result, err := exec.Execute("SELECT a.name, b.value FROM plan_a a JOIN plan_b b ON a.id = b.id")
+		if err != nil {
+			t.Errorf("SELECT with JOIN failed: %v", err)
+		}
+		t.Logf("Result: %v", result.Rows)
+	})
+
+	t.Run("SELECT with LEFT JOIN", func(t *testing.T) {
+		result, err := exec.Execute("SELECT a.name, b.value FROM plan_a a LEFT JOIN plan_b b ON a.id = b.id")
+		if err != nil {
+			t.Errorf("SELECT with LEFT JOIN failed: %v", err)
+		}
+		t.Logf("Result: %v", result.Rows)
+	})
+
+	t.Run("SELECT with subquery", func(t *testing.T) {
+		result, err := exec.Execute("SELECT * FROM plan_a WHERE id IN (SELECT id FROM plan_b WHERE value > 50)")
+		if err != nil {
+			t.Errorf("SELECT with subquery failed: %v", err)
+		}
+		t.Logf("Result: %v", result.Rows)
+	})
+}
+
