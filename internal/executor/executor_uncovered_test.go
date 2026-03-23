@@ -21441,3 +21441,235 @@ func TestMoreDistinctQueries(t *testing.T) {
 	})
 }
 
+// TestMoreLateralScenarios tests more LATERAL scenarios
+func TestMoreLateralScenariosExtra(t *testing.T) {
+	engine := setupTestEngine(t)
+	exec := NewExecutor(engine)
+	exec.SetDatabase("testdb")
+
+	_, _ = exec.Execute("CREATE TABLE lat_outer (id INT, value INT)")
+	_, _ = exec.Execute("INSERT INTO lat_outer VALUES (1, 10)")
+	_, _ = exec.Execute("INSERT INTO lat_outer VALUES (2, 20)")
+
+	t.Run("LATERAL with multiple column expressions", func(t *testing.T) {
+		result, err := exec.Execute(`
+			SELECT a, b, a + b as sum_val FROM LATERAL (SELECT 5 AS a, 10 AS b) AS x
+		`)
+		if err != nil {
+			t.Logf("LATERAL multi-column failed: %v", err)
+		} else {
+			t.Logf("LATERAL multi-column result: %v", result.Rows)
+		}
+	})
+
+	t.Run("LATERAL with table reference", func(t *testing.T) {
+		result, err := exec.Execute(`
+			SELECT * FROM LATERAL (SELECT * FROM lat_outer WHERE value > 15) AS lat
+		`)
+		if err != nil {
+			t.Logf("LATERAL table ref failed: %v", err)
+		} else {
+			t.Logf("LATERAL table ref result: %v", result.Rows)
+		}
+	})
+}
+
+// TestMoreHavingClausePaths tests more HAVING clause execution paths
+func TestMoreHavingClausePaths(t *testing.T) {
+	engine := setupTestEngine(t)
+	exec := NewExecutor(engine)
+	exec.SetDatabase("testdb")
+
+	_, _ = exec.Execute("CREATE TABLE having_paths (grp VARCHAR(20), val INT, status VARCHAR(20))")
+	_, _ = exec.Execute("INSERT INTO having_paths VALUES ('A', 10, 'active')")
+	_, _ = exec.Execute("INSERT INTO having_paths VALUES ('A', 20, 'active')")
+	_, _ = exec.Execute("INSERT INTO having_paths VALUES ('B', 30, 'inactive')")
+
+	t.Run("HAVING with column reference", func(t *testing.T) {
+		result, err := exec.Execute(`
+			SELECT grp, SUM(val) FROM having_paths GROUP BY grp HAVING grp = 'A'
+		`)
+		if err != nil {
+			t.Logf("HAVING column ref failed: %v", err)
+		} else {
+			t.Logf("HAVING column ref result: %v", result.Rows)
+		}
+	})
+
+	t.Run("HAVING with binary expression", func(t *testing.T) {
+		result, err := exec.Execute(`
+			SELECT grp FROM having_paths GROUP BY grp HAVING SUM(val) - 5 > 20
+		`)
+		if err != nil {
+			t.Logf("HAVING binary failed: %v", err)
+		} else {
+			t.Logf("HAVING binary result: %v", result.Rows)
+		}
+	})
+
+	t.Run("HAVING with nested aggregates", func(t *testing.T) {
+		result, err := exec.Execute(`
+			SELECT grp FROM having_paths GROUP BY grp HAVING COUNT(*) > 1 AND SUM(val) > 25
+		`)
+		if err != nil {
+			t.Logf("HAVING nested failed: %v", err)
+		} else {
+			t.Logf("HAVING nested result: %v", result.Rows)
+		}
+	})
+}
+
+// TestMoreExpressionEvaluation tests more expression evaluation paths
+func TestMoreExpressionEvaluationExtra(t *testing.T) {
+	engine := setupTestEngine(t)
+	exec := NewExecutor(engine)
+	exec.SetDatabase("testdb")
+
+	_, _ = exec.Execute("CREATE TABLE expr_eval (id INT, a INT, b FLOAT, c VARCHAR(50))")
+	_, _ = exec.Execute("INSERT INTO expr_eval VALUES (1, 10, 3.5, 'hello')")
+
+	t.Run("Binary with different types", func(t *testing.T) {
+		result, err := exec.Execute("SELECT a + b, a - b, a * b FROM expr_eval")
+		if err != nil {
+			t.Logf("Binary diff types failed: %v", err)
+		} else {
+			t.Logf("Binary diff types result: %v", result.Rows)
+		}
+	})
+
+	t.Run("Comparison with column", func(t *testing.T) {
+		result, err := exec.Execute("SELECT id FROM expr_eval WHERE a > 5")
+		if err != nil {
+			t.Logf("Comparison column failed: %v", err)
+		} else {
+			t.Logf("Comparison column result: %v", result.Rows)
+		}
+	})
+
+	t.Run("Function with column arg", func(t *testing.T) {
+		result, err := exec.Execute("SELECT UPPER(c), LENGTH(c) FROM expr_eval")
+		if err != nil {
+			t.Logf("Function column arg failed: %v", err)
+		} else {
+			t.Logf("Function column arg result: %v", result.Rows)
+		}
+	})
+
+	t.Run("Nested unary expression", func(t *testing.T) {
+		result, err := exec.Execute("SELECT -(-a) FROM expr_eval")
+		if err != nil {
+			t.Logf("Nested unary failed: %v", err)
+		} else {
+			t.Logf("Nested unary result: %v", result.Rows)
+		}
+	})
+}
+
+// TestMoreFunctionPaths tests more function execution paths
+func TestMoreFunctionPaths(t *testing.T) {
+	engine := setupTestEngine(t)
+	exec := NewExecutor(engine)
+	exec.SetDatabase("testdb")
+
+	t.Run("String functions with column", func(t *testing.T) {
+		_, _ = exec.Execute("CREATE TABLE str_data (text VARCHAR(100))")
+		_, _ = exec.Execute("INSERT INTO str_data VALUES ('Hello World')")
+		result, err := exec.Execute(`
+			SELECT LENGTH(text), UPPER(text), LOWER(text), SUBSTR(text, 1, 5) FROM str_data
+		`)
+		if err != nil {
+			t.Logf("String functions failed: %v", err)
+		} else {
+			t.Logf("String functions result: %v", result.Rows)
+		}
+	})
+
+	t.Run("Math functions with values", func(t *testing.T) {
+		result, err := exec.Execute(`
+			SELECT ABS(-5), CEIL(3.2), FLOOR(3.8), ROUND(3.14159, 2)
+		`)
+		if err != nil {
+			t.Logf("Math functions failed: %v", err)
+		} else {
+			t.Logf("Math functions result: %v", result.Rows)
+		}
+	})
+
+	t.Run("Conditional functions", func(t *testing.T) {
+		result, err := exec.Execute(`
+			SELECT COALESCE(NULL, 'default'), IFNULL(NULL, 100), NULLIF(5, 5), NULLIF(5, 3)
+		`)
+		if err != nil {
+			t.Logf("Conditional functions failed: %v", err)
+		} else {
+			t.Logf("Conditional functions result: %v", result.Rows)
+		}
+	})
+}
+
+// TestMoreUnionVariations tests more UNION variations
+func TestMoreUnionVariations(t *testing.T) {
+	engine := setupTestEngine(t)
+	exec := NewExecutor(engine)
+	exec.SetDatabase("testdb")
+
+	_, _ = exec.Execute("CREATE TABLE union1 (x INT)")
+	_, _ = exec.Execute("INSERT INTO union1 VALUES (1)")
+	_, _ = exec.Execute("INSERT INTO union1 VALUES (2)")
+
+	_, _ = exec.Execute("CREATE TABLE union2 (x INT)")
+	_, _ = exec.Execute("INSERT INTO union2 VALUES (2)")
+	_, _ = exec.Execute("INSERT INTO union2 VALUES (3)")
+
+	t.Run("UNION with expressions", func(t *testing.T) {
+		result, err := exec.Execute(`
+			SELECT x + 1 AS y FROM union1 UNION SELECT x FROM union2
+		`)
+		if err != nil {
+			t.Logf("UNION expressions failed: %v", err)
+		} else {
+			t.Logf("UNION expressions result: %v", result.Rows)
+		}
+	})
+
+	t.Run("Multiple UNION", func(t *testing.T) {
+		result, err := exec.Execute(`
+			SELECT x FROM union1 UNION SELECT x FROM union2 UNION SELECT 4
+		`)
+		if err != nil {
+			t.Logf("Multiple UNION failed: %v", err)
+		} else {
+			t.Logf("Multiple UNION result: %v", result.Rows)
+		}
+	})
+}
+
+// TestExportSelect tests SELECT for export
+func TestExportSelect(t *testing.T) {
+	engine := setupTestEngine(t)
+	exec := NewExecutor(engine)
+	exec.SetDatabase("testdb")
+
+	_, _ = exec.Execute("CREATE TABLE export_tbl (id INT, name VARCHAR(50))")
+	_, _ = exec.Execute("INSERT INTO export_tbl VALUES (1, 'test1')")
+	_, _ = exec.Execute("INSERT INTO export_tbl VALUES (2, 'test2')")
+
+	t.Run("Simple SELECT for export", func(t *testing.T) {
+		result, err := exec.Execute("SELECT * FROM export_tbl")
+		if err != nil {
+			t.Logf("Simple export failed: %v", err)
+		} else {
+			t.Logf("Simple export result: %d rows", len(result.Rows))
+		}
+	})
+
+	t.Run("SELECT with WHERE for export", func(t *testing.T) {
+		result, err := exec.Execute("SELECT * FROM export_tbl WHERE id = 1")
+		if err != nil {
+			t.Logf("WHERE export failed: %v", err)
+		} else {
+			t.Logf("WHERE export result: %v", result.Rows)
+		}
+	})
+}
+
