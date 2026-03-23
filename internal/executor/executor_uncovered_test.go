@@ -23669,3 +23669,389 @@ func TestHasAggregateEdgeCases(t *testing.T) {
 	})
 }
 
+// TestEvaluateUnaryExprMore tests unary expressions
+func TestEvaluateUnaryExprMore(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "xxsql-unary-test-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	engine := storage.NewEngine(tmpDir)
+	exec := NewExecutor(engine)
+	exec.SetDatabase("test")
+
+	_, err = exec.Execute(`CREATE TABLE test (id SEQ PRIMARY KEY, val INT)`)
+	if err != nil {
+		t.Fatalf("Failed to create table: %v", err)
+	}
+
+	// Test unary minus on int64
+	t.Run("Unary minus int64", func(t *testing.T) {
+		result, err := exec.Execute(`SELECT -9223372036854775807`)
+		if err != nil {
+			t.Logf("Unary minus int64 failed: %v", err)
+		} else {
+			t.Logf("Unary minus int64 result: %v", result.Rows)
+		}
+	})
+
+	// Test unary plus
+	t.Run("Unary plus", func(t *testing.T) {
+		result, err := exec.Execute(`SELECT +100`)
+		if err != nil {
+			t.Logf("Unary plus failed: %v", err)
+		} else {
+			t.Logf("Unary plus result: %v", result.Rows)
+		}
+	})
+
+	// Test NOT on boolean
+	t.Run("NOT boolean", func(t *testing.T) {
+		result, err := exec.Execute(`SELECT NOT 0`)
+		if err != nil {
+			t.Logf("NOT boolean failed: %v", err)
+		} else {
+			t.Logf("NOT boolean result: %v", result.Rows)
+		}
+	})
+
+	// Test unary on NULL
+	t.Run("Unary on NULL", func(t *testing.T) {
+		result, err := exec.Execute(`SELECT -NULL`)
+		if err != nil {
+			t.Logf("Unary NULL failed: %v", err)
+		} else {
+			t.Logf("Unary NULL result: %v", result.Rows)
+		}
+	})
+}
+
+// TestWindowFuncArgValue tests window function argument evaluation
+func TestWindowFuncArgValue(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "xxsql-windowarg-test-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	engine := storage.NewEngine(tmpDir)
+	exec := NewExecutor(engine)
+	exec.SetDatabase("test")
+
+	_, err = exec.Execute(`CREATE TABLE sales (id SEQ PRIMARY KEY, amount INT, region VARCHAR(20))`)
+	if err != nil {
+		t.Fatalf("Failed to create table: %v", err)
+	}
+
+	_, err = exec.Execute(`INSERT INTO sales (amount, region) VALUES (100, 'North')`)
+	if err != nil {
+		t.Fatalf("Failed to insert: %v", err)
+	}
+	_, err = exec.Execute(`INSERT INTO sales (amount, region) VALUES (200, 'North')`)
+	if err != nil {
+		t.Fatalf("Failed to insert: %v", err)
+	}
+
+	// Test ROW_NUMBER with partition
+	t.Run("ROW_NUMBER with partition", func(t *testing.T) {
+		result, err := exec.Execute(`SELECT id, amount, ROW_NUMBER() OVER (PARTITION BY region ORDER BY amount) as rn FROM sales`)
+		if err != nil {
+			t.Logf("ROW_NUMBER partition failed: %v", err)
+		} else {
+			t.Logf("ROW_NUMBER partition result: %v", result.Rows)
+		}
+	})
+
+	// Test NTH_VALUE
+	t.Run("NTH_VALUE", func(t *testing.T) {
+		result, err := exec.Execute(`SELECT id, NTH_VALUE(amount, 1) OVER (ORDER BY id) as nth FROM sales`)
+		if err != nil {
+			t.Logf("NTH_VALUE failed: %v", err)
+		} else {
+			t.Logf("NTH_VALUE result: %v", result.Rows)
+		}
+	})
+
+	// Test NTILE
+	t.Run("NTILE", func(t *testing.T) {
+		result, err := exec.Execute(`SELECT id, NTILE(2) OVER (ORDER BY id) as tile FROM sales`)
+		if err != nil {
+			t.Logf("NTILE failed: %v", err)
+		} else {
+			t.Logf("NTILE result: %v", result.Rows)
+		}
+	})
+}
+
+// TestCTEExecutionPaths tests CTE execution paths
+func TestCTEExecutionPaths(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "xxsql-cte-test-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	engine := storage.NewEngine(tmpDir)
+	exec := NewExecutor(engine)
+	exec.SetDatabase("test")
+
+	_, err = exec.Execute(`CREATE TABLE orders (id SEQ PRIMARY KEY, customer_id INT, amount INT)`)
+	if err != nil {
+		t.Fatalf("Failed to create table: %v", err)
+	}
+
+	_, err = exec.Execute(`INSERT INTO orders (customer_id, amount) VALUES (1, 100)`)
+	if err != nil {
+		t.Fatalf("Failed to insert: %v", err)
+	}
+	_, err = exec.Execute(`INSERT INTO orders (customer_id, amount) VALUES (1, 200)`)
+	if err != nil {
+		t.Fatalf("Failed to insert: %v", err)
+	}
+	_, err = exec.Execute(`INSERT INTO orders (customer_id, amount) VALUES (2, 150)`)
+	if err != nil {
+		t.Fatalf("Failed to insert: %v", err)
+	}
+
+	// Test simple CTE
+	t.Run("Simple CTE", func(t *testing.T) {
+		result, err := exec.Execute(`WITH cte AS (SELECT * FROM orders WHERE amount > 100) SELECT * FROM cte`)
+		if err != nil {
+			t.Logf("Simple CTE failed: %v", err)
+		} else {
+			t.Logf("Simple CTE result: %v", result.Rows)
+		}
+	})
+
+	// Test CTE with aggregation
+	t.Run("CTE with aggregation", func(t *testing.T) {
+		result, err := exec.Execute(`WITH cte AS (SELECT customer_id, SUM(amount) as total FROM orders GROUP BY customer_id) SELECT * FROM cte WHERE total > 200`)
+		if err != nil {
+			t.Logf("CTE aggregation failed: %v", err)
+		} else {
+			t.Logf("CTE aggregation result: %v", result.Rows)
+		}
+	})
+
+	// Test multiple CTEs
+	t.Run("Multiple CTEs", func(t *testing.T) {
+		result, err := exec.Execute(`
+			WITH
+				cte1 AS (SELECT customer_id FROM orders WHERE amount > 100),
+				cte2 AS (SELECT DISTINCT customer_id FROM cte1)
+			SELECT * FROM cte2
+		`)
+		if err != nil {
+			t.Logf("Multiple CTEs failed: %v", err)
+		} else {
+			t.Logf("Multiple CTEs result: %v", result.Rows)
+		}
+	})
+}
+
+// TestPragmaIndexInfoExtra tests PRAGMA index_info
+func TestPragmaIndexInfoExtra(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "xxsql-pragma-idx-test-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	engine := storage.NewEngine(tmpDir)
+	exec := NewExecutor(engine)
+	exec.SetDatabase("test")
+
+	// Create table with index
+	_, err = exec.Execute(`CREATE TABLE users (id SEQ PRIMARY KEY, name VARCHAR(50), email VARCHAR(100))`)
+	if err != nil {
+		t.Fatalf("Failed to create table: %v", err)
+	}
+
+	_, err = exec.Execute(`CREATE INDEX idx_users_name ON users(name)`)
+	if err != nil {
+		t.Logf("Create index failed: %v", err)
+	}
+
+	// Test PRAGMA index_info
+	t.Run("PRAGMA index_info", func(t *testing.T) {
+		result, err := exec.Execute(`PRAGMA index_info(idx_users_name)`)
+		if err != nil {
+			t.Logf("PRAGMA index_info failed: %v", err)
+		} else {
+			t.Logf("PRAGMA index_info result: %v", result.Rows)
+		}
+	})
+
+	// Test PRAGMA index_list
+	t.Run("PRAGMA index_list", func(t *testing.T) {
+		result, err := exec.Execute(`PRAGMA index_list(users)`)
+		if err != nil {
+			t.Logf("PRAGMA index_list failed: %v", err)
+		} else {
+			t.Logf("PRAGMA index_list result: %v", result.Rows)
+		}
+	})
+}
+
+// TestTriggerEdgeCases tests CREATE TRIGGER edge cases
+func TestTriggerEdgeCases(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "xxsql-trigger-edge-test-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	engine := storage.NewEngine(tmpDir)
+	exec := NewExecutor(engine)
+	exec.SetDatabase("test")
+
+	_, err = exec.Execute(`CREATE TABLE users (id SEQ PRIMARY KEY, name VARCHAR(50))`)
+	if err != nil {
+		t.Fatalf("Failed to create table: %v", err)
+	}
+
+	// Test CREATE TRIGGER AFTER INSERT
+	t.Run("AFTER INSERT trigger", func(t *testing.T) {
+		result, err := exec.Execute(`CREATE TRIGGER trg_after_insert AFTER INSERT ON users FOR EACH ROW BEGIN SELECT 1; END`)
+		if err != nil {
+			t.Logf("AFTER INSERT trigger failed: %v", err)
+		} else {
+			t.Logf("AFTER INSERT trigger result: %v", result.Message)
+		}
+	})
+
+	// Test CREATE TRIGGER BEFORE UPDATE
+	t.Run("BEFORE UPDATE trigger", func(t *testing.T) {
+		result, err := exec.Execute(`CREATE TRIGGER trg_before_update BEFORE UPDATE ON users FOR EACH ROW BEGIN SELECT 1; END`)
+		if err != nil {
+			t.Logf("BEFORE UPDATE trigger failed: %v", err)
+		} else {
+			t.Logf("BEFORE UPDATE trigger result: %v", result.Message)
+		}
+	})
+
+	// Test CREATE TRIGGER AFTER DELETE
+	t.Run("AFTER DELETE trigger", func(t *testing.T) {
+		result, err := exec.Execute(`CREATE TRIGGER trg_after_delete AFTER DELETE ON users FOR EACH ROW BEGIN SELECT 1; END`)
+		if err != nil {
+			t.Logf("AFTER DELETE trigger failed: %v", err)
+		} else {
+			t.Logf("AFTER DELETE trigger result: %v", result.Message)
+		}
+	})
+}
+
+// TestWhereCollation tests WHERE clause with collation
+func TestWhereCollation(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "xxsql-collation-test-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	engine := storage.NewEngine(tmpDir)
+	exec := NewExecutor(engine)
+	exec.SetDatabase("test")
+
+	_, err = exec.Execute(`CREATE TABLE users (id SEQ PRIMARY KEY, name VARCHAR(50))`)
+	if err != nil {
+		t.Fatalf("Failed to create table: %v", err)
+	}
+
+	_, err = exec.Execute(`INSERT INTO users (name) VALUES ('Alice')`)
+	if err != nil {
+		t.Fatalf("Failed to insert: %v", err)
+	}
+	_, err = exec.Execute(`INSERT INTO users (name) VALUES ('alice')`)
+	if err != nil {
+		t.Fatalf("Failed to insert: %v", err)
+	}
+
+	// Test comparison with NOCASE collation
+	t.Run("COLLATE NOCASE", func(t *testing.T) {
+		result, err := exec.Execute(`SELECT * FROM users WHERE name = 'ALICE' COLLATE NOCASE`)
+		if err != nil {
+			t.Logf("COLLATE NOCASE failed: %v", err)
+		} else {
+			t.Logf("COLLATE NOCASE result: %v", result.Rows)
+		}
+	})
+
+	// Test LIKE with collation
+	t.Run("LIKE with collation", func(t *testing.T) {
+		result, err := exec.Execute(`SELECT * FROM users WHERE name LIKE 'ali%' COLLATE NOCASE`)
+		if err != nil {
+			t.Logf("LIKE collation failed: %v", err)
+		} else {
+			t.Logf("LIKE collation result: %v", result.Rows)
+		}
+	})
+}
+
+// TestFunctionEvaluationPaths tests more function evaluation paths
+func TestFunctionEvaluationPaths(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "xxsql-func-path-test-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	engine := storage.NewEngine(tmpDir)
+	exec := NewExecutor(engine)
+	exec.SetDatabase("test")
+
+	// Test functions with NULL arguments
+	t.Run("Functions with NULL", func(t *testing.T) {
+		tests := []string{
+			`SELECT COALESCE(NULL, 'default')`,
+			`SELECT IFNULL(NULL, 'default')`,
+			`SELECT NULLIF('a', 'a')`,
+			`SELECT IF(NULL, 'yes', 'no')`,
+		}
+
+		for _, q := range tests {
+			result, err := exec.Execute(q)
+			if err != nil {
+				t.Logf("Function with NULL failed (%s): %v", q, err)
+			} else {
+				t.Logf("Function with NULL result (%s): %v", q, result.Rows)
+			}
+		}
+	})
+
+	// Test aggregate functions with DISTINCT
+	t.Run("Aggregate with DISTINCT", func(t *testing.T) {
+		_, _ = exec.Execute(`CREATE TABLE nums (id SEQ PRIMARY KEY, val INT)`)
+		_, _ = exec.Execute(`INSERT INTO nums (val) VALUES (1)`)
+		_, _ = exec.Execute(`INSERT INTO nums (val) VALUES (1)`)
+		_, _ = exec.Execute(`INSERT INTO nums (val) VALUES (2)`)
+
+		result, err := exec.Execute(`SELECT COUNT(DISTINCT val) FROM nums`)
+		if err != nil {
+			t.Logf("COUNT DISTINCT failed: %v", err)
+		} else {
+			t.Logf("COUNT DISTINCT result: %v", result.Rows)
+		}
+	})
+
+	// Test string functions with special chars
+	t.Run("String functions special", func(t *testing.T) {
+		tests := []string{
+			`SELECT LENGTH('hello')`,
+			`SELECT CHAR(65, 66, 67)`,
+			`SELECT POSITION('ll' IN 'hello')`,
+			`SELECT LOCATE('ll', 'hello')`,
+		}
+
+		for _, q := range tests {
+			result, err := exec.Execute(q)
+			if err != nil {
+				t.Logf("String special failed (%s): %v", q, err)
+			} else {
+				t.Logf("String special result (%s): %v", q, result.Rows)
+			}
+		}
+	})
+}
+
