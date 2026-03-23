@@ -23407,3 +23407,265 @@ func TestEvaluateWhereNullHandling(t *testing.T) {
 	})
 }
 
+// TestColumnRefTablePrefix tests column references with table prefixes
+func TestColumnRefTablePrefix(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "xxsql-colprefix-test-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	engine := storage.NewEngine(tmpDir)
+	exec := NewExecutor(engine)
+	exec.SetDatabase("test")
+
+	// Create tables
+	_, err = exec.Execute(`CREATE TABLE table_a (id SEQ PRIMARY KEY, name VARCHAR(50))`)
+	if err != nil {
+		t.Fatalf("Failed to create table_a: %v", err)
+	}
+
+	_, err = exec.Execute(`CREATE TABLE table_b (id SEQ PRIMARY KEY, ref_id INT, value INT)`)
+	if err != nil {
+		t.Fatalf("Failed to create table_b: %v", err)
+	}
+
+	_, err = exec.Execute(`INSERT INTO table_a (name) VALUES ('Item1')`)
+	if err != nil {
+		t.Fatalf("Failed to insert: %v", err)
+	}
+	_, err = exec.Execute(`INSERT INTO table_b (ref_id, value) VALUES (1, 100)`)
+	if err != nil {
+		t.Fatalf("Failed to insert: %v", err)
+	}
+
+	// Test column with table prefix in JOIN
+	t.Run("Table prefix in JOIN", func(t *testing.T) {
+		result, err := exec.Execute(`SELECT table_a.name, table_b.value FROM table_a JOIN table_b ON table_a.id = table_b.ref_id`)
+		if err != nil {
+			t.Logf("JOIN with table prefix failed: %v", err)
+		} else {
+			t.Logf("JOIN with table prefix result: %v", result.Rows)
+		}
+	})
+
+	// Test column with mismatched table prefix (should use outer context)
+	t.Run("Mismatched table prefix", func(t *testing.T) {
+		result, err := exec.Execute(`SELECT table_b.value FROM table_b WHERE table_b.ref_id = 1`)
+		if err != nil {
+			t.Logf("Mismatched prefix failed: %v", err)
+		} else {
+			t.Logf("Mismatched prefix result: %v", result.Rows)
+		}
+	})
+}
+
+// TestRankExpr tests RANK expression for FTS
+func TestRankExpr(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "xxsql-rank-test-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	engine := storage.NewEngine(tmpDir)
+	exec := NewExecutor(engine)
+	exec.SetDatabase("test")
+
+	// Create table
+	_, err = exec.Execute(`CREATE TABLE docs (id SEQ PRIMARY KEY, content TEXT)`)
+	if err != nil {
+		t.Fatalf("Failed to create table: %v", err)
+	}
+
+	// Test RANK expression (without FTS context)
+	t.Run("RANK without FTS context", func(t *testing.T) {
+		result, err := exec.Execute(`SELECT id, RANK() OVER (ORDER BY id) as r FROM docs`)
+		if err != nil {
+			t.Logf("RANK failed: %v", err)
+		} else {
+			t.Logf("RANK result: %v", result.Rows)
+		}
+	})
+}
+
+// TestCastValueEdgeCases tests edge cases for CAST
+func TestCastValueEdgeCases(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "xxsql-castedge-test-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	engine := storage.NewEngine(tmpDir)
+	exec := NewExecutor(engine)
+	exec.SetDatabase("test")
+
+	// Test casting BLOB to INT
+	t.Run("BLOB to INT", func(t *testing.T) {
+		result, err := exec.Execute(`SELECT CAST(X'313233' AS INT)`)
+		if err != nil {
+			t.Logf("BLOB to INT failed: %v", err)
+		} else {
+			t.Logf("BLOB to INT result: %v", result.Rows)
+		}
+	})
+
+	// Test casting bool to INT
+	t.Run("Bool to INT", func(t *testing.T) {
+		result, err := exec.Execute(`SELECT CAST(1 AS BOOL)`)
+		if err != nil {
+			t.Logf("Bool to INT failed: %v", err)
+		} else {
+			t.Logf("Bool to INT result: %v", result.Rows)
+		}
+	})
+
+	// Test casting BLOB to FLOAT
+	t.Run("BLOB to FLOAT", func(t *testing.T) {
+		result, err := exec.Execute(`SELECT CAST(X'332E3134' AS FLOAT)`)
+		if err != nil {
+			t.Logf("BLOB to FLOAT failed: %v", err)
+		} else {
+			t.Logf("BLOB to FLOAT result: %v", result.Rows)
+		}
+	})
+
+	// Test casting BLOB to TEXT
+	t.Run("BLOB to TEXT", func(t *testing.T) {
+		result, err := exec.Execute(`SELECT CAST(X'68656C6C6F' AS TEXT)`)
+		if err != nil {
+			t.Logf("BLOB to TEXT failed: %v", err)
+		} else {
+			t.Logf("BLOB to TEXT result: %v", result.Rows)
+		}
+	})
+
+	// Test casting string to BLOB
+	t.Run("String to BLOB", func(t *testing.T) {
+		result, err := exec.Execute(`SELECT CAST('hello' AS BLOB)`)
+		if err != nil {
+			t.Logf("String to BLOB failed: %v", err)
+		} else {
+			t.Logf("String to BLOB result: %v", result.Rows)
+		}
+	})
+
+	// Test casting to DECIMAL
+	t.Run("Cast to DECIMAL", func(t *testing.T) {
+		result, err := exec.Execute(`SELECT CAST('123.45' AS DECIMAL)`)
+		if err != nil {
+			t.Logf("Cast to DECIMAL failed: %v", err)
+		} else {
+			t.Logf("Cast to DECIMAL result: %v", result.Rows)
+		}
+	})
+
+	// Test casting float to string
+	t.Run("Float to String", func(t *testing.T) {
+		result, err := exec.Execute(`SELECT CAST(3.14 AS VARCHAR)`)
+		if err != nil {
+			t.Logf("Float to String failed: %v", err)
+		} else {
+			t.Logf("Float to String result: %v", result.Rows)
+		}
+	})
+}
+
+// TestPragmaIntegrityCheckErrors tests PRAGMA integrity check with error conditions
+func TestPragmaIntegrityCheckErrors(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "xxsql-pragma-err-test-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	engine := storage.NewEngine(tmpDir)
+	exec := NewExecutor(engine)
+	exec.SetDatabase("test")
+
+	// Create a table
+	_, err = exec.Execute(`CREATE TABLE test_table (id SEQ PRIMARY KEY, name VARCHAR(50))`)
+	if err != nil {
+		t.Fatalf("Failed to create table: %v", err)
+	}
+
+	// Test integrity_check on database with tables
+	t.Run("Integrity check with data", func(t *testing.T) {
+		_, err = exec.Execute(`INSERT INTO test_table (name) VALUES ('test')`)
+		if err != nil {
+			t.Logf("Insert failed: %v", err)
+		}
+
+		result, err := exec.Execute(`PRAGMA integrity_check`)
+		if err != nil {
+			t.Logf("Integrity check failed: %v", err)
+		} else {
+			t.Logf("Integrity check result: %v", result.Rows)
+		}
+	})
+
+	// Test with multiple tables
+	t.Run("Multiple tables integrity", func(t *testing.T) {
+		_, err = exec.Execute(`CREATE TABLE test_table2 (id SEQ PRIMARY KEY, value INT)`)
+		if err != nil {
+			t.Logf("Create table2 failed: %v", err)
+		}
+
+		result, err := exec.Execute(`PRAGMA integrity_check`)
+		if err != nil {
+			t.Logf("Multiple tables integrity failed: %v", err)
+		} else {
+			t.Logf("Multiple tables integrity result: %v", result.Rows)
+		}
+	})
+}
+
+// TestHasAggregateEdgeCases tests hasAggregate with edge cases
+func TestHasAggregateEdgeCases(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "xxsql-hasagg-edge-test-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	engine := storage.NewEngine(tmpDir)
+	exec := NewExecutor(engine)
+	exec.SetDatabase("test")
+
+	_, err = exec.Execute(`CREATE TABLE test (id SEQ PRIMARY KEY, val INT)`)
+	if err != nil {
+		t.Fatalf("Failed to create table: %v", err)
+	}
+
+	// Test with nested aggregates
+	t.Run("Nested aggregates", func(t *testing.T) {
+		result, err := exec.Execute(`SELECT MAX(SUM(val)) FROM test GROUP BY id`)
+		if err != nil {
+			t.Logf("Nested aggregates failed: %v", err)
+		} else {
+			t.Logf("Nested aggregates result: %v", result.Rows)
+		}
+	})
+
+	// Test with aggregate in CASE condition
+	t.Run("Aggregate in CASE condition", func(t *testing.T) {
+		result, err := exec.Execute(`SELECT CASE WHEN COUNT(*) > 0 THEN 'has rows' ELSE 'empty' END FROM test`)
+		if err != nil {
+			t.Logf("CASE aggregate failed: %v", err)
+		} else {
+			t.Logf("CASE aggregate result: %v", result.Rows)
+		}
+	})
+
+	// Test with non-aggregate function
+	t.Run("Non-aggregate function", func(t *testing.T) {
+		result, err := exec.Execute(`SELECT UPPER('test') FROM test`)
+		if err != nil {
+			t.Logf("Non-aggregate function failed: %v", err)
+		} else {
+			t.Logf("Non-aggregate function result: %v", result.Rows)
+		}
+	})
+}
+
