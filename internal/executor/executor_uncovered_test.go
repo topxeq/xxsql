@@ -20338,3 +20338,211 @@ func TestUnionExport(t *testing.T) {
 	})
 }
 
+// TestMoreHavingPaths tests more HAVING execution paths
+func TestMoreHavingPaths(t *testing.T) {
+	engine := setupTestEngine(t)
+	exec := NewExecutor(engine)
+	exec.SetDatabase("testdb")
+
+	_, _ = exec.Execute("CREATE TABLE data_h (category VARCHAR(20), value INT)")
+	_, _ = exec.Execute("INSERT INTO data_h VALUES ('A', 10)")
+	_, _ = exec.Execute("INSERT INTO data_h VALUES ('A', 20)")
+	_, _ = exec.Execute("INSERT INTO data_h VALUES ('B', 5)")
+	_, _ = exec.Execute("INSERT INTO data_h VALUES ('B', 15)")
+
+	t.Run("HAVING with COUNT aggregate", func(t *testing.T) {
+		result, err := exec.Execute(`
+			SELECT category FROM data_h GROUP BY category HAVING COUNT(*) > 1
+		`)
+		if err != nil {
+			t.Logf("HAVING COUNT failed: %v", err)
+		} else {
+			t.Logf("HAVING COUNT result: %v", result.Rows)
+		}
+	})
+
+	t.Run("HAVING with MIN/MAX", func(t *testing.T) {
+		result, err := exec.Execute(`
+			SELECT category FROM data_h GROUP BY category HAVING MIN(value) < 10
+		`)
+		if err != nil {
+			t.Logf("HAVING MIN failed: %v", err)
+		} else {
+			t.Logf("HAVING MIN result: %v", result.Rows)
+		}
+	})
+
+	t.Run("HAVING with grouped column reference", func(t *testing.T) {
+		result, err := exec.Execute(`
+			SELECT category, SUM(value) FROM data_h GROUP BY category HAVING category = 'A'
+		`)
+		if err != nil {
+			t.Logf("HAVING column ref failed: %v", err)
+		} else {
+			t.Logf("HAVING column ref result: %v", result.Rows)
+		}
+	})
+
+	t.Run("HAVING with NOT IN subquery", func(t *testing.T) {
+		_, _ = exec.Execute("CREATE TABLE exclude_cat (name VARCHAR(20))")
+		_, _ = exec.Execute("INSERT INTO exclude_cat VALUES ('B')")
+		result, err := exec.Execute(`
+			SELECT category FROM data_h GROUP BY category HAVING category NOT IN (SELECT name FROM exclude_cat)
+		`)
+		if err != nil {
+			t.Logf("HAVING NOT IN failed: %v", err)
+		} else {
+			t.Logf("HAVING NOT IN result: %v", result.Rows)
+		}
+	})
+
+	t.Run("HAVING with NULL check", func(t *testing.T) {
+		_, _ = exec.Execute("CREATE TABLE null_groups (grp VARCHAR(20), val INT)")
+		_, _ = exec.Execute("INSERT INTO null_groups VALUES ('A', 1)")
+		_, _ = exec.Execute("INSERT INTO null_groups VALUES (NULL, 2)")
+		result, err := exec.Execute(`
+			SELECT grp FROM null_groups GROUP BY grp HAVING grp IS NOT NULL
+		`)
+		if err != nil {
+			t.Logf("HAVING NULL check failed: %v", err)
+		} else {
+			t.Logf("HAVING NULL check result: %v", result.Rows)
+		}
+	})
+}
+
+// TestExpressionWithNulls tests expressions with NULL values
+func TestExpressionWithNulls(t *testing.T) {
+	engine := setupTestEngine(t)
+	exec := NewExecutor(engine)
+	exec.SetDatabase("testdb")
+
+	_, _ = exec.Execute("CREATE TABLE null_expr (id INT, val INT)")
+	_, _ = exec.Execute("INSERT INTO null_expr VALUES (1, 10)")
+	_, _ = exec.Execute("INSERT INTO null_expr VALUES (2, NULL)")
+	_, _ = exec.Execute("INSERT INTO null_expr VALUES (3, 30)")
+
+	t.Run("Expression with NULL comparison", func(t *testing.T) {
+		result, err := exec.Execute("SELECT id FROM null_expr WHERE val IS NULL")
+		if err != nil {
+			t.Logf("NULL comparison failed: %v", err)
+		} else {
+			t.Logf("NULL comparison result: %v", result.Rows)
+		}
+	})
+
+	t.Run("Expression with COALESCE", func(t *testing.T) {
+		result, err := exec.Execute("SELECT id, COALESCE(val, 0) FROM null_expr")
+		if err != nil {
+			t.Logf("COALESCE failed: %v", err)
+		} else {
+			t.Logf("COALESCE result: %v", result.Rows)
+		}
+	})
+
+	t.Run("Expression with NULLIF", func(t *testing.T) {
+		result, err := exec.Execute("SELECT id, NULLIF(val, 10) FROM null_expr")
+		if err != nil {
+			t.Logf("NULLIF failed: %v", err)
+		} else {
+			t.Logf("NULLIF result: %v", result.Rows)
+		}
+	})
+}
+
+// TestMoreSelectScenarios tests more SELECT scenarios
+func TestMoreSelectScenarios(t *testing.T) {
+	engine := setupTestEngine(t)
+	exec := NewExecutor(engine)
+	exec.SetDatabase("testdb")
+
+	_, _ = exec.Execute("CREATE TABLE select_test (a INT, b INT, c VARCHAR(50))")
+	_, _ = exec.Execute("INSERT INTO select_test VALUES (1, 2, 'foo')")
+	_, _ = exec.Execute("INSERT INTO select_test VALUES (3, 4, 'bar')")
+
+	t.Run("SELECT with complex expressions", func(t *testing.T) {
+		result, err := exec.Execute("SELECT a + b * 2, c || '!' FROM select_test")
+		if err != nil {
+			t.Logf("Complex expressions failed: %v", err)
+		} else {
+			t.Logf("Complex expressions result: %v", result.Rows)
+		}
+	})
+
+	t.Run("SELECT with nested functions", func(t *testing.T) {
+		result, err := exec.Execute("SELECT UPPER(SUBSTR(c, 1, 2)) FROM select_test")
+		if err != nil {
+			t.Logf("Nested functions failed: %v", err)
+		} else {
+			t.Logf("Nested functions result: %v", result.Rows)
+		}
+	})
+
+	t.Run("SELECT with CASE in ORDER BY", func(t *testing.T) {
+		result, err := exec.Execute(`
+			SELECT * FROM select_test ORDER BY CASE WHEN a > 2 THEN 0 ELSE 1 END
+		`)
+		if err != nil {
+			t.Logf("CASE ORDER BY failed: %v", err)
+		} else {
+			t.Logf("CASE ORDER BY result: %v", result.Rows)
+		}
+	})
+
+	t.Run("SELECT with LIMIT and OFFSET", func(t *testing.T) {
+		result, err := exec.Execute("SELECT * FROM select_test LIMIT 1 OFFSET 1")
+		if err != nil {
+			t.Logf("LIMIT OFFSET failed: %v", err)
+		} else {
+			t.Logf("LIMIT OFFSET result: %v", result.Rows)
+		}
+	})
+}
+
+// TestScalarSubqueryVariations tests scalar subquery variations
+func TestScalarSubqueryVariations(t *testing.T) {
+	engine := setupTestEngine(t)
+	exec := NewExecutor(engine)
+	exec.SetDatabase("testdb")
+
+	_, _ = exec.Execute("CREATE TABLE parent (id INT, name VARCHAR(50))")
+	_, _ = exec.Execute("INSERT INTO parent VALUES (1, 'ParentA')")
+
+	_, _ = exec.Execute("CREATE TABLE child (id INT, parent_id INT, value INT)")
+	_, _ = exec.Execute("INSERT INTO child VALUES (1, 1, 100)")
+	_, _ = exec.Execute("INSERT INTO child VALUES (2, 1, 200)")
+
+	t.Run("Scalar subquery returning single value", func(t *testing.T) {
+		result, err := exec.Execute(`
+			SELECT id, (SELECT name FROM parent WHERE id = 1) AS parent_name FROM child
+		`)
+		if err != nil {
+			t.Logf("Scalar single value failed: %v", err)
+		} else {
+			t.Logf("Scalar single value result: %v", result.Rows)
+		}
+	})
+
+	t.Run("Scalar subquery in arithmetic", func(t *testing.T) {
+		result, err := exec.Execute(`
+			SELECT id, value + (SELECT MAX(value) FROM child) FROM child
+		`)
+		if err != nil {
+			t.Logf("Scalar arithmetic failed: %v", err)
+		} else {
+			t.Logf("Scalar arithmetic result: %v", result.Rows)
+		}
+	})
+
+	t.Run("Scalar subquery empty result", func(t *testing.T) {
+		result, err := exec.Execute(`
+			SELECT id, (SELECT name FROM parent WHERE id = 999) AS name FROM child
+		`)
+		if err != nil {
+			t.Logf("Scalar empty failed: %v", err)
+		} else {
+			t.Logf("Scalar empty result: %v", result.Rows)
+		}
+	})
+}
+
