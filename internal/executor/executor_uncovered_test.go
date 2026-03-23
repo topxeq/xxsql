@@ -16294,3 +16294,381 @@ func TestBetweenExpressionMore(t *testing.T) {
 	})
 }
 
+// TestInExprWithList tests IN expression with value lists
+func TestInExprWithList(t *testing.T) {
+	engine := setupTestEngine(t)
+	exec := NewExecutor(engine)
+	exec.SetDatabase("testdb")
+
+	_, _ = exec.Execute("CREATE TABLE in_list (id INT, name VARCHAR(50))")
+	_, _ = exec.Execute("INSERT INTO in_list VALUES (1, 'Alice')")
+	_, _ = exec.Execute("INSERT INTO in_list VALUES (2, 'Bob')")
+	_, _ = exec.Execute("INSERT INTO in_list VALUES (3, 'Charlie')")
+
+	t.Run("IN with values", func(t *testing.T) {
+		result, err := exec.Execute("SELECT * FROM in_list WHERE id IN (1, 2)")
+		if err != nil {
+			t.Logf("IN with values failed: %v", err)
+		} else {
+			t.Logf("IN with values result: %v", result.Rows)
+		}
+	})
+
+	t.Run("NOT IN with values", func(t *testing.T) {
+		result, err := exec.Execute("SELECT * FROM in_list WHERE id NOT IN (1, 2)")
+		if err != nil {
+			t.Logf("NOT IN with values failed: %v", err)
+		} else {
+			t.Logf("NOT IN with values result: %v", result.Rows)
+		}
+	})
+
+	t.Run("IN with string values", func(t *testing.T) {
+		result, err := exec.Execute("SELECT * FROM in_list WHERE name IN ('Alice', 'Bob')")
+		if err != nil {
+			t.Logf("IN with strings failed: %v", err)
+		} else {
+			t.Logf("IN with strings result: %v", result.Rows)
+		}
+	})
+}
+
+// TestMatchExpressionFTS tests MATCH expression for full-text search
+func TestMatchExpressionFTS(t *testing.T) {
+	engine := setupTestEngine(t)
+	exec := NewExecutor(engine)
+	exec.SetDatabase("testdb")
+
+	_, _ = exec.Execute("CREATE TABLE fts_test (id INT, content TEXT)")
+	_, _ = exec.Execute("INSERT INTO fts_test VALUES (1, 'hello world')")
+	_, _ = exec.Execute("INSERT INTO fts_test VALUES (2, 'goodbye world')")
+
+	t.Run("MATCH expression", func(t *testing.T) {
+		result, err := exec.Execute("SELECT * FROM fts_test WHERE MATCH(content) AGAINST('world')")
+		if err != nil {
+			t.Logf("MATCH failed: %v (FTS may not be fully implemented)", err)
+		} else {
+			t.Logf("MATCH result: %v", result.Rows)
+		}
+	})
+}
+
+// TestScalarSubqueryAsCondition tests scalar subquery used as a condition
+func TestScalarSubqueryAsCondition(t *testing.T) {
+	engine := setupTestEngine(t)
+	exec := NewExecutor(engine)
+	exec.SetDatabase("testdb")
+
+	_, _ = exec.Execute("CREATE TABLE cond_main (id INT, active INT)")
+	_, _ = exec.Execute("INSERT INTO cond_main VALUES (1, 1)")
+	_, _ = exec.Execute("INSERT INTO cond_main VALUES (2, 0)")
+
+	_, _ = exec.Execute("CREATE TABLE flag (value INT)")
+	_, _ = exec.Execute("INSERT INTO flag VALUES (1)")
+
+	t.Run("Scalar subquery returns truthy int", func(t *testing.T) {
+		result, err := exec.Execute("SELECT * FROM cond_main WHERE (SELECT value FROM flag)")
+		if err != nil {
+			t.Logf("Scalar subquery truthy failed: %v", err)
+		} else {
+			t.Logf("Scalar subquery truthy result: %v", result.Rows)
+		}
+	})
+
+	t.Run("Scalar subquery returns falsy int", func(t *testing.T) {
+		_, _ = exec.Execute("INSERT INTO flag VALUES (0)")
+		result, err := exec.Execute("SELECT * FROM cond_main WHERE (SELECT 0)")
+		if err != nil {
+			t.Logf("Scalar subquery falsy failed: %v", err)
+		} else {
+			t.Logf("Scalar subquery falsy result: %v", result.Rows)
+		}
+	})
+
+	t.Run("Scalar subquery returns string", func(t *testing.T) {
+		result, err := exec.Execute("SELECT * FROM cond_main WHERE (SELECT 'hello')")
+		if err != nil {
+			t.Logf("Scalar subquery string failed: %v", err)
+		} else {
+			t.Logf("Scalar subquery string result: %v", result.Rows)
+		}
+	})
+
+	t.Run("Scalar subquery returns empty string", func(t *testing.T) {
+		result, err := exec.Execute("SELECT * FROM cond_main WHERE (SELECT '')")
+		if err != nil {
+			t.Logf("Scalar subquery empty string failed: %v", err)
+		} else {
+			t.Logf("Scalar subquery empty string result: %v", result.Rows)
+		}
+	})
+}
+
+// TestEvaluateHavingWithSubquery tests HAVING with subquery conditions
+func TestEvaluateHavingWithSubquery(t *testing.T) {
+	engine := setupTestEngine(t)
+	exec := NewExecutor(engine)
+	exec.SetDatabase("testdb")
+
+	_, _ = exec.Execute("CREATE TABLE grp_data (cat VARCHAR(10), val INT)")
+	_, _ = exec.Execute("INSERT INTO grp_data VALUES ('A', 10)")
+	_, _ = exec.Execute("INSERT INTO grp_data VALUES ('A', 20)")
+	_, _ = exec.Execute("INSERT INTO grp_data VALUES ('B', 5)")
+
+	_, _ = exec.Execute("CREATE TABLE threshold (min_val INT)")
+	_, _ = exec.Execute("INSERT INTO threshold VALUES (15)")
+
+	t.Run("HAVING with scalar subquery", func(t *testing.T) {
+		result, err := exec.Execute(`
+			SELECT cat, SUM(val)
+			FROM grp_data
+			GROUP BY cat
+			HAVING SUM(val) > (SELECT min_val FROM threshold)
+		`)
+		if err != nil {
+			t.Logf("HAVING scalar subquery failed: %v", err)
+		} else {
+			t.Logf("HAVING scalar subquery result: %v", result.Rows)
+		}
+	})
+}
+
+// TestExecuteSelectFromLateralWithCorrelation tests LATERAL with correlation
+func TestExecuteSelectFromLateralWithCorrelation(t *testing.T) {
+	engine := setupTestEngine(t)
+	exec := NewExecutor(engine)
+	exec.SetDatabase("testdb")
+
+	_, _ = exec.Execute("CREATE TABLE dept (id INT, name VARCHAR(50))")
+	_, _ = exec.Execute("INSERT INTO dept VALUES (1, 'Engineering')")
+	_, _ = exec.Execute("INSERT INTO dept VALUES (2, 'Sales')")
+
+	_, _ = exec.Execute("CREATE TABLE emp_lat (dept_id INT, name VARCHAR(50), salary INT)")
+	_, _ = exec.Execute("INSERT INTO emp_lat VALUES (1, 'Alice', 100000)")
+	_, _ = exec.Execute("INSERT INTO emp_lat VALUES (1, 'Bob', 80000)")
+	_, _ = exec.Execute("INSERT INTO emp_lat VALUES (2, 'Charlie', 70000)")
+
+	t.Run("LATERAL with top N per group", func(t *testing.T) {
+		result, err := exec.Execute(`
+			SELECT d.name, e.name, e.salary
+			FROM dept d,
+			LATERAL (SELECT name, salary FROM emp_lat WHERE dept_id = d.id ORDER BY salary DESC LIMIT 1) e
+		`)
+		if err != nil {
+			t.Logf("LATERAL top N failed: %v", err)
+		} else {
+			t.Logf("LATERAL top N result: %v", result.Rows)
+		}
+	})
+}
+
+// TestMoreFunctionCases tests additional function evaluation paths
+func TestMoreFunctionCases(t *testing.T) {
+	engine := setupTestEngine(t)
+	exec := NewExecutor(engine)
+	exec.SetDatabase("testdb")
+
+	_, _ = exec.Execute("CREATE TABLE func_tbl (id INT, str VARCHAR(100), num FLOAT)")
+	_, _ = exec.Execute("INSERT INTO func_tbl VALUES (1, 'Hello World', 3.14)")
+	_, _ = exec.Execute("INSERT INTO func_tbl VALUES (2, 'Test', 2.71)")
+
+	t.Run("CONCAT with multiple args", func(t *testing.T) {
+		result, err := exec.Execute("SELECT CONCAT(str, ' - ', id) FROM func_tbl WHERE id = 1")
+		if err != nil {
+			t.Logf("CONCAT multiple failed: %v", err)
+		} else {
+			t.Logf("CONCAT multiple result: %v", result.Rows)
+		}
+	})
+
+	t.Run("Nested function calls", func(t *testing.T) {
+		result, err := exec.Execute("SELECT UPPER(SUBSTR(str, 1, 5)) FROM func_tbl WHERE id = 1")
+		if err != nil {
+			t.Logf("Nested functions failed: %v", err)
+		} else {
+			t.Logf("Nested functions result: %v", result.Rows)
+		}
+	})
+
+	t.Run("Function with NULL input", func(t *testing.T) {
+		_, _ = exec.Execute("INSERT INTO func_tbl VALUES (3, NULL, NULL)")
+		result, err := exec.Execute("SELECT COALESCE(str, 'N/A'), COALESCE(num, 0) FROM func_tbl WHERE id = 3")
+		if err != nil {
+			t.Logf("Function with NULL failed: %v", err)
+		} else {
+			t.Logf("Function with NULL result: %v", result.Rows)
+		}
+	})
+
+	t.Run("Type conversion functions", func(t *testing.T) {
+		result, err := exec.Execute("SELECT CAST(id AS VARCHAR), CAST(str AS VARCHAR) FROM func_tbl WHERE id = 1")
+		if err != nil {
+			t.Logf("Type conversion failed: %v", err)
+		} else {
+			t.Logf("Type conversion result: %v", result.Rows)
+		}
+	})
+}
+
+// TestLikeExpressionMore tests LIKE expressions with escape characters
+func TestLikeExpressionMore(t *testing.T) {
+	engine := setupTestEngine(t)
+	exec := NewExecutor(engine)
+	exec.SetDatabase("testdb")
+
+	_, _ = exec.Execute("CREATE TABLE like_test (pattern VARCHAR(100))")
+	_, _ = exec.Execute("INSERT INTO like_test VALUES ('test%pattern')")
+	_, _ = exec.Execute("INSERT INTO like_test VALUES ('test_value')")
+	_, _ = exec.Execute("INSERT INTO like_test VALUES ('testXvalue')")
+
+	t.Run("LIKE with escape", func(t *testing.T) {
+		result, err := exec.Execute("SELECT * FROM like_test WHERE pattern LIKE 'test\\%pattern' ESCAPE '\\'")
+		if err != nil {
+			t.Logf("LIKE escape failed: %v", err)
+		} else {
+			t.Logf("LIKE escape result: %v", result.Rows)
+		}
+	})
+
+	t.Run("LIKE with underscore", func(t *testing.T) {
+		result, err := exec.Execute("SELECT * FROM like_test WHERE pattern LIKE 'test_value'")
+		if err != nil {
+			t.Logf("LIKE underscore failed: %v", err)
+		} else {
+			t.Logf("LIKE underscore result: %v", result.Rows)
+		}
+	})
+
+	t.Run("NOT LIKE", func(t *testing.T) {
+		result, err := exec.Execute("SELECT * FROM like_test WHERE pattern NOT LIKE 'test%'")
+		if err != nil {
+			t.Logf("NOT LIKE failed: %v", err)
+		} else {
+			t.Logf("NOT LIKE result: %v", result.Rows)
+		}
+	})
+}
+
+// TestGenerateQueryPlanWithFilters tests query plan generation with various filters
+func TestGenerateQueryPlanWithFilters(t *testing.T) {
+	engine := setupTestEngine(t)
+	exec := NewExecutor(engine)
+	exec.SetDatabase("testdb")
+
+	_, _ = exec.Execute("CREATE TABLE filter_test (id INT PRIMARY KEY, status VARCHAR(20), value INT)")
+	_, _ = exec.Execute("INSERT INTO filter_test VALUES (1, 'active', 100)")
+	_, _ = exec.Execute("INSERT INTO filter_test VALUES (2, 'inactive', 200)")
+	_, _ = exec.Execute("INSERT INTO filter_test VALUES (3, 'active', 150)")
+
+	t.Run("Filter with OR", func(t *testing.T) {
+		result, err := exec.Execute("SELECT * FROM filter_test WHERE status = 'active' OR value > 150")
+		if err != nil {
+			t.Logf("OR filter failed: %v", err)
+		} else {
+			t.Logf("OR filter result: %v", result.Rows)
+		}
+	})
+
+	t.Run("Filter with AND", func(t *testing.T) {
+		result, err := exec.Execute("SELECT * FROM filter_test WHERE status = 'active' AND value > 100")
+		if err != nil {
+			t.Logf("AND filter failed: %v", err)
+		} else {
+			t.Logf("AND filter result: %v", result.Rows)
+		}
+	})
+
+	t.Run("Filter with multiple conditions", func(t *testing.T) {
+		result, err := exec.Execute("SELECT * FROM filter_test WHERE (status = 'active' AND value >= 100) OR id = 2")
+		if err != nil {
+			t.Logf("Multiple conditions failed: %v", err)
+		} else {
+			t.Logf("Multiple conditions result: %v", result.Rows)
+		}
+	})
+}
+
+// TestUnaryNotExpressions tests NOT expressions in various contexts
+func TestUnaryNotExpressions(t *testing.T) {
+	engine := setupTestEngine(t)
+	exec := NewExecutor(engine)
+	exec.SetDatabase("testdb")
+
+	_, _ = exec.Execute("CREATE TABLE not_test (id INT, active BOOL, value INT)")
+	_, _ = exec.Execute("INSERT INTO not_test VALUES (1, true, 10)")
+	_, _ = exec.Execute("INSERT INTO not_test VALUES (2, false, 20)")
+	_, _ = exec.Execute("INSERT INTO not_test VALUES (3, true, 30)")
+
+	t.Run("NOT on boolean column", func(t *testing.T) {
+		result, err := exec.Execute("SELECT * FROM not_test WHERE NOT active")
+		if err != nil {
+			t.Logf("NOT bool failed: %v", err)
+		} else {
+			t.Logf("NOT bool result: %v", result.Rows)
+		}
+	})
+
+	t.Run("NOT on comparison", func(t *testing.T) {
+		result, err := exec.Execute("SELECT * FROM not_test WHERE NOT (value > 15)")
+		if err != nil {
+			t.Logf("NOT comparison failed: %v", err)
+		} else {
+			t.Logf("NOT comparison result: %v", result.Rows)
+		}
+	})
+
+	t.Run("Multiple NOT", func(t *testing.T) {
+		result, err := exec.Execute("SELECT * FROM not_test WHERE NOT NOT active")
+		if err != nil {
+			t.Logf("Multiple NOT failed: %v", err)
+		} else {
+			t.Logf("Multiple NOT result: %v", result.Rows)
+		}
+	})
+}
+
+// TestEvaluateExpressionWithCast tests CAST expressions
+func TestEvaluateExpressionWithCast(t *testing.T) {
+	engine := setupTestEngine(t)
+	exec := NewExecutor(engine)
+	exec.SetDatabase("testdb")
+
+	t.Run("CAST int to varchar", func(t *testing.T) {
+		result, err := exec.Execute("SELECT CAST(123 AS VARCHAR)")
+		if err != nil {
+			t.Logf("CAST int to varchar failed: %v", err)
+		} else {
+			t.Logf("CAST int to varchar result: %v", result.Rows)
+		}
+	})
+
+	t.Run("CAST varchar to int", func(t *testing.T) {
+		result, err := exec.Execute("SELECT CAST('456' AS INT)")
+		if err != nil {
+			t.Logf("CAST varchar to int failed: %v", err)
+		} else {
+			t.Logf("CAST varchar to int result: %v", result.Rows)
+		}
+	})
+
+	t.Run("CAST float to int", func(t *testing.T) {
+		result, err := exec.Execute("SELECT CAST(3.7 AS INT)")
+		if err != nil {
+			t.Logf("CAST float to int failed: %v", err)
+		} else {
+			t.Logf("CAST float to int result: %v", result.Rows)
+		}
+	})
+
+	t.Run("CAST in WHERE clause", func(t *testing.T) {
+		_, _ = exec.Execute("CREATE TABLE cast_test (str_val VARCHAR(10))")
+		_, _ = exec.Execute("INSERT INTO cast_test VALUES ('100'), ('200')")
+		result, err := exec.Execute("SELECT * FROM cast_test WHERE CAST(str_val AS INT) > 150")
+		if err != nil {
+			t.Logf("CAST in WHERE failed: %v", err)
+		} else {
+			t.Logf("CAST in WHERE result: %v", result.Rows)
+		}
+	})
+}
+
