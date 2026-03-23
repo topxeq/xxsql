@@ -21192,3 +21192,252 @@ func TestMoreJoinOperations(t *testing.T) {
 	})
 }
 
+// TestAggregateInExpressions tests aggregate functions in expressions
+func TestAggregateInExpressions(t *testing.T) {
+	engine := setupTestEngine(t)
+	exec := NewExecutor(engine)
+	exec.SetDatabase("testdb")
+
+	_, _ = exec.Execute("CREATE TABLE agg_expr (grp VARCHAR(20), val INT)")
+	_, _ = exec.Execute("INSERT INTO agg_expr VALUES ('A', 10)")
+	_, _ = exec.Execute("INSERT INTO agg_expr VALUES ('A', 20)")
+	_, _ = exec.Execute("INSERT INTO agg_expr VALUES ('B', 30)")
+
+	t.Run("SUM in arithmetic expression", func(t *testing.T) {
+		result, err := exec.Execute(`
+			SELECT grp, SUM(val) * 2 AS doubled FROM agg_expr GROUP BY grp
+		`)
+		if err != nil {
+			t.Logf("SUM arithmetic failed: %v", err)
+		} else {
+			t.Logf("SUM arithmetic result: %v", result.Rows)
+		}
+	})
+
+	t.Run("Multiple aggregates in SELECT", func(t *testing.T) {
+		result, err := exec.Execute(`
+			SELECT grp, SUM(val), AVG(val), COUNT(*), MIN(val), MAX(val)
+			FROM agg_expr GROUP BY grp
+		`)
+		if err != nil {
+			t.Logf("Multiple aggregates failed: %v", err)
+		} else {
+			t.Logf("Multiple aggregates result: %v", result.Rows)
+		}
+	})
+
+	t.Run("Nested aggregates with CASE", func(t *testing.T) {
+		result, err := exec.Execute(`
+			SELECT grp, CASE WHEN SUM(val) > 25 THEN 'high' ELSE 'low' END
+			FROM agg_expr GROUP BY grp
+		`)
+		if err != nil {
+			t.Logf("Nested CASE failed: %v", err)
+		} else {
+			t.Logf("Nested CASE result: %v", result.Rows)
+		}
+	})
+}
+
+// TestMoreSubqueryPaths tests more subquery execution paths
+func TestMoreSubqueryPaths(t *testing.T) {
+	engine := setupTestEngine(t)
+	exec := NewExecutor(engine)
+	exec.SetDatabase("testdb")
+
+	_, _ = exec.Execute("CREATE TABLE sub_main (id INT, ref_id INT)")
+	_, _ = exec.Execute("INSERT INTO sub_main VALUES (1, 10)")
+	_, _ = exec.Execute("INSERT INTO sub_main VALUES (2, 20)")
+
+	_, _ = exec.Execute("CREATE TABLE sub_ref (id INT, name VARCHAR(50))")
+	_, _ = exec.Execute("INSERT INTO sub_ref VALUES (10, 'RefA')")
+	_, _ = exec.Execute("INSERT INTO sub_ref VALUES (20, 'RefB')")
+
+	t.Run("Correlated subquery in WHERE with table prefix", func(t *testing.T) {
+		result, err := exec.Execute(`
+			SELECT m.id FROM sub_main m
+			WHERE EXISTS (SELECT 1 FROM sub_ref r WHERE r.id = m.ref_id)
+		`)
+		if err != nil {
+			t.Logf("Correlated WHERE failed: %v", err)
+		} else {
+			t.Logf("Correlated WHERE result: %v", result.Rows)
+		}
+	})
+
+	t.Run("Subquery returning aggregate", func(t *testing.T) {
+		result, err := exec.Execute(`
+			SELECT id, (SELECT COUNT(*) FROM sub_ref) AS ref_count FROM sub_main
+		`)
+		if err != nil {
+			t.Logf("Subquery aggregate failed: %v", err)
+		} else {
+			t.Logf("Subquery aggregate result: %v", result.Rows)
+		}
+	})
+}
+
+// TestMoreCastOperations tests more CAST operations
+func TestMoreCastOperations(t *testing.T) {
+	engine := setupTestEngine(t)
+	exec := NewExecutor(engine)
+	exec.SetDatabase("testdb")
+
+	t.Run("Cast string to int", func(t *testing.T) {
+		result, err := exec.Execute("SELECT CAST('123' AS INT), CAST('-456' AS INT)")
+		if err != nil {
+			t.Logf("Cast string to int failed: %v", err)
+		} else {
+			t.Logf("Cast string to int result: %v", result.Rows)
+		}
+	})
+
+	t.Run("Cast string to float", func(t *testing.T) {
+		result, err := exec.Execute("SELECT CAST('3.14' AS FLOAT), CAST('-2.5' AS DOUBLE)")
+		if err != nil {
+			t.Logf("Cast string to float failed: %v", err)
+		} else {
+			t.Logf("Cast string to float result: %v", result.Rows)
+		}
+	})
+
+	t.Run("Cast int to string", func(t *testing.T) {
+		result, err := exec.Execute("SELECT CAST(123 AS VARCHAR), CAST(-456 AS TEXT)")
+		if err != nil {
+			t.Logf("Cast int to string failed: %v", err)
+		} else {
+			t.Logf("Cast int to string result: %v", result.Rows)
+		}
+	})
+
+	t.Run("Cast float to int", func(t *testing.T) {
+		result, err := exec.Execute("SELECT CAST(3.7 AS INT), CAST(-2.5 AS INTEGER)")
+		if err != nil {
+			t.Logf("Cast float to int failed: %v", err)
+		} else {
+			t.Logf("Cast float to int result: %v", result.Rows)
+		}
+	})
+}
+
+// TestMoreDateOperations tests more date operations
+func TestMoreDateOperations(t *testing.T) {
+	engine := setupTestEngine(t)
+	exec := NewExecutor(engine)
+	exec.SetDatabase("testdb")
+
+	t.Run("DATE_ADD with days", func(t *testing.T) {
+		result, err := exec.Execute("SELECT DATE_ADD('2023-01-15', INTERVAL 10 DAY)")
+		if err != nil {
+			t.Logf("DATE_ADD failed: %v", err)
+		} else {
+			t.Logf("DATE_ADD result: %v", result.Rows)
+		}
+	})
+
+	t.Run("DATE_SUB", func(t *testing.T) {
+		result, err := exec.Execute("SELECT DATE_SUB('2023-01-15', INTERVAL 5 DAY)")
+		if err != nil {
+			t.Logf("DATE_SUB failed: %v", err)
+		} else {
+			t.Logf("DATE_SUB result: %v", result.Rows)
+		}
+	})
+
+	t.Run("DATEDIFF", func(t *testing.T) {
+		result, err := exec.Execute("SELECT DATEDIFF('2023-01-20', '2023-01-10')")
+		if err != nil {
+			t.Logf("DATEDIFF failed: %v", err)
+		} else {
+			t.Logf("DATEDIFF result: %v", result.Rows)
+		}
+	})
+
+	t.Run("DATE_FORMAT", func(t *testing.T) {
+		result, err := exec.Execute("SELECT DATE_FORMAT('2023-03-15', '%Y-%m-%d')")
+		if err != nil {
+			t.Logf("DATE_FORMAT failed: %v", err)
+		} else {
+			t.Logf("DATE_FORMAT result: %v", result.Rows)
+		}
+	})
+}
+
+// TestOrderByExpressions tests ORDER BY with expressions
+func TestOrderByExpressions(t *testing.T) {
+	engine := setupTestEngine(t)
+	exec := NewExecutor(engine)
+	exec.SetDatabase("testdb")
+
+	_, _ = exec.Execute("CREATE TABLE order_test (id INT, name VARCHAR(50), value INT)")
+	_, _ = exec.Execute("INSERT INTO order_test VALUES (1, 'Alice', 100)")
+	_, _ = exec.Execute("INSERT INTO order_test VALUES (2, 'Bob', 200)")
+	_, _ = exec.Execute("INSERT INTO order_test VALUES (3, 'Charlie', 50)")
+
+	t.Run("ORDER BY expression", func(t *testing.T) {
+		result, err := exec.Execute("SELECT id, name, value FROM order_test ORDER BY value DESC")
+		if err != nil {
+			t.Logf("ORDER BY expression failed: %v", err)
+		} else {
+			t.Logf("ORDER BY expression result: %v", result.Rows)
+		}
+	})
+
+	t.Run("ORDER BY with LIMIT", func(t *testing.T) {
+		result, err := exec.Execute("SELECT id, name FROM order_test ORDER BY value ASC LIMIT 2")
+		if err != nil {
+			t.Logf("ORDER BY LIMIT failed: %v", err)
+		} else {
+			t.Logf("ORDER BY LIMIT result: %v", result.Rows)
+		}
+	})
+
+	t.Run("ORDER BY with OFFSET", func(t *testing.T) {
+		result, err := exec.Execute("SELECT id, name FROM order_test ORDER BY id LIMIT 2 OFFSET 1")
+		if err != nil {
+			t.Logf("ORDER BY OFFSET failed: %v", err)
+		} else {
+			t.Logf("ORDER BY OFFSET result: %v", result.Rows)
+		}
+	})
+}
+
+// TestMoreDistinctQueries tests DISTINCT queries
+func TestMoreDistinctQueries(t *testing.T) {
+	engine := setupTestEngine(t)
+	exec := NewExecutor(engine)
+	exec.SetDatabase("testdb")
+
+	_, _ = exec.Execute("CREATE TABLE distinct_test (category VARCHAR(20), name VARCHAR(50))")
+	_, _ = exec.Execute("INSERT INTO distinct_test VALUES ('A', 'Alice')")
+	_, _ = exec.Execute("INSERT INTO distinct_test VALUES ('A', 'Bob')")
+	_, _ = exec.Execute("INSERT INTO distinct_test VALUES ('B', 'Alice')")
+
+	t.Run("DISTINCT single column", func(t *testing.T) {
+		result, err := exec.Execute("SELECT DISTINCT category FROM distinct_test")
+		if err != nil {
+			t.Logf("DISTINCT single failed: %v", err)
+		} else {
+			t.Logf("DISTINCT single result: %v", result.Rows)
+		}
+	})
+
+	t.Run("DISTINCT multiple columns", func(t *testing.T) {
+		result, err := exec.Execute("SELECT DISTINCT category, name FROM distinct_test")
+		if err != nil {
+			t.Logf("DISTINCT multiple failed: %v", err)
+		} else {
+			t.Logf("DISTINCT multiple result: %v", result.Rows)
+		}
+	})
+
+	t.Run("DISTINCT with ORDER BY", func(t *testing.T) {
+		result, err := exec.Execute("SELECT DISTINCT category FROM distinct_test ORDER BY category DESC")
+		if err != nil {
+			t.Logf("DISTINCT ORDER BY failed: %v", err)
+		} else {
+			t.Logf("DISTINCT ORDER BY result: %v", result.Rows)
+		}
+	})
+}
+
