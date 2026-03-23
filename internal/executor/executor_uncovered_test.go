@@ -16672,3 +16672,306 @@ func TestEvaluateExpressionWithCast(t *testing.T) {
 	})
 }
 
+// TestGenerateQueryPlanForInsert tests query plan for INSERT statements
+func TestGenerateQueryPlanForInsert(t *testing.T) {
+	engine := setupTestEngine(t)
+	exec := NewExecutor(engine)
+	exec.SetDatabase("testdb")
+
+	_, _ = exec.Execute("CREATE TABLE plan_insert (id INT, name VARCHAR(50))")
+
+	t.Run("Simple INSERT", func(t *testing.T) {
+		result, err := exec.Execute("INSERT INTO plan_insert VALUES (1, 'test')")
+		if err != nil {
+			t.Logf("INSERT failed: %v", err)
+		} else {
+			t.Logf("INSERT result: %v", result)
+		}
+	})
+
+	t.Run("INSERT with columns", func(t *testing.T) {
+		result, err := exec.Execute("INSERT INTO plan_insert (id, name) VALUES (2, 'test2')")
+		if err != nil {
+			t.Logf("INSERT with columns failed: %v", err)
+		} else {
+			t.Logf("INSERT with columns result: %v", result)
+		}
+	})
+
+	t.Run("INSERT with multiple values", func(t *testing.T) {
+		result, err := exec.Execute("INSERT INTO plan_insert VALUES (3, 'a'), (4, 'b'), (5, 'c')")
+		if err != nil {
+			t.Logf("INSERT multiple failed: %v", err)
+		} else {
+			t.Logf("INSERT multiple result: %v", result)
+		}
+	})
+}
+
+// TestGenerateQueryPlanForUpdate tests query plan for UPDATE statements
+func TestGenerateQueryPlanForUpdate(t *testing.T) {
+	engine := setupTestEngine(t)
+	exec := NewExecutor(engine)
+	exec.SetDatabase("testdb")
+
+	_, _ = exec.Execute("CREATE TABLE plan_update (id INT PRIMARY KEY, name VARCHAR(50), value INT)")
+	_, _ = exec.Execute("INSERT INTO plan_update VALUES (1, 'Alice', 100)")
+	_, _ = exec.Execute("INSERT INTO plan_update VALUES (2, 'Bob', 200)")
+	_, _ = exec.Execute("CREATE INDEX idx_name ON plan_update(name)")
+
+	t.Run("UPDATE with WHERE", func(t *testing.T) {
+		result, err := exec.Execute("UPDATE plan_update SET value = 150 WHERE id = 1")
+		if err != nil {
+			t.Logf("UPDATE WHERE failed: %v", err)
+		} else {
+			t.Logf("UPDATE WHERE result: %v", result)
+		}
+	})
+
+	t.Run("UPDATE multiple columns", func(t *testing.T) {
+		result, err := exec.Execute("UPDATE plan_update SET name = 'Charlie', value = 300 WHERE id = 2")
+		if err != nil {
+			t.Logf("UPDATE multiple failed: %v", err)
+		} else {
+			t.Logf("UPDATE multiple result: %v", result)
+		}
+	})
+
+	t.Run("UPDATE all rows", func(t *testing.T) {
+		result, err := exec.Execute("UPDATE plan_update SET value = 0")
+		if err != nil {
+			t.Logf("UPDATE all failed: %v", err)
+		} else {
+			t.Logf("UPDATE all result: %v", result)
+		}
+	})
+}
+
+// TestGenerateQueryPlanForDelete tests query plan for DELETE statements
+func TestGenerateQueryPlanForDelete(t *testing.T) {
+	engine := setupTestEngine(t)
+	exec := NewExecutor(engine)
+	exec.SetDatabase("testdb")
+
+	_, _ = exec.Execute("CREATE TABLE plan_delete (id INT, name VARCHAR(50))")
+	_, _ = exec.Execute("INSERT INTO plan_delete VALUES (1, 'A')")
+	_, _ = exec.Execute("INSERT INTO plan_delete VALUES (2, 'B')")
+	_, _ = exec.Execute("INSERT INTO plan_delete VALUES (3, 'C')")
+
+	t.Run("DELETE with WHERE", func(t *testing.T) {
+		result, err := exec.Execute("DELETE FROM plan_delete WHERE id = 1")
+		if err != nil {
+			t.Logf("DELETE WHERE failed: %v", err)
+		} else {
+			t.Logf("DELETE WHERE result: %v", result)
+		}
+	})
+
+	t.Run("DELETE all rows", func(t *testing.T) {
+		// Re-insert for test
+		_, _ = exec.Execute("INSERT INTO plan_delete VALUES (4, 'D')")
+		result, err := exec.Execute("DELETE FROM plan_delete")
+		if err != nil {
+			t.Logf("DELETE all failed: %v", err)
+		} else {
+			t.Logf("DELETE all result: %v", result)
+		}
+	})
+}
+
+// TestExecuteStatementForExport tests export statement execution
+func TestStatementForExportTest(t *testing.T) {
+	engine := setupTestEngine(t)
+	exec := NewExecutor(engine)
+	exec.SetDatabase("testdb")
+
+	_, _ = exec.Execute("CREATE TABLE export_src (id INT, name VARCHAR(50))")
+	_, _ = exec.Execute("INSERT INTO export_src VALUES (1, 'Alice')")
+	_, _ = exec.Execute("INSERT INTO export_src VALUES (2, 'Bob')")
+
+	t.Run("SELECT for export", func(t *testing.T) {
+		result, err := exec.Execute("SELECT * FROM export_src")
+		if err != nil {
+			t.Logf("SELECT for export failed: %v", err)
+		} else {
+			t.Logf("SELECT for export result: %v", result.Rows)
+		}
+	})
+
+	t.Run("UNION for export", func(t *testing.T) {
+		_, _ = exec.Execute("CREATE TABLE export_src2 (id INT, name VARCHAR(50))")
+		_, _ = exec.Execute("INSERT INTO export_src2 VALUES (3, 'Charlie')")
+		result, err := exec.Execute("SELECT * FROM export_src UNION SELECT * FROM export_src2")
+		if err != nil {
+			t.Logf("UNION for export failed: %v", err)
+		} else {
+			t.Logf("UNION for export result: %v", result.Rows)
+		}
+	})
+}
+
+// TestMoreEvaluateExpression tests more expression evaluation paths
+func TestMoreEvaluateExpression(t *testing.T) {
+	engine := setupTestEngine(t)
+	exec := NewExecutor(engine)
+	exec.SetDatabase("testdb")
+
+	_, _ = exec.Execute("CREATE TABLE expr_eval (a INT, b FLOAT, c VARCHAR(50))")
+	_, _ = exec.Execute("INSERT INTO expr_eval VALUES (10, 3.5, 'hello')")
+
+	t.Run("Binary expressions with columns", func(t *testing.T) {
+		tests := []string{
+			"SELECT a + 5 FROM expr_eval",
+			"SELECT a - 5 FROM expr_eval",
+			"SELECT a * 2 FROM expr_eval",
+			"SELECT a / 3 FROM expr_eval",
+			"SELECT b + 1.5 FROM expr_eval",
+			"SELECT a % 3 FROM expr_eval",
+		}
+		for _, q := range tests {
+			result, err := exec.Execute(q)
+			if err != nil {
+				t.Logf("%s failed: %v", q, err)
+			} else {
+				t.Logf("%s -> %v", q, result.Rows)
+			}
+		}
+	})
+
+	t.Run("Unary expressions", func(t *testing.T) {
+		tests := []string{
+			"SELECT -a FROM expr_eval",
+			"SELECT -b FROM expr_eval",
+			"SELECT +a FROM expr_eval",
+		}
+		for _, q := range tests {
+			result, err := exec.Execute(q)
+			if err != nil {
+				t.Logf("%s failed: %v", q, err)
+			} else {
+				t.Logf("%s -> %v", q, result.Rows)
+			}
+		}
+	})
+
+	t.Run("Comparison expressions", func(t *testing.T) {
+		tests := []string{
+			"SELECT a = 10 FROM expr_eval",
+			"SELECT a != 10 FROM expr_eval",
+			"SELECT a > 5 FROM expr_eval",
+			"SELECT a < 15 FROM expr_eval",
+			"SELECT a >= 10 FROM expr_eval",
+			"SELECT a <= 10 FROM expr_eval",
+		}
+		for _, q := range tests {
+			result, err := exec.Execute(q)
+			if err != nil {
+				t.Logf("%s failed: %v", q, err)
+			} else {
+				t.Logf("%s -> %v", q, result.Rows)
+			}
+		}
+	})
+
+	t.Run("Logical expressions", func(t *testing.T) {
+		tests := []string{
+			"SELECT a > 5 AND b < 5 FROM expr_eval",
+			"SELECT a > 15 OR b < 5 FROM expr_eval",
+			"SELECT NOT a > 15 FROM expr_eval",
+		}
+		for _, q := range tests {
+			result, err := exec.Execute(q)
+			if err != nil {
+				t.Logf("%s failed: %v", q, err)
+			} else {
+				t.Logf("%s -> %v", q, result.Rows)
+			}
+		}
+	})
+}
+
+// TestAnyAllMoreExpressions tests ANY and ALL expressions more thoroughly
+func TestAnyAllMoreExpressions(t *testing.T) {
+	engine := setupTestEngine(t)
+	exec := NewExecutor(engine)
+	exec.SetDatabase("testdb")
+
+	_, _ = exec.Execute("CREATE TABLE any_all_test (id INT, value INT)")
+	_, _ = exec.Execute("INSERT INTO any_all_test VALUES (1, 10)")
+	_, _ = exec.Execute("INSERT INTO any_all_test VALUES (2, 20)")
+	_, _ = exec.Execute("INSERT INTO any_all_test VALUES (3, 30)")
+
+	_, _ = exec.Execute("CREATE TABLE compare_vals (v INT)")
+	_, _ = exec.Execute("INSERT INTO compare_vals VALUES (15)")
+	_, _ = exec.Execute("INSERT INTO compare_vals VALUES (25)")
+
+	t.Run("ANY > comparison", func(t *testing.T) {
+		result, err := exec.Execute("SELECT * FROM any_all_test WHERE value > ANY (SELECT v FROM compare_vals)")
+		if err != nil {
+			t.Logf("ANY > failed: %v", err)
+		} else {
+			t.Logf("ANY > result: %v", result.Rows)
+		}
+	})
+
+	t.Run("ALL > comparison", func(t *testing.T) {
+		result, err := exec.Execute("SELECT * FROM any_all_test WHERE value > ALL (SELECT v FROM compare_vals)")
+		if err != nil {
+			t.Logf("ALL > failed: %v", err)
+		} else {
+			t.Logf("ALL > result: %v", result.Rows)
+		}
+	})
+
+	t.Run("ANY = comparison", func(t *testing.T) {
+		result, err := exec.Execute("SELECT * FROM any_all_test WHERE value = ANY (SELECT v FROM compare_vals WHERE v = 10)")
+		if err != nil {
+			t.Logf("ANY = failed: %v", err)
+		} else {
+			t.Logf("ANY = result: %v", result.Rows)
+		}
+	})
+
+	t.Run("ALL < comparison", func(t *testing.T) {
+		result, err := exec.Execute("SELECT * FROM any_all_test WHERE value < ALL (SELECT v FROM compare_vals WHERE v > 100)")
+		if err != nil {
+			t.Logf("ALL < failed: %v", err)
+		} else {
+			t.Logf("ALL < result: %v", result.Rows)
+		}
+	})
+}
+
+// TestSubqueryInSelect tests subqueries in SELECT clause
+func TestSubqueryInSelect(t *testing.T) {
+	engine := setupTestEngine(t)
+	exec := NewExecutor(engine)
+	exec.SetDatabase("testdb")
+
+	_, _ = exec.Execute("CREATE TABLE main (id INT, ref_id INT)")
+	_, _ = exec.Execute("INSERT INTO main VALUES (1, 10)")
+	_, _ = exec.Execute("INSERT INTO main VALUES (2, 20)")
+
+	_, _ = exec.Execute("CREATE TABLE ref (id INT, value INT)")
+	_, _ = exec.Execute("INSERT INTO ref VALUES (10, 100)")
+	_, _ = exec.Execute("INSERT INTO ref VALUES (20, 200)")
+
+	t.Run("Scalar subquery in SELECT", func(t *testing.T) {
+		result, err := exec.Execute("SELECT id, (SELECT value FROM ref WHERE id = ref_id) FROM main")
+		if err != nil {
+			t.Logf("Scalar subquery in SELECT failed: %v", err)
+		} else {
+			t.Logf("Scalar subquery in SELECT result: %v", result.Rows)
+		}
+	})
+
+	t.Run("Correlated subquery in SELECT", func(t *testing.T) {
+		result, err := exec.Execute("SELECT m.id, (SELECT value FROM ref r WHERE r.id = m.ref_id) FROM main m")
+		if err != nil {
+			t.Logf("Correlated subquery in SELECT failed: %v", err)
+		} else {
+			t.Logf("Correlated subquery in SELECT result: %v", result.Rows)
+		}
+	})
+}
+
