@@ -13065,3 +13065,409 @@ func TestHasAggregateFunction(t *testing.T) {
 	})
 }
 
+// TestEvaluateFunction tests the evaluateFunction function with various built-in functions
+func TestEvaluateFunction(t *testing.T) {
+	engine := setupTestEngine(t)
+	exec := NewExecutor(engine)
+	exec.SetDatabase("testdb")
+
+	// Create table for testing
+	_, _ = exec.Execute("CREATE TABLE func_test (id INT, name VARCHAR(50), value FLOAT)")
+	_, _ = exec.Execute("INSERT INTO func_test VALUES (1, 'Alice', 100.5)")
+
+	// Get table info
+	tbl, err := engine.GetTable("func_test")
+	if err != nil {
+		t.Fatalf("Failed to get table: %v", err)
+	}
+	tblInfo := tbl.GetInfo()
+	columns := tblInfo.Columns
+	columnMap := make(map[string]*types.ColumnInfo)
+	for _, col := range columns {
+		columnMap[col.Name] = col
+	}
+
+	// Create a row
+	r := row.NewRow(1, columns)
+	r.Values[0] = types.NewIntValue(1)
+	r.Values[1] = types.NewStringValue("Alice", types.TypeVarchar)
+	r.Values[2] = types.NewFloatValue(100.5)
+
+	t.Run("UPPER function", func(t *testing.T) {
+		fc := &sql.FunctionCall{
+			Name: "UPPER",
+			Args: []sql.Expression{&sql.Literal{Value: "hello"}},
+		}
+		result, err := exec.evaluateFunction(fc, r, columnMap, columns)
+		if err != nil {
+			t.Errorf("UPPER failed: %v", err)
+		}
+		if result != "HELLO" {
+			t.Errorf("expected HELLO, got %v", result)
+		}
+	})
+
+	t.Run("LOWER function", func(t *testing.T) {
+		fc := &sql.FunctionCall{
+			Name: "LOWER",
+			Args: []sql.Expression{&sql.Literal{Value: "HELLO"}},
+		}
+		result, err := exec.evaluateFunction(fc, r, columnMap, columns)
+		if err != nil {
+			t.Errorf("LOWER failed: %v", err)
+		}
+		if result != "hello" {
+			t.Errorf("expected hello, got %v", result)
+		}
+	})
+
+	t.Run("LENGTH function", func(t *testing.T) {
+		fc := &sql.FunctionCall{
+			Name: "LENGTH",
+			Args: []sql.Expression{&sql.Literal{Value: "hello"}},
+		}
+		result, err := exec.evaluateFunction(fc, r, columnMap, columns)
+		if err != nil {
+			t.Errorf("LENGTH failed: %v", err)
+		}
+		if result != int64(5) {
+			t.Errorf("expected 5, got %v", result)
+		}
+	})
+
+	t.Run("CONCAT function", func(t *testing.T) {
+		fc := &sql.FunctionCall{
+			Name: "CONCAT",
+			Args: []sql.Expression{
+				&sql.Literal{Value: "Hello"},
+				&sql.Literal{Value: " "},
+				&sql.Literal{Value: "World"},
+			},
+		}
+		result, err := exec.evaluateFunction(fc, r, columnMap, columns)
+		if err != nil {
+			t.Errorf("CONCAT failed: %v", err)
+		}
+		if result != "Hello World" {
+			t.Errorf("expected 'Hello World', got %v", result)
+		}
+	})
+
+	t.Run("SUBSTR function", func(t *testing.T) {
+		fc := &sql.FunctionCall{
+			Name: "SUBSTR",
+			Args: []sql.Expression{
+				&sql.Literal{Value: "Hello World"},
+				&sql.Literal{Value: int64(1)},
+				&sql.Literal{Value: int64(5)},
+			},
+		}
+		result, err := exec.evaluateFunction(fc, r, columnMap, columns)
+		if err != nil {
+			t.Errorf("SUBSTR failed: %v", err)
+		}
+		if result != "Hello" {
+			t.Errorf("expected 'Hello', got %v", result)
+		}
+	})
+
+	t.Run("ABS function", func(t *testing.T) {
+		fc := &sql.FunctionCall{
+			Name: "ABS",
+			Args: []sql.Expression{&sql.Literal{Value: int64(-42)}},
+		}
+		result, err := exec.evaluateFunction(fc, r, columnMap, columns)
+		if err != nil {
+			t.Errorf("ABS failed: %v", err)
+		}
+		if result != int64(42) && result != float64(42) {
+			t.Errorf("expected 42, got %v", result)
+		}
+	})
+
+	t.Run("ROUND function", func(t *testing.T) {
+		fc := &sql.FunctionCall{
+			Name: "ROUND",
+			Args: []sql.Expression{
+				&sql.Literal{Value: float64(3.14159)},
+				&sql.Literal{Value: int64(2)},
+			},
+		}
+		result, err := exec.evaluateFunction(fc, r, columnMap, columns)
+		if err != nil {
+			t.Errorf("ROUND failed: %v", err)
+		}
+		t.Logf("ROUND(3.14159, 2) = %v", result)
+	})
+
+	t.Run("COALESCE function", func(t *testing.T) {
+		fc := &sql.FunctionCall{
+			Name: "COALESCE",
+			Args: []sql.Expression{
+				&sql.Literal{Value: nil},
+				&sql.Literal{Value: "default"},
+			},
+		}
+		result, err := exec.evaluateFunction(fc, r, columnMap, columns)
+		if err != nil {
+			t.Errorf("COALESCE failed: %v", err)
+		}
+		if result != "default" {
+			t.Errorf("expected 'default', got %v", result)
+		}
+	})
+
+	t.Run("IFNULL function", func(t *testing.T) {
+		fc := &sql.FunctionCall{
+			Name: "IFNULL",
+			Args: []sql.Expression{
+				&sql.Literal{Value: nil},
+				&sql.Literal{Value: "fallback"},
+			},
+		}
+		result, err := exec.evaluateFunction(fc, r, columnMap, columns)
+		if err != nil {
+			t.Errorf("IFNULL failed: %v", err)
+		}
+		if result != "fallback" {
+			t.Errorf("expected 'fallback', got %v", result)
+		}
+	})
+
+	t.Run("HEX function", func(t *testing.T) {
+		fc := &sql.FunctionCall{
+			Name: "HEX",
+			Args: []sql.Expression{&sql.Literal{Value: "ABC"}},
+		}
+		result, err := exec.evaluateFunction(fc, r, columnMap, columns)
+		if err != nil {
+			t.Errorf("HEX failed: %v", err)
+		}
+		t.Logf("HEX('ABC') = %v", result)
+	})
+
+	t.Run("REPLACE function", func(t *testing.T) {
+		fc := &sql.FunctionCall{
+			Name: "REPLACE",
+			Args: []sql.Expression{
+				&sql.Literal{Value: "hello world"},
+				&sql.Literal{Value: "world"},
+				&sql.Literal{Value: "there"},
+			},
+		}
+		result, err := exec.evaluateFunction(fc, r, columnMap, columns)
+		if err != nil {
+			t.Errorf("REPLACE failed: %v", err)
+		}
+		if result != "hello there" {
+			t.Errorf("expected 'hello there', got %v", result)
+		}
+	})
+
+	t.Run("TRIM function", func(t *testing.T) {
+		fc := &sql.FunctionCall{
+			Name: "TRIM",
+			Args: []sql.Expression{&sql.Literal{Value: "  hello  "}},
+		}
+		result, err := exec.evaluateFunction(fc, r, columnMap, columns)
+		if err != nil {
+			t.Errorf("TRIM failed: %v", err)
+		}
+		if result != "hello" {
+			t.Errorf("expected 'hello', got %v", result)
+		}
+	})
+
+	t.Run("LTRIM function", func(t *testing.T) {
+		fc := &sql.FunctionCall{
+			Name: "LTRIM",
+			Args: []sql.Expression{&sql.Literal{Value: "  hello  "}},
+		}
+		result, err := exec.evaluateFunction(fc, r, columnMap, columns)
+		if err != nil {
+			t.Errorf("LTRIM failed: %v", err)
+		}
+		if result != "hello  " {
+			t.Errorf("expected 'hello  ', got %v", result)
+		}
+	})
+
+	t.Run("RTRIM function", func(t *testing.T) {
+		fc := &sql.FunctionCall{
+			Name: "RTRIM",
+			Args: []sql.Expression{&sql.Literal{Value: "  hello  "}},
+		}
+		result, err := exec.evaluateFunction(fc, r, columnMap, columns)
+		if err != nil {
+			t.Errorf("RTRIM failed: %v", err)
+		}
+		if result != "  hello" {
+			t.Errorf("expected '  hello', got %v", result)
+		}
+	})
+}
+
+// TestTimestampDiffFunctionMore tests the timestampDiff function
+func TestTimestampDiffFunctionMore(t *testing.T) {
+	engine := setupTestEngine(t)
+	exec := NewExecutor(engine)
+	exec.SetDatabase("testdb")
+
+	columns := []*types.ColumnInfo{}
+	columnMap := make(map[string]*types.ColumnInfo)
+
+	t.Run("SECOND difference", func(t *testing.T) {
+		start := time.Date(2024, 1, 1, 12, 0, 0, 0, time.UTC)
+		end := time.Date(2024, 1, 1, 12, 0, 30, 0, time.UTC)
+		result := timestampDiff("SECOND", start, end)
+		if result != int64(30) {
+			t.Errorf("expected 30 seconds, got %v", result)
+		}
+	})
+
+	t.Run("MINUTE difference", func(t *testing.T) {
+		start := time.Date(2024, 1, 1, 12, 0, 0, 0, time.UTC)
+		end := time.Date(2024, 1, 1, 12, 30, 0, 0, time.UTC)
+		result := timestampDiff("MINUTE", start, end)
+		if result != int64(30) {
+			t.Errorf("expected 30 minutes, got %v", result)
+		}
+	})
+
+	t.Run("HOUR difference", func(t *testing.T) {
+		start := time.Date(2024, 1, 1, 10, 0, 0, 0, time.UTC)
+		end := time.Date(2024, 1, 1, 14, 0, 0, 0, time.UTC)
+		result := timestampDiff("HOUR", start, end)
+		if result != int64(4) {
+			t.Errorf("expected 4 hours, got %v", result)
+		}
+	})
+
+	t.Run("DAY difference", func(t *testing.T) {
+		start := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
+		end := time.Date(2024, 1, 5, 0, 0, 0, 0, time.UTC)
+		result := timestampDiff("DAY", start, end)
+		if result != int64(4) {
+			t.Errorf("expected 4 days, got %v", result)
+		}
+	})
+
+	t.Run("MONTH difference", func(t *testing.T) {
+		start := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
+		end := time.Date(2024, 4, 1, 0, 0, 0, 0, time.UTC)
+		result := timestampDiff("MONTH", start, end)
+		if result != int64(3) {
+			t.Errorf("expected 3 months, got %v", result)
+		}
+	})
+
+	t.Run("YEAR difference", func(t *testing.T) {
+		start := time.Date(2022, 1, 1, 0, 0, 0, 0, time.UTC)
+		end := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
+		result := timestampDiff("YEAR", start, end)
+		if result != int64(2) {
+			t.Errorf("expected 2 years, got %v", result)
+		}
+	})
+
+	// Test via evaluateFunction
+	t.Run("TIMESTAMPDIFF via evaluateFunction", func(t *testing.T) {
+		fc := &sql.FunctionCall{
+			Name: "TIMESTAMPDIFF",
+			Args: []sql.Expression{
+				&sql.Literal{Value: "DAY"},
+				&sql.Literal{Value: "2024-01-01"},
+				&sql.Literal{Value: "2024-01-10"},
+			},
+		}
+		result, err := exec.evaluateFunction(fc, nil, columnMap, columns)
+		if err != nil {
+			t.Logf("TIMESTAMPDIFF evaluation: %v", err)
+		} else {
+			t.Logf("TIMESTAMPDIFF result: %v", result)
+		}
+	})
+}
+
+// TestExecuteSelectFromDerivedTable tests executeSelectFromDerivedTable
+func TestExecuteSelectFromDerivedTable(t *testing.T) {
+	engine := setupTestEngine(t)
+	exec := NewExecutor(engine)
+	exec.SetDatabase("testdb")
+
+	// Create table
+	_, _ = exec.Execute("CREATE TABLE derived_test (id INT, name VARCHAR(50))")
+	_, _ = exec.Execute("INSERT INTO derived_test VALUES (1, 'Alice')")
+	_, _ = exec.Execute("INSERT INTO derived_test VALUES (2, 'Bob')")
+
+	// Test simple subquery
+	result, err := exec.Execute("SELECT * FROM (SELECT id, name FROM derived_test) AS sub")
+	if err != nil {
+		t.Logf("Derived table query failed: %v", err)
+	} else {
+		t.Logf("Derived table returned %d rows", len(result.Rows))
+	}
+
+	// Test subquery with WHERE
+	result, err = exec.Execute("SELECT * FROM (SELECT id FROM derived_test WHERE id > 0) AS sub")
+	if err != nil {
+		t.Logf("Derived table with WHERE failed: %v", err)
+	} else {
+		t.Logf("Derived table with WHERE returned %d rows", len(result.Rows))
+	}
+}
+
+// TestExecuteSelectFromViewMore tests executeSelectFromView
+func TestExecuteSelectFromViewMore(t *testing.T) {
+	engine := setupTestEngine(t)
+	exec := NewExecutor(engine)
+	exec.SetDatabase("testdb")
+
+	// Create base table
+	_, _ = exec.Execute("CREATE TABLE view_source (id INT, category VARCHAR(20), value INT)")
+	_, _ = exec.Execute("INSERT INTO view_source VALUES (1, 'A', 100)")
+	_, _ = exec.Execute("INSERT INTO view_source VALUES (2, 'B', 200)")
+	_, _ = exec.Execute("INSERT INTO view_source VALUES (3, 'A', 150)")
+
+	// Create view
+	_, err := exec.Execute("CREATE VIEW view_a AS SELECT id, value FROM view_source WHERE category = 'A'")
+	if err != nil {
+		t.Logf("Create view failed: %v", err)
+	}
+
+	// Query from view
+	result, err := exec.Execute("SELECT * FROM view_a")
+	if err != nil {
+		t.Logf("Select from view failed: %v", err)
+	} else {
+		t.Logf("View returned %d rows", len(result.Rows))
+	}
+
+	// Query with aggregation from view
+	result, err = exec.Execute("SELECT SUM(value) FROM view_a")
+	if err != nil {
+		t.Logf("Aggregation from view failed: %v", err)
+	} else {
+		t.Logf("Aggregation from view returned %d rows", len(result.Rows))
+	}
+}
+
+// TestPragmaIntegrityCheckMore tests pragmaIntegrityCheck
+func TestPragmaIntegrityCheckMore(t *testing.T) {
+	engine := setupTestEngine(t)
+	exec := NewExecutor(engine)
+	exec.SetDatabase("testdb")
+
+	// Create a table to have something to check
+	_, _ = exec.Execute("CREATE TABLE integrity_test (id INT PRIMARY KEY, name VARCHAR(50))")
+	_, _ = exec.Execute("INSERT INTO integrity_test VALUES (1, 'test')")
+
+	// Run integrity check
+	result, err := exec.Execute("PRAGMA integrity_check")
+	if err != nil {
+		t.Logf("PRAGMA integrity_check failed: %v", err)
+	} else {
+		t.Logf("Integrity check result: %d rows", len(result.Rows))
+	}
+}
+
