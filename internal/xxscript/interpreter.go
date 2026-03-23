@@ -2,6 +2,12 @@
 package xxscript
 
 import (
+	"crypto/md5"
+	"crypto/sha1"
+	"crypto/sha256"
+	"crypto/sha512"
+	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -1105,6 +1111,25 @@ func (i *Interpreter) callBuiltin(name string, args []Value) (Value, bool) {
 		return i.builtinSqrt(args), true
 	case "pow":
 		return i.builtinPow(args), true
+	// Crypto/Hash functions
+	case "md5":
+		return i.builtinMD5(args), true
+	case "sha1":
+		return i.builtinSHA1(args), true
+	case "sha256":
+		return i.builtinSHA256(args), true
+	case "sha512":
+		return i.builtinSHA512(args), true
+	case "base64Encode":
+		return i.builtinBase64Encode(args), true
+	case "base64Decode":
+		return i.builtinBase64Decode(args), true
+	case "hexEncode":
+		return i.builtinHexEncode(args), true
+	case "hexDecode":
+		return i.builtinHexDecode(args), true
+	case "hmacSHA256":
+		return i.builtinHmacSHA256(args), true
 	default:
 		return nil, false
 	}
@@ -1763,6 +1788,142 @@ func (i *Interpreter) builtinPow(args []Value) Value {
 		exp = float64(int(exp) / 2)
 	}
 	return result
+}
+
+// ============================================================================
+// Crypto/Hash Functions
+// ============================================================================
+
+// builtinMD5 computes MD5 hash of a string
+func (i *Interpreter) builtinMD5(args []Value) Value {
+	if len(args) == 0 {
+		return ""
+	}
+	s := fmt.Sprintf("%v", args[0])
+	hash := md5.Sum([]byte(s))
+	return hex.EncodeToString(hash[:])
+}
+
+// builtinSHA1 computes SHA1 hash of a string
+func (i *Interpreter) builtinSHA1(args []Value) Value {
+	if len(args) == 0 {
+		return ""
+	}
+	s := fmt.Sprintf("%v", args[0])
+	hash := sha1.Sum([]byte(s))
+	return hex.EncodeToString(hash[:])
+}
+
+// builtinSHA256 computes SHA256 hash of a string
+func (i *Interpreter) builtinSHA256(args []Value) Value {
+	if len(args) == 0 {
+		return ""
+	}
+	s := fmt.Sprintf("%v", args[0])
+	hash := sha256.Sum256([]byte(s))
+	return hex.EncodeToString(hash[:])
+}
+
+// builtinSHA512 computes SHA512 hash of a string
+func (i *Interpreter) builtinSHA512(args []Value) Value {
+	if len(args) == 0 {
+		return ""
+	}
+	s := fmt.Sprintf("%v", args[0])
+	hash := sha512.Sum512([]byte(s))
+	return hex.EncodeToString(hash[:])
+}
+
+// builtinBase64Encode encodes a string to base64
+func (i *Interpreter) builtinBase64Encode(args []Value) Value {
+	if len(args) == 0 {
+		return ""
+	}
+	s := fmt.Sprintf("%v", args[0])
+	return base64.StdEncoding.EncodeToString([]byte(s))
+}
+
+// builtinBase64Decode decodes a base64 string
+func (i *Interpreter) builtinBase64Decode(args []Value) Value {
+	if len(args) == 0 {
+		return ""
+	}
+	s, ok := args[0].(string)
+	if !ok {
+		s = fmt.Sprintf("%v", args[0])
+	}
+	decoded, err := base64.StdEncoding.DecodeString(s)
+	if err != nil {
+		return ""
+	}
+	return string(decoded)
+}
+
+// builtinHexEncode encodes a string to hex
+func (i *Interpreter) builtinHexEncode(args []Value) Value {
+	if len(args) == 0 {
+		return ""
+	}
+	s := fmt.Sprintf("%v", args[0])
+	return hex.EncodeToString([]byte(s))
+}
+
+// builtinHexDecode decodes a hex string
+func (i *Interpreter) builtinHexDecode(args []Value) Value {
+	if len(args) == 0 {
+		return ""
+	}
+	s, ok := args[0].(string)
+	if !ok {
+		s = fmt.Sprintf("%v", args[0])
+	}
+	decoded, err := hex.DecodeString(s)
+	if err != nil {
+		return ""
+	}
+	return string(decoded)
+}
+
+// builtinHmacSHA256 computes HMAC-SHA256
+func (i *Interpreter) builtinHmacSHA256(args []Value) Value {
+	if len(args) < 2 {
+		return ""
+	}
+	data := fmt.Sprintf("%v", args[0])
+	key := fmt.Sprintf("%v", args[1])
+
+	// Simple HMAC implementation
+	// HMAC = H(K XOR opad || H(K XOR ipad || text))
+	blockSize := 64 // SHA256 block size
+
+	// Pad key
+	keyPad := make([]byte, blockSize)
+	copy(keyPad, []byte(key))
+
+	// XOR with ipad (0x36)
+	ipad := make([]byte, blockSize)
+	for j := 0; j < blockSize; j++ {
+		ipad[j] = keyPad[j] ^ 0x36
+	}
+
+	// XOR with opad (0x5c)
+	opad := make([]byte, blockSize)
+	for j := 0; j < blockSize; j++ {
+		opad[j] = keyPad[j] ^ 0x5c
+	}
+
+	// Inner hash
+	inner := sha256.New()
+	inner.Write(ipad)
+	inner.Write([]byte(data))
+	innerHash := inner.Sum(nil)
+
+	// Outer hash
+	outer := sha256.New()
+	outer.Write(opad)
+	outer.Write(innerHash)
+
+	return hex.EncodeToString(outer.Sum(nil))
 }
 
 // ============================================================================

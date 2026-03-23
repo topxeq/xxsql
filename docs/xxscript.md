@@ -291,6 +291,20 @@ try {
 | `formatTime(ts, fmt)` | Format timestamp | `formatTime(now(), "2006-01-02")` |
 | `parseTime(s, fmt)` | Parse to timestamp | `parseTime("2022-01-01", "2006-01-02")` |
 
+### Crypto/Hash Functions
+
+| Function | Description | Example |
+|----------|-------------|---------|
+| `md5(s)` | MD5 hash (hex) | `md5("hello")` → `"5d41402abc4b2a76b9719d911017c592"` |
+| `sha1(s)` | SHA1 hash (hex) | `sha1("hello")` → `"aaf4c61ddcc5e8a2dabede0f3b482cd9aea9434d"` |
+| `sha256(s)` | SHA256 hash (hex) | `sha256("hello")` → `"2cf24dba5fb0a30e..."` |
+| `sha512(s)` | SHA512 hash (hex) | `sha512("hello")` → `"9b71d224bd2f..."` |
+| `base64Encode(s)` | Encode to Base64 | `base64Encode("hello")` → `"aGVsbG8="` |
+| `base64Decode(s)` | Decode from Base64 | `base64Decode("aGVsbG8=")` → `"hello"` |
+| `hexEncode(s)` | Encode to hex | `hexEncode("hello")` → `"68656c6c6f"` |
+| `hexDecode(s)` | Decode from hex | `hexDecode("68656c6c6f")` → `"hello"` |
+| `hmacSHA256(data, key)` | HMAC-SHA256 | `hmacSHA256("msg", "key")` → `"...hash..."` |
+
 ### Output Functions
 
 | Function | Description | Example |

@@ -4332,3 +4332,186 @@ func TestBuiltinFunctionsScriptFinal(t *testing.T) {
 		}
 	})
 }
+
+// TestCryptoFunctions tests the crypto/hash built-in functions
+func TestCryptoFunctions(t *testing.T) {
+	t.Run("md5", func(t *testing.T) {
+		result, err := Run("md5('hello')", nil)
+		if err != nil {
+			t.Errorf("Run returned error: %v", err)
+		}
+		// MD5 of "hello" is 5d41402abc4b2a76b9719d911017c592
+		expected := "5d41402abc4b2a76b9719d911017c592"
+		if result != expected {
+			t.Errorf("md5('hello') = %v, want %v", result, expected)
+		}
+	})
+
+	t.Run("md5 empty", func(t *testing.T) {
+		result, err := Run("md5('')", nil)
+		if err != nil {
+			t.Errorf("Run returned error: %v", err)
+		}
+		// MD5 of "" is d41d8cd98f00b204e9800998ecf8427e
+		expected := "d41d8cd98f00b204e9800998ecf8427e"
+		if result != expected {
+			t.Errorf("md5('') = %v, want %v", result, expected)
+		}
+	})
+
+	t.Run("sha1", func(t *testing.T) {
+		result, err := Run("sha1('hello')", nil)
+		if err != nil {
+			t.Errorf("Run returned error: %v", err)
+		}
+		// SHA1 of "hello" is aaf4c61ddcc5e8a2dabede0f3b482cd9aea9434d
+		expected := "aaf4c61ddcc5e8a2dabede0f3b482cd9aea9434d"
+		if result != expected {
+			t.Errorf("sha1('hello') = %v, want %v", result, expected)
+		}
+	})
+
+	t.Run("sha256", func(t *testing.T) {
+		result, err := Run("sha256('hello')", nil)
+		if err != nil {
+			t.Errorf("Run returned error: %v", err)
+		}
+		// SHA256 of "hello" is 2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824
+		expected := "2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824"
+		if result != expected {
+			t.Errorf("sha256('hello') = %v, want %v", result, expected)
+		}
+	})
+
+	t.Run("sha512", func(t *testing.T) {
+		result, err := Run("sha512('hello')", nil)
+		if err != nil {
+			t.Errorf("Run returned error: %v", err)
+		}
+		// SHA512 of "hello" starts with 9b71d224b...
+		resultStr := result.(string)
+		if len(resultStr) != 128 {
+			t.Errorf("sha512('hello') length = %d, want 128", len(resultStr))
+		}
+	})
+
+	t.Run("base64Encode", func(t *testing.T) {
+		result, err := Run("base64Encode('hello')", nil)
+		if err != nil {
+			t.Errorf("Run returned error: %v", err)
+		}
+		// Base64 of "hello" is aGVsbG8=
+		expected := "aGVsbG8="
+		if result != expected {
+			t.Errorf("base64Encode('hello') = %v, want %v", result, expected)
+		}
+	})
+
+	t.Run("base64Decode", func(t *testing.T) {
+		result, err := Run("base64Decode('aGVsbG8=')", nil)
+		if err != nil {
+			t.Errorf("Run returned error: %v", err)
+		}
+		expected := "hello"
+		if result != expected {
+			t.Errorf("base64Decode('aGVsbG8=') = %v, want %v", result, expected)
+		}
+	})
+
+	t.Run("base64 roundtrip", func(t *testing.T) {
+		result, err := Run("base64Decode(base64Encode('test message'))", nil)
+		if err != nil {
+			t.Errorf("Run returned error: %v", err)
+		}
+		expected := "test message"
+		if result != expected {
+			t.Errorf("base64 roundtrip = %v, want %v", result, expected)
+		}
+	})
+
+	t.Run("hexEncode", func(t *testing.T) {
+		result, err := Run("hexEncode('hello')", nil)
+		if err != nil {
+			t.Errorf("Run returned error: %v", err)
+		}
+		// Hex of "hello" is 68656c6c6f
+		expected := "68656c6c6f"
+		if result != expected {
+			t.Errorf("hexEncode('hello') = %v, want %v", result, expected)
+		}
+	})
+
+	t.Run("hexDecode", func(t *testing.T) {
+		result, err := Run("hexDecode('68656c6c6f')", nil)
+		if err != nil {
+			t.Errorf("Run returned error: %v", err)
+		}
+		expected := "hello"
+		if result != expected {
+			t.Errorf("hexDecode('68656c6c6f') = %v, want %v", result, expected)
+		}
+	})
+
+	t.Run("hex roundtrip", func(t *testing.T) {
+		result, err := Run("hexDecode(hexEncode('test'))", nil)
+		if err != nil {
+			t.Errorf("Run returned error: %v", err)
+		}
+		expected := "test"
+		if result != expected {
+			t.Errorf("hex roundtrip = %v, want %v", result, expected)
+		}
+	})
+
+	t.Run("hmacSHA256", func(t *testing.T) {
+		result, err := Run("hmacSHA256('message', 'secret')", nil)
+		if err != nil {
+			t.Errorf("Run returned error: %v", err)
+		}
+		// HMAC-SHA256 result should be 64 hex characters
+		resultStr := result.(string)
+		if len(resultStr) != 64 {
+			t.Errorf("hmacSHA256 length = %d, want 64", len(resultStr))
+		}
+	})
+
+	t.Run("crypto with variable", func(t *testing.T) {
+		script := `
+			var data = "password123"
+			var hash = sha256(data)
+			hash
+		`
+		result, err := Run(script, nil)
+		if err != nil {
+			t.Errorf("Run returned error: %v", err)
+		}
+		// SHA256 of "password123"
+		expected := "ef92b778bafe771e89245b89ecbc08a44a4e166c06659911881f383d4473e94f"
+		if result != expected {
+			t.Errorf("sha256('password123') = %v, want %v", result, expected)
+		}
+	})
+
+	t.Run("md5 with number", func(t *testing.T) {
+		result, err := Run("md5(12345)", nil)
+		if err != nil {
+			t.Errorf("Run returned error: %v", err)
+		}
+		// Should work with numbers too
+		resultStr := result.(string)
+		if len(resultStr) != 32 {
+			t.Errorf("md5(12345) length = %d, want 32", len(resultStr))
+		}
+	})
+
+	t.Run("crypto empty args", func(t *testing.T) {
+		// Test with empty/missing args
+		result, err := Run("md5()", nil)
+		if err != nil {
+			t.Errorf("Run returned error: %v", err)
+		}
+		if result != "" {
+			t.Errorf("md5() = %v, want empty string", result)
+		}
+	})
+}
