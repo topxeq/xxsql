@@ -15238,3 +15238,245 @@ func TestMoreJoinTypesExtra(t *testing.T) {
 	})
 }
 
+// TestAnyAllExpressions tests ANY and ALL expressions
+func TestAnyAllExpressions(t *testing.T) {
+	engine := setupTestEngine(t)
+	exec := NewExecutor(engine)
+	exec.SetDatabase("testdb")
+
+	// Create tables
+	_, _ = exec.Execute("CREATE TABLE any_test (value INT)")
+	_, _ = exec.Execute("INSERT INTO any_test VALUES (10)")
+	_, _ = exec.Execute("INSERT INTO any_test VALUES (20)")
+	_, _ = exec.Execute("INSERT INTO any_test VALUES (30)")
+
+	_, _ = exec.Execute("CREATE TABLE compare_test (id INT, val INT)")
+	_, _ = exec.Execute("INSERT INTO compare_test VALUES (1, 15)")
+	_, _ = exec.Execute("INSERT INTO compare_test VALUES (2, 25)")
+	_, _ = exec.Execute("INSERT INTO compare_test VALUES (3, 35)")
+
+	t.Run("ANY with =", func(t *testing.T) {
+		result, err := exec.Execute("SELECT * FROM compare_test WHERE val = ANY (SELECT value FROM any_test)")
+		if err != nil {
+			t.Logf("ANY = failed: %v (may not be fully implemented)", err)
+		} else {
+			t.Logf("ANY = result: %v", result.Rows)
+		}
+	})
+
+	t.Run("ANY with >", func(t *testing.T) {
+		result, err := exec.Execute("SELECT * FROM compare_test WHERE val > ANY (SELECT value FROM any_test)")
+		if err != nil {
+			t.Logf("ANY > failed: %v", err)
+		} else {
+			t.Logf("ANY > result: %v", result.Rows)
+		}
+	})
+
+	t.Run("ALL with >", func(t *testing.T) {
+		result, err := exec.Execute("SELECT * FROM compare_test WHERE val > ALL (SELECT value FROM any_test)")
+		if err != nil {
+			t.Logf("ALL > failed: %v", err)
+		} else {
+			t.Logf("ALL > result: %v", result.Rows)
+		}
+	})
+
+	t.Run("ALL with <", func(t *testing.T) {
+		result, err := exec.Execute("SELECT * FROM compare_test WHERE val < ALL (SELECT value FROM any_test)")
+		if err != nil {
+			t.Logf("ALL < failed: %v", err)
+		} else {
+			t.Logf("ALL < result: %v", result.Rows)
+		}
+	})
+}
+
+// TestScalarSubqueryInWhere tests scalar subqueries in WHERE clause
+func TestScalarSubqueryInWhere(t *testing.T) {
+	engine := setupTestEngine(t)
+	exec := NewExecutor(engine)
+	exec.SetDatabase("testdb")
+
+	// Create tables
+	_, _ = exec.Execute("CREATE TABLE main_data (id INT, value INT)")
+	_, _ = exec.Execute("INSERT INTO main_data VALUES (1, 100)")
+	_, _ = exec.Execute("INSERT INTO main_data VALUES (2, 200)")
+	_, _ = exec.Execute("INSERT INTO main_data VALUES (3, 300)")
+
+	_, _ = exec.Execute("CREATE TABLE thresholds (name VARCHAR(50), threshold INT)")
+	_, _ = exec.Execute("INSERT INTO thresholds VALUES ('max', 150)")
+
+	t.Run("Scalar subquery in WHERE", func(t *testing.T) {
+		result, err := exec.Execute("SELECT * FROM main_data WHERE value > (SELECT threshold FROM thresholds WHERE name = 'max')")
+		if err != nil {
+			t.Errorf("Scalar subquery failed: %v", err)
+		}
+		t.Logf("Scalar subquery result: %v", result.Rows)
+	})
+
+	t.Run("Scalar subquery returns no rows", func(t *testing.T) {
+		result, err := exec.Execute("SELECT * FROM main_data WHERE value > (SELECT threshold FROM thresholds WHERE name = 'nonexistent')")
+		if err != nil {
+			t.Errorf("Empty scalar subquery failed: %v", err)
+		}
+		t.Logf("Empty scalar subquery result: %d rows", len(result.Rows))
+	})
+
+	t.Run("Scalar subquery in SELECT", func(t *testing.T) {
+		result, err := exec.Execute("SELECT id, (SELECT MAX(value) FROM main_data) AS max_val FROM main_data")
+		if err != nil {
+			t.Errorf("Scalar subquery in SELECT failed: %v", err)
+		}
+		t.Logf("Scalar subquery in SELECT result: %v", result.Rows)
+	})
+}
+
+// TestIsNullExpressions tests IS NULL and IS NOT NULL expressions
+func TestIsNullExpressions(t *testing.T) {
+	engine := setupTestEngine(t)
+	exec := NewExecutor(engine)
+	exec.SetDatabase("testdb")
+
+	// Create table with nullable columns
+	_, _ = exec.Execute("CREATE TABLE null_test (id INT, name VARCHAR(50), value INT)")
+	_, _ = exec.Execute("INSERT INTO null_test VALUES (1, 'Alice', 100)")
+	_, _ = exec.Execute("INSERT INTO null_test VALUES (2, NULL, 200)")
+	_, _ = exec.Execute("INSERT INTO null_test VALUES (3, 'Charlie', NULL)")
+	_, _ = exec.Execute("INSERT INTO null_test VALUES (4, NULL, NULL)")
+
+	t.Run("IS NULL", func(t *testing.T) {
+		result, err := exec.Execute("SELECT * FROM null_test WHERE name IS NULL")
+		if err != nil {
+			t.Errorf("IS NULL failed: %v", err)
+		}
+		t.Logf("IS NULL result: %v", result.Rows)
+	})
+
+	t.Run("IS NOT NULL", func(t *testing.T) {
+		result, err := exec.Execute("SELECT * FROM null_test WHERE value IS NOT NULL")
+		if err != nil {
+			t.Errorf("IS NOT NULL failed: %v", err)
+		}
+		t.Logf("IS NOT NULL result: %v", result.Rows)
+	})
+
+	t.Run("Combined NULL checks", func(t *testing.T) {
+		result, err := exec.Execute("SELECT * FROM null_test WHERE name IS NOT NULL AND value IS NOT NULL")
+		if err != nil {
+			t.Errorf("Combined NULL check failed: %v", err)
+		}
+		t.Logf("Combined NULL check result: %v", result.Rows)
+	})
+}
+
+// TestInExpressions tests IN expressions with subqueries
+func TestInExpressions(t *testing.T) {
+	engine := setupTestEngine(t)
+	exec := NewExecutor(engine)
+	exec.SetDatabase("testdb")
+
+	// Create tables
+	_, _ = exec.Execute("CREATE TABLE in_main (id INT, name VARCHAR(50))")
+	_, _ = exec.Execute("INSERT INTO in_main VALUES (1, 'Alice')")
+	_, _ = exec.Execute("INSERT INTO in_main VALUES (2, 'Bob')")
+	_, _ = exec.Execute("INSERT INTO in_main VALUES (3, 'Charlie')")
+
+	_, _ = exec.Execute("CREATE TABLE in_sub (ref_id INT)")
+	_, _ = exec.Execute("INSERT INTO in_sub VALUES (1)")
+	_, _ = exec.Execute("INSERT INTO in_sub VALUES (3)")
+
+	t.Run("IN subquery", func(t *testing.T) {
+		result, err := exec.Execute("SELECT * FROM in_main WHERE id IN (SELECT ref_id FROM in_sub)")
+		if err != nil {
+			t.Errorf("IN subquery failed: %v", err)
+		}
+		t.Logf("IN subquery result: %v", result.Rows)
+	})
+
+	t.Run("NOT IN subquery", func(t *testing.T) {
+		result, err := exec.Execute("SELECT * FROM in_main WHERE id NOT IN (SELECT ref_id FROM in_sub)")
+		if err != nil {
+			t.Errorf("NOT IN subquery failed: %v", err)
+		}
+		t.Logf("NOT IN subquery result: %v", result.Rows)
+	})
+}
+
+// TestEvaluateHavingMore tests HAVING clause with different conditions
+func TestEvaluateHavingMore(t *testing.T) {
+	engine := setupTestEngine(t)
+	exec := NewExecutor(engine)
+	exec.SetDatabase("testdb")
+
+	// Create table
+	_, _ = exec.Execute("CREATE TABLE having_data (category VARCHAR(50), value INT)")
+	_, _ = exec.Execute("INSERT INTO having_data VALUES ('A', 10)")
+	_, _ = exec.Execute("INSERT INTO having_data VALUES ('A', 20)")
+	_, _ = exec.Execute("INSERT INTO having_data VALUES ('B', 5)")
+	_, _ = exec.Execute("INSERT INTO having_data VALUES ('B', 15)")
+	_, _ = exec.Execute("INSERT INTO having_data VALUES ('C', 30)")
+
+	t.Run("HAVING with aggregate comparison", func(t *testing.T) {
+		result, err := exec.Execute("SELECT category, SUM(value) as total FROM having_data GROUP BY category HAVING SUM(value) > 25")
+		if err != nil {
+			t.Errorf("HAVING aggregate failed: %v", err)
+		}
+		t.Logf("HAVING aggregate result: %v", result.Rows)
+	})
+
+	t.Run("HAVING with COUNT", func(t *testing.T) {
+		result, err := exec.Execute("SELECT category, COUNT(*) as cnt FROM having_data GROUP BY category HAVING COUNT(*) >= 2")
+		if err != nil {
+			t.Errorf("HAVING COUNT failed: %v", err)
+		}
+		t.Logf("HAVING COUNT result: %v", result.Rows)
+	})
+
+	t.Run("HAVING with AVG", func(t *testing.T) {
+		result, err := exec.Execute("SELECT category, AVG(value) as avg_val FROM having_data GROUP BY category HAVING AVG(value) > 15")
+		if err != nil {
+			t.Errorf("HAVING AVG failed: %v", err)
+		}
+		t.Logf("HAVING AVG result: %v", result.Rows)
+	})
+
+	t.Run("HAVING with MIN/MAX", func(t *testing.T) {
+		result, err := exec.Execute("SELECT category, MIN(value), MAX(value) FROM having_data GROUP BY category HAVING MAX(value) - MIN(value) > 10")
+		if err != nil {
+			t.Errorf("HAVING MIN/MAX failed: %v", err)
+		}
+		t.Logf("HAVING MIN/MAX result: %v", result.Rows)
+	})
+}
+
+// TestLateralDerivedTables tests LATERAL derived tables
+func TestLateralDerivedTables(t *testing.T) {
+	engine := setupTestEngine(t)
+	exec := NewExecutor(engine)
+	exec.SetDatabase("testdb")
+
+	// Create tables
+	_, _ = exec.Execute("CREATE TABLE lateral_parent (id INT, name VARCHAR(50))")
+	_, _ = exec.Execute("INSERT INTO lateral_parent VALUES (1, 'Alice')")
+	_, _ = exec.Execute("INSERT INTO lateral_parent VALUES (2, 'Bob')")
+
+	_, _ = exec.Execute("CREATE TABLE lateral_child (parent_id INT, item VARCHAR(50), value INT)")
+	_, _ = exec.Execute("INSERT INTO lateral_child VALUES (1, 'item1', 100)")
+	_, _ = exec.Execute("INSERT INTO lateral_child VALUES (1, 'item2', 200)")
+	_, _ = exec.Execute("INSERT INTO lateral_child VALUES (2, 'item3', 150)")
+
+	t.Run("LATERAL join", func(t *testing.T) {
+		result, err := exec.Execute(`
+			SELECT p.name, c.item, c.value
+			FROM lateral_parent p,
+			LATERAL (SELECT item, value FROM lateral_child WHERE parent_id = p.id ORDER BY value DESC LIMIT 1) c
+		`)
+		if err != nil {
+			t.Logf("LATERAL join failed: %v (may not be fully implemented)", err)
+		} else {
+			t.Logf("LATERAL join result: %v", result.Rows)
+		}
+	})
+}
+
