@@ -19392,3 +19392,539 @@ func TestAggregateFunctionsComprehensive(t *testing.T) {
 	})
 }
 
+// TestCaseWithAggregate tests CASE expressions containing aggregates
+func TestCaseWithAggregate(t *testing.T) {
+	engine := setupTestEngine(t)
+	exec := NewExecutor(engine)
+	exec.SetDatabase("testdb")
+
+	_, _ = exec.Execute("CREATE TABLE scores (id INT, score INT)")
+	_, _ = exec.Execute("INSERT INTO scores VALUES (1, 95)")
+	_, _ = exec.Execute("INSERT INTO scores VALUES (2, 75)")
+	_, _ = exec.Execute("INSERT INTO scores VALUES (3, 55)")
+
+	t.Run("CASE with aggregate in condition", func(t *testing.T) {
+		result, err := exec.Execute(`
+			SELECT CASE
+				WHEN AVG(score) > 70 THEN 'high average'
+				ELSE 'low average'
+			END FROM scores
+		`)
+		if err != nil {
+			t.Logf("CASE aggregate failed: %v", err)
+		} else {
+			t.Logf("CASE aggregate result: %v", result.Rows)
+		}
+	})
+
+	t.Run("CASE with SUM in result", func(t *testing.T) {
+		result, err := exec.Execute(`
+			SELECT CASE
+				WHEN score >= 80 THEN SUM(score)
+				ELSE 0
+			END FROM scores GROUP BY score
+		`)
+		if err != nil {
+			t.Logf("CASE SUM failed: %v", err)
+		} else {
+			t.Logf("CASE SUM result: %v", result.Rows)
+		}
+	})
+}
+
+// TestGroupConcat tests GROUP_CONCAT function
+func TestGroupConcat(t *testing.T) {
+	engine := setupTestEngine(t)
+	exec := NewExecutor(engine)
+	exec.SetDatabase("testdb")
+
+	_, _ = exec.Execute("CREATE TABLE items (grp VARCHAR(10), name VARCHAR(50))")
+	_, _ = exec.Execute("INSERT INTO items VALUES ('A', 'apple')")
+	_, _ = exec.Execute("INSERT INTO items VALUES ('A', 'avocado')")
+	_, _ = exec.Execute("INSERT INTO items VALUES ('B', 'banana')")
+
+	t.Run("GROUP_CONCAT basic", func(t *testing.T) {
+		result, err := exec.Execute("SELECT grp, GROUP_CONCAT(name) FROM items GROUP BY grp")
+		if err != nil {
+			t.Logf("GROUP_CONCAT basic failed: %v", err)
+		} else {
+			t.Logf("GROUP_CONCAT basic result: %v", result.Rows)
+		}
+	})
+
+	t.Run("GROUP_CONCAT with separator", func(t *testing.T) {
+		result, err := exec.Execute("SELECT grp, GROUP_CONCAT(name, ', ') FROM items GROUP BY grp")
+		if err != nil {
+			t.Logf("GROUP_CONCAT separator failed: %v", err)
+		} else {
+			t.Logf("GROUP_CONCAT separator result: %v", result.Rows)
+		}
+	})
+}
+
+// TestParenExprInWhere tests parenthesized expressions in WHERE
+func TestParenExprInWhere(t *testing.T) {
+	engine := setupTestEngine(t)
+	exec := NewExecutor(engine)
+	exec.SetDatabase("testdb")
+
+	_, _ = exec.Execute("CREATE TABLE paren_test (a INT, b INT)")
+	_, _ = exec.Execute("INSERT INTO paren_test VALUES (1, 2)")
+	_, _ = exec.Execute("INSERT INTO paren_test VALUES (3, 4)")
+	_, _ = exec.Execute("INSERT INTO paren_test VALUES (5, 6)")
+
+	t.Run("Complex parentheses", func(t *testing.T) {
+		result, err := exec.Execute("SELECT a, b FROM paren_test WHERE (a > 2 OR b < 3) AND (a + b) < 10")
+		if err != nil {
+			t.Logf("Complex paren failed: %v", err)
+		} else {
+			t.Logf("Complex paren result: %v", result.Rows)
+		}
+	})
+}
+
+// TestCastValueOperations tests various cast operations
+func TestCastValueOperations(t *testing.T) {
+	engine := setupTestEngine(t)
+	exec := NewExecutor(engine)
+	exec.SetDatabase("testdb")
+
+	t.Run("Cast bool to int", func(t *testing.T) {
+		result, err := exec.Execute("SELECT CAST(true AS INT), CAST(false AS INT)")
+		if err != nil {
+			t.Logf("Cast bool to int failed: %v", err)
+		} else {
+			t.Logf("Cast bool to int result: %v", result.Rows)
+		}
+	})
+
+	t.Run("Cast blob to int", func(t *testing.T) {
+		result, err := exec.Execute("SELECT CAST(X'3132' AS INT)")
+		if err != nil {
+			t.Logf("Cast blob to int failed: %v", err)
+		} else {
+			t.Logf("Cast blob to int result: %v", result.Rows)
+		}
+	})
+
+	t.Run("Cast blob to float", func(t *testing.T) {
+		result, err := exec.Execute("SELECT CAST(X'332E3134' AS FLOAT)")
+		if err != nil {
+			t.Logf("Cast blob to float failed: %v", err)
+		} else {
+			t.Logf("Cast blob to float result: %v", result.Rows)
+		}
+	})
+
+	t.Run("Cast int to blob", func(t *testing.T) {
+		result, err := exec.Execute("SELECT CAST(123 AS BLOB)")
+		if err != nil {
+			t.Logf("Cast int to blob failed: %v", err)
+		} else {
+			t.Logf("Cast int to blob result: %v", result.Rows)
+		}
+	})
+
+	t.Run("Cast bool to varchar", func(t *testing.T) {
+		result, err := exec.Execute("SELECT CAST(true AS VARCHAR)")
+		if err != nil {
+			t.Logf("Cast bool to varchar failed: %v", err)
+		} else {
+			t.Logf("Cast bool to varchar result: %v", result.Rows)
+		}
+	})
+}
+
+// TestSelectWithNulls tests SELECT with NULL values
+func TestSelectWithNulls(t *testing.T) {
+	engine := setupTestEngine(t)
+	exec := NewExecutor(engine)
+	exec.SetDatabase("testdb")
+
+	_, _ = exec.Execute("CREATE TABLE null_table (id INT, val INT)")
+	_, _ = exec.Execute("INSERT INTO null_table VALUES (1, 10)")
+	_, _ = exec.Execute("INSERT INTO null_table VALUES (2, NULL)")
+	_, _ = exec.Execute("INSERT INTO null_table VALUES (3, 30)")
+
+	t.Run("Arithmetic with NULL", func(t *testing.T) {
+		result, err := exec.Execute("SELECT id, val + 10 FROM null_table")
+		if err != nil {
+			t.Logf("Arithmetic NULL failed: %v", err)
+		} else {
+			t.Logf("Arithmetic NULL result: %v", result.Rows)
+		}
+	})
+
+	t.Run("Comparison with NULL", func(t *testing.T) {
+		result, err := exec.Execute("SELECT id FROM null_table WHERE val > 5")
+		if err != nil {
+			t.Logf("Comparison NULL failed: %v", err)
+		} else {
+			t.Logf("Comparison NULL result: %v", result.Rows)
+		}
+	})
+
+	t.Run("Aggregate with NULL", func(t *testing.T) {
+		result, err := exec.Execute("SELECT SUM(val), AVG(val), COUNT(val) FROM null_table")
+		if err != nil {
+			t.Logf("Aggregate NULL failed: %v", err)
+		} else {
+			t.Logf("Aggregate NULL result: %v", result.Rows)
+		}
+	})
+}
+
+// TestCorrelatedScalarSubquery tests correlated scalar subqueries
+func TestCorrelatedScalarSubquery(t *testing.T) {
+	engine := setupTestEngine(t)
+	exec := NewExecutor(engine)
+	exec.SetDatabase("testdb")
+
+	_, _ = exec.Execute("CREATE TABLE dept (id INT, name VARCHAR(50))")
+	_, _ = exec.Execute("INSERT INTO dept VALUES (1, 'Engineering')")
+	_, _ = exec.Execute("INSERT INTO dept VALUES (2, 'Sales')")
+
+	_, _ = exec.Execute("CREATE TABLE emp (id INT, name VARCHAR(50), dept_id INT, salary INT)")
+	_, _ = exec.Execute("INSERT INTO emp VALUES (1, 'Alice', 1, 100)")
+	_, _ = exec.Execute("INSERT INTO emp VALUES (2, 'Bob', 1, 150)")
+	_, _ = exec.Execute("INSERT INTO emp VALUES (3, 'Charlie', 2, 80)")
+
+	t.Run("Correlated scalar subquery", func(t *testing.T) {
+		result, err := exec.Execute(`
+			SELECT e.name, e.salary,
+				(SELECT AVG(salary) FROM emp WHERE dept_id = e.dept_id) AS avg_dept
+			FROM emp e
+		`)
+		if err != nil {
+			t.Logf("Correlated scalar failed: %v", err)
+		} else {
+			t.Logf("Correlated scalar result: %v", result.Rows)
+		}
+	})
+}
+
+// TestMoreBinaryOperators tests more binary operators
+func TestMoreBinaryOperators(t *testing.T) {
+	engine := setupTestEngine(t)
+	exec := NewExecutor(engine)
+	exec.SetDatabase("testdb")
+
+	t.Run("Modulo operator", func(t *testing.T) {
+		result, err := exec.Execute("SELECT 10 % 3")
+		if err != nil {
+			t.Logf("Modulo failed: %v", err)
+		} else {
+			t.Logf("Modulo result: %v", result.Rows)
+		}
+	})
+
+	t.Run("Division", func(t *testing.T) {
+		result, err := exec.Execute("SELECT 10 / 3, 10.0 / 3.0")
+		if err != nil {
+			t.Logf("Division failed: %v", err)
+		} else {
+			t.Logf("Division result: %v", result.Rows)
+		}
+	})
+
+	t.Run("Bitwise AND", func(t *testing.T) {
+		result, err := exec.Execute("SELECT 5 & 3")
+		if err != nil {
+			t.Logf("Bitwise AND failed: %v", err)
+		} else {
+			t.Logf("Bitwise AND result: %v", result.Rows)
+		}
+	})
+
+	t.Run("Bitwise OR", func(t *testing.T) {
+		result, err := exec.Execute("SELECT 5 | 3")
+		if err != nil {
+			t.Logf("Bitwise OR failed: %v", err)
+		} else {
+			t.Logf("Bitwise OR result: %v", result.Rows)
+		}
+	})
+
+	t.Run("String concatenation", func(t *testing.T) {
+		result, err := exec.Execute("SELECT 'hello' || ' ' || 'world'")
+		if err != nil {
+			t.Logf("String concat failed: %v", err)
+		} else {
+			t.Logf("String concat result: %v", result.Rows)
+		}
+	})
+}
+
+// TestCreateTempTableMore tests temporary table creation
+func TestCreateTempTableMore(t *testing.T) {
+	engine := setupTestEngine(t)
+	exec := NewExecutor(engine)
+	exec.SetDatabase("testdb")
+
+	t.Run("CREATE TEMP TABLE", func(t *testing.T) {
+		result, err := exec.Execute("CREATE TEMP TABLE temp_test (id INT, val VARCHAR(50))")
+		if err != nil {
+			t.Logf("CREATE TEMP failed: %v", err)
+		} else {
+			t.Logf("CREATE TEMP result: %v", result)
+		}
+	})
+
+	t.Run("INSERT into temp table", func(t *testing.T) {
+		_, _ = exec.Execute("CREATE TEMP TABLE temp_insert (id INT)")
+		result, err := exec.Execute("INSERT INTO temp_insert VALUES (1)")
+		if err != nil {
+			t.Logf("INSERT temp failed: %v", err)
+		} else {
+			t.Logf("INSERT temp result: %v", result)
+		}
+	})
+
+	t.Run("CREATE TEMP IF NOT EXISTS", func(t *testing.T) {
+		_, _ = exec.Execute("CREATE TEMP TABLE temp_exists (id INT)")
+		result, err := exec.Execute("CREATE TEMP TABLE IF NOT EXISTS temp_exists (id INT)")
+		if err != nil {
+			t.Logf("CREATE TEMP IF NOT EXISTS failed: %v", err)
+		} else {
+			t.Logf("CREATE TEMP IF NOT EXISTS result: %v", result)
+		}
+	})
+}
+
+// TestGeneratedColumn tests generated columns
+func TestGeneratedColumn(t *testing.T) {
+	engine := setupTestEngine(t)
+	exec := NewExecutor(engine)
+	exec.SetDatabase("testdb")
+
+	t.Run("CREATE TABLE with generated column", func(t *testing.T) {
+		result, err := exec.Execute(`
+			CREATE TABLE gen_test (
+				id INT,
+				first_name VARCHAR(50),
+				last_name VARCHAR(50),
+				full_name VARCHAR(100) GENERATED ALWAYS AS (first_name || ' ' || last_name) STORED
+			)
+		`)
+		if err != nil {
+			t.Logf("Generated column failed: %v", err)
+		} else {
+			t.Logf("Generated column result: %v", result)
+		}
+	})
+}
+
+// TestDerivedTableWhereExpressions tests WHERE expressions in derived tables
+func TestDerivedTableWhereExpressions(t *testing.T) {
+	engine := setupTestEngine(t)
+	exec := NewExecutor(engine)
+	exec.SetDatabase("testdb")
+
+	_, _ = exec.Execute("CREATE TABLE base (id INT, name VARCHAR(50), status VARCHAR(20))")
+	_, _ = exec.Execute("INSERT INTO base VALUES (1, 'Alice', 'active')")
+	_, _ = exec.Execute("INSERT INTO base VALUES (2, 'Bob', 'inactive')")
+	_, _ = exec.Execute("INSERT INTO base VALUES (3, 'Charlie', 'active')")
+
+	t.Run("Derived table with comparison", func(t *testing.T) {
+		result, err := exec.Execute("SELECT * FROM (SELECT id, name FROM base) AS sub WHERE id > 1")
+		if err != nil {
+			t.Logf("Derived comparison failed: %v", err)
+		} else {
+			t.Logf("Derived comparison result: %v", result.Rows)
+		}
+	})
+
+	t.Run("Derived table with LIKE", func(t *testing.T) {
+		result, err := exec.Execute("SELECT * FROM (SELECT id, name FROM base) AS sub WHERE name LIKE 'A%'")
+		if err != nil {
+			t.Logf("Derived LIKE failed: %v", err)
+		} else {
+			t.Logf("Derived LIKE result: %v", result.Rows)
+		}
+	})
+
+	t.Run("Derived table with IS NOT NULL", func(t *testing.T) {
+		result, err := exec.Execute("SELECT * FROM (SELECT id, name FROM base) AS sub WHERE name IS NOT NULL")
+		if err != nil {
+			t.Logf("Derived IS NOT NULL failed: %v", err)
+		} else {
+			t.Logf("Derived IS NOT NULL result: %v", result.Rows)
+		}
+	})
+
+	t.Run("Derived table with AND/OR", func(t *testing.T) {
+		result, err := exec.Execute("SELECT * FROM (SELECT id, name, status FROM base) AS sub WHERE id > 1 AND status = 'active'")
+		if err != nil {
+			t.Logf("Derived AND/OR failed: %v", err)
+		} else {
+			t.Logf("Derived AND/OR result: %v", result.Rows)
+		}
+	})
+
+	t.Run("Derived table with NOT", func(t *testing.T) {
+		result, err := exec.Execute("SELECT * FROM (SELECT id, status FROM base) AS sub WHERE NOT status = 'inactive'")
+		if err != nil {
+			t.Logf("Derived NOT failed: %v", err)
+		} else {
+			t.Logf("Derived NOT result: %v", result.Rows)
+		}
+	})
+}
+
+// TestMoreLateralScenarios tests more LATERAL execution paths
+func TestMoreLateralScenarios(t *testing.T) {
+	engine := setupTestEngine(t)
+	exec := NewExecutor(engine)
+	exec.SetDatabase("testdb")
+
+	_, _ = exec.Execute("CREATE TABLE outer_tbl (id INT, val INT)")
+	_, _ = exec.Execute("INSERT INTO outer_tbl VALUES (1, 10)")
+	_, _ = exec.Execute("INSERT INTO outer_tbl VALUES (2, 20)")
+
+	t.Run("LATERAL with simple subquery", func(t *testing.T) {
+		result, err := exec.Execute("SELECT o.id, sub.v FROM outer_tbl o, LATERAL (SELECT 100 AS v) AS sub")
+		if err != nil {
+			t.Logf("LATERAL simple failed: %v", err)
+		} else {
+			t.Logf("LATERAL simple result: %v", result.Rows)
+		}
+	})
+
+	t.Run("LATERAL with LIMIT OFFSET", func(t *testing.T) {
+		result, err := exec.Execute(`
+			SELECT * FROM LATERAL (SELECT id, val FROM outer_tbl ORDER BY id LIMIT 1) AS lat
+		`)
+		if err != nil {
+			t.Logf("LATERAL LIMIT OFFSET failed: %v", err)
+		} else {
+			t.Logf("LATERAL LIMIT OFFSET result: %v", result.Rows)
+		}
+	})
+}
+
+// TestSubqueryInSelectClause tests subqueries in SELECT clause
+func TestSubqueryInSelectClause(t *testing.T) {
+	engine := setupTestEngine(t)
+	exec := NewExecutor(engine)
+	exec.SetDatabase("testdb")
+
+	_, _ = exec.Execute("CREATE TABLE main_tbl (id INT, ref_id INT)")
+	_, _ = exec.Execute("INSERT INTO main_tbl VALUES (1, 10)")
+	_, _ = exec.Execute("INSERT INTO main_tbl VALUES (2, 20)")
+
+	_, _ = exec.Execute("CREATE TABLE ref_tbl (id INT, name VARCHAR(50))")
+	_, _ = exec.Execute("INSERT INTO ref_tbl VALUES (10, 'RefA')")
+	_, _ = exec.Execute("INSERT INTO ref_tbl VALUES (20, 'RefB')")
+
+	t.Run("Scalar subquery in SELECT", func(t *testing.T) {
+		result, err := exec.Execute(`
+			SELECT id, (SELECT name FROM ref_tbl WHERE id = ref_id) AS ref_name
+			FROM main_tbl
+		`)
+		if err != nil {
+			t.Logf("Scalar subquery SELECT failed: %v", err)
+		} else {
+			t.Logf("Scalar subquery SELECT result: %v", result.Rows)
+		}
+	})
+}
+
+// TestMoreHavingScenarios tests more HAVING scenarios
+func TestMoreHavingScenarios(t *testing.T) {
+	engine := setupTestEngine(t)
+	exec := NewExecutor(engine)
+	exec.SetDatabase("testdb")
+
+	_, _ = exec.Execute("CREATE TABLE sales_data (region VARCHAR(20), product VARCHAR(20), amount INT)")
+	_, _ = exec.Execute("INSERT INTO sales_data VALUES ('North', 'A', 100)")
+	_, _ = exec.Execute("INSERT INTO sales_data VALUES ('North', 'B', 200)")
+	_, _ = exec.Execute("INSERT INTO sales_data VALUES ('South', 'A', 150)")
+
+	t.Run("HAVING with multiple aggregates", func(t *testing.T) {
+		result, err := exec.Execute(`
+			SELECT region, SUM(amount), COUNT(*)
+			FROM sales_data
+			GROUP BY region
+			HAVING SUM(amount) > 200 AND COUNT(*) > 1
+		`)
+		if err != nil {
+			t.Logf("HAVING multiple agg failed: %v", err)
+		} else {
+			t.Logf("HAVING multiple agg result: %v", result.Rows)
+		}
+	})
+
+	t.Run("HAVING with OR", func(t *testing.T) {
+		result, err := exec.Execute(`
+			SELECT region, SUM(amount)
+			FROM sales_data
+			GROUP BY region
+			HAVING SUM(amount) > 250 OR SUM(amount) < 150
+		`)
+		if err != nil {
+			t.Logf("HAVING OR failed: %v", err)
+		} else {
+			t.Logf("HAVING OR result: %v", result.Rows)
+		}
+	})
+
+	t.Run("HAVING with IN subquery", func(t *testing.T) {
+		_, _ = exec.Execute("CREATE TABLE target_regions (name VARCHAR(20))")
+		_, _ = exec.Execute("INSERT INTO target_regions VALUES ('North')")
+		result, err := exec.Execute(`
+			SELECT region, SUM(amount)
+			FROM sales_data
+			GROUP BY region
+			HAVING region IN (SELECT name FROM target_regions)
+		`)
+		if err != nil {
+			t.Logf("HAVING IN subquery failed: %v", err)
+		} else {
+			t.Logf("HAVING IN subquery result: %v", result.Rows)
+		}
+	})
+}
+
+// TestExpressionEvaluationComprehensive tests more expression evaluation
+func TestExpressionEvaluationComprehensive(t *testing.T) {
+	engine := setupTestEngine(t)
+	exec := NewExecutor(engine)
+	exec.SetDatabase("testdb")
+
+	t.Run("ParenExpr evaluation", func(t *testing.T) {
+		result, err := exec.Execute("SELECT ((1 + 2) * 3)")
+		if err != nil {
+			t.Logf("ParenExpr failed: %v", err)
+		} else {
+			t.Logf("ParenExpr result: %v", result.Rows)
+		}
+	})
+
+	t.Run("RankExpr", func(t *testing.T) {
+		result, err := exec.Execute("SELECT RANK()")
+		if err != nil {
+			t.Logf("RankExpr failed: %v", err)
+		} else {
+			t.Logf("RankExpr result: %v", result.Rows)
+		}
+	})
+
+	t.Run("ANY in SELECT", func(t *testing.T) {
+		result, err := exec.Execute("SELECT 5 > ANY (SELECT 3)")
+		if err != nil {
+			t.Logf("ANY SELECT failed: %v", err)
+		} else {
+			t.Logf("ANY SELECT result: %v", result.Rows)
+		}
+	})
+
+	t.Run("ALL in SELECT", func(t *testing.T) {
+		result, err := exec.Execute("SELECT 5 > ALL (SELECT 3)")
+		if err != nil {
+			t.Logf("ALL SELECT failed: %v", err)
+		} else {
+			t.Logf("ALL SELECT result: %v", result.Rows)
+		}
+	})
+}
+
