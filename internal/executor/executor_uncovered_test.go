@@ -19928,3 +19928,226 @@ func TestExpressionEvaluationComprehensive(t *testing.T) {
 	})
 }
 
+// TestDerivedTableWithSubqueryConditions tests derived tables with subquery conditions
+func TestDerivedTableWithSubqueryConditions(t *testing.T) {
+	engine := setupTestEngine(t)
+	exec := NewExecutor(engine)
+	exec.SetDatabase("testdb")
+
+	_, _ = exec.Execute("CREATE TABLE products (id INT, category VARCHAR(20), price INT)")
+	_, _ = exec.Execute("INSERT INTO products VALUES (1, 'A', 100)")
+	_, _ = exec.Execute("INSERT INTO products VALUES (2, 'B', 200)")
+	_, _ = exec.Execute("INSERT INTO products VALUES (3, 'A', 150)")
+
+	_, _ = exec.Execute("CREATE TABLE thresholds (category VARCHAR(20), min_price INT)")
+	_, _ = exec.Execute("INSERT INTO thresholds VALUES ('A', 80)")
+
+	t.Run("Derived table with IN subquery", func(t *testing.T) {
+		result, err := exec.Execute(`
+			SELECT * FROM (
+				SELECT id, category, price FROM products
+			) AS sub WHERE category IN (SELECT category FROM thresholds)
+		`)
+		if err != nil {
+			t.Logf("Derived IN subquery failed: %v", err)
+		} else {
+			t.Logf("Derived IN subquery result: %v", result.Rows)
+		}
+	})
+
+	t.Run("Derived table with EXISTS", func(t *testing.T) {
+		result, err := exec.Execute(`
+			SELECT * FROM (
+				SELECT id, category FROM products
+			) AS sub WHERE EXISTS (SELECT 1 FROM thresholds WHERE thresholds.category = sub.category)
+		`)
+		if err != nil {
+			t.Logf("Derived EXISTS failed: %v", err)
+		} else {
+			t.Logf("Derived EXISTS result: %v", result.Rows)
+		}
+	})
+
+	t.Run("Derived table with scalar subquery in WHERE", func(t *testing.T) {
+		result, err := exec.Execute(`
+			SELECT * FROM (
+				SELECT id, price FROM products
+			) AS sub WHERE price > (SELECT MIN(min_price) FROM thresholds)
+		`)
+		if err != nil {
+			t.Logf("Derived scalar subquery failed: %v", err)
+		} else {
+			t.Logf("Derived scalar subquery result: %v", result.Rows)
+		}
+	})
+
+	t.Run("Derived table with ANY", func(t *testing.T) {
+		result, err := exec.Execute(`
+			SELECT * FROM (
+				SELECT id, price FROM products
+			) AS sub WHERE price > ANY (SELECT min_price FROM thresholds)
+		`)
+		if err != nil {
+			t.Logf("Derived ANY failed: %v", err)
+		} else {
+			t.Logf("Derived ANY result: %v", result.Rows)
+		}
+	})
+
+	t.Run("Derived table with ALL", func(t *testing.T) {
+		result, err := exec.Execute(`
+			SELECT * FROM (
+				SELECT id, price FROM products
+			) AS sub WHERE price > ALL (SELECT min_price FROM thresholds)
+		`)
+		if err != nil {
+			t.Logf("Derived ALL failed: %v", err)
+		} else {
+			t.Logf("Derived ALL result: %v", result.Rows)
+		}
+	})
+}
+
+// TestInExprScenarios tests IN expression scenarios
+func TestInExprScenarios(t *testing.T) {
+	engine := setupTestEngine(t)
+	exec := NewExecutor(engine)
+	exec.SetDatabase("testdb")
+
+	_, _ = exec.Execute("CREATE TABLE test_vals (id INT, val VARCHAR(20))")
+	_, _ = exec.Execute("INSERT INTO test_vals VALUES (1, 'apple')")
+	_, _ = exec.Execute("INSERT INTO test_vals VALUES (2, 'banana')")
+	_, _ = exec.Execute("INSERT INTO test_vals VALUES (3, 'cherry')")
+
+	_, _ = exec.Execute("CREATE TABLE filter_vals (val VARCHAR(20))")
+	_, _ = exec.Execute("INSERT INTO filter_vals VALUES ('apple')")
+	_, _ = exec.Execute("INSERT INTO filter_vals VALUES ('banana')")
+
+	t.Run("NOT IN subquery", func(t *testing.T) {
+		result, err := exec.Execute("SELECT id FROM test_vals WHERE val NOT IN (SELECT val FROM filter_vals)")
+		if err != nil {
+			t.Logf("NOT IN subquery failed: %v", err)
+		} else {
+			t.Logf("NOT IN subquery result: %v", result.Rows)
+		}
+	})
+}
+
+// TestScalarSubqueryTruthiness tests scalar subquery truthiness in WHERE
+func TestScalarSubqueryTruthiness(t *testing.T) {
+	engine := setupTestEngine(t)
+	exec := NewExecutor(engine)
+	exec.SetDatabase("testdb")
+
+	_, _ = exec.Execute("CREATE TABLE flags (id INT, flag BOOL)")
+	_, _ = exec.Execute("INSERT INTO flags VALUES (1, true)")
+	_, _ = exec.Execute("INSERT INTO flags VALUES (2, false)")
+
+	t.Run("Scalar subquery returning bool", func(t *testing.T) {
+		result, err := exec.Execute(`
+			SELECT id FROM flags
+			WHERE (SELECT flag FROM flags WHERE id = 1)
+		`)
+		if err != nil {
+			t.Logf("Scalar bool failed: %v", err)
+		} else {
+			t.Logf("Scalar bool result: %v", result.Rows)
+		}
+	})
+
+	t.Run("Scalar subquery returning int", func(t *testing.T) {
+		result, err := exec.Execute(`
+			SELECT id FROM flags
+			WHERE (SELECT 1)
+		`)
+		if err != nil {
+			t.Logf("Scalar int failed: %v", err)
+		} else {
+			t.Logf("Scalar int result: %v", result.Rows)
+		}
+	})
+
+	t.Run("Scalar subquery returning string", func(t *testing.T) {
+		result, err := exec.Execute(`
+			SELECT id FROM flags
+			WHERE (SELECT 'yes')
+		`)
+		if err != nil {
+			t.Logf("Scalar string failed: %v", err)
+		} else {
+			t.Logf("Scalar string result: %v", result.Rows)
+		}
+	})
+
+	t.Run("Scalar subquery returning NULL", func(t *testing.T) {
+		result, err := exec.Execute(`
+			SELECT id FROM flags
+			WHERE (SELECT NULL)
+		`)
+		if err != nil {
+			t.Logf("Scalar NULL failed: %v", err)
+		} else {
+			t.Logf("Scalar NULL result: %v", result.Rows)
+		}
+	})
+}
+
+// TestMoreSelectVariations tests more SELECT variations
+func TestMoreSelectVariations(t *testing.T) {
+	engine := setupTestEngine(t)
+	exec := NewExecutor(engine)
+	exec.SetDatabase("testdb")
+
+	_, _ = exec.Execute("CREATE TABLE data (id INT, category VARCHAR(20), value INT)")
+	_, _ = exec.Execute("INSERT INTO data VALUES (1, 'A', 10)")
+	_, _ = exec.Execute("INSERT INTO data VALUES (2, 'A', 20)")
+	_, _ = exec.Execute("INSERT INTO data VALUES (3, 'B', 30)")
+
+	t.Run("SELECT with DISTINCT", func(t *testing.T) {
+		result, err := exec.Execute("SELECT DISTINCT category FROM data")
+		if err != nil {
+			t.Logf("DISTINCT failed: %v", err)
+		} else {
+			t.Logf("DISTINCT result: %v", result.Rows)
+		}
+	})
+
+	t.Run("SELECT with multiple aggregates", func(t *testing.T) {
+		result, err := exec.Execute(`
+			SELECT category,
+				COUNT(*) as cnt,
+				SUM(value) as total,
+				AVG(value) as avg_val,
+				MIN(value) as min_val,
+				MAX(value) as max_val
+			FROM data GROUP BY category
+		`)
+		if err != nil {
+			t.Logf("Multiple aggregates failed: %v", err)
+		} else {
+			t.Logf("Multiple aggregates result: %v", result.Rows)
+		}
+	})
+
+	t.Run("SELECT with ORDER BY multiple columns", func(t *testing.T) {
+		result, err := exec.Execute("SELECT * FROM data ORDER BY category, value DESC")
+		if err != nil {
+			t.Logf("ORDER BY multiple failed: %v", err)
+		} else {
+			t.Logf("ORDER BY multiple result: %v", result.Rows)
+		}
+	})
+
+	t.Run("SELECT with complex WHERE", func(t *testing.T) {
+		result, err := exec.Execute(`
+			SELECT * FROM data
+			WHERE (category = 'A' AND value > 15) OR (category = 'B')
+		`)
+		if err != nil {
+			t.Logf("Complex WHERE failed: %v", err)
+		} else {
+			t.Logf("Complex WHERE result: %v", result.Rows)
+		}
+	})
+}
+
