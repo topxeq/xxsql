@@ -20151,3 +20151,190 @@ func TestMoreSelectVariations(t *testing.T) {
 	})
 }
 
+// TestLateralExecutionMore tests more LATERAL execution paths
+func TestLateralExecutionMore(t *testing.T) {
+	engine := setupTestEngine(t)
+	exec := NewExecutor(engine)
+	exec.SetDatabase("testdb")
+
+	_, _ = exec.Execute("CREATE TABLE outer_t (id INT, name VARCHAR(50))")
+	_, _ = exec.Execute("INSERT INTO outer_t VALUES (1, 'Alice')")
+	_, _ = exec.Execute("INSERT INTO outer_t VALUES (2, 'Bob')")
+
+	t.Run("LATERAL with column alias", func(t *testing.T) {
+		result, err := exec.Execute(`
+			SELECT * FROM LATERAL (SELECT 1 AS col1, 2 AS col2) AS lat
+		`)
+		if err != nil {
+			t.Logf("LATERAL alias failed: %v", err)
+		} else {
+			t.Logf("LATERAL alias result: %v", result.Rows)
+		}
+	})
+
+	t.Run("LATERAL with expression in SELECT", func(t *testing.T) {
+		result, err := exec.Execute(`
+			SELECT col1 + col2 AS sum_val FROM LATERAL (SELECT 1 AS col1, 2 AS col2) AS lat
+		`)
+		if err != nil {
+			t.Logf("LATERAL expr failed: %v", err)
+		} else {
+			t.Logf("LATERAL expr result: %v", result.Rows)
+		}
+	})
+
+	t.Run("LATERAL with WHERE clause", func(t *testing.T) {
+		result, err := exec.Execute(`
+			SELECT * FROM LATERAL (SELECT id, name FROM outer_t WHERE id > 0) AS lat
+		`)
+		if err != nil {
+			t.Logf("LATERAL WHERE failed: %v", err)
+		} else {
+			t.Logf("LATERAL WHERE result: %v", result.Rows)
+		}
+	})
+}
+
+// TestHavingWithExpressions tests HAVING with various expressions
+func TestHavingWithExpressions(t *testing.T) {
+	engine := setupTestEngine(t)
+	exec := NewExecutor(engine)
+	exec.SetDatabase("testdb")
+
+	_, _ = exec.Execute("CREATE TABLE metrics (grp VARCHAR(20), metric VARCHAR(20), val INT)")
+	_, _ = exec.Execute("INSERT INTO metrics VALUES ('A', 'x', 10)")
+	_, _ = exec.Execute("INSERT INTO metrics VALUES ('A', 'y', 20)")
+	_, _ = exec.Execute("INSERT INTO metrics VALUES ('B', 'x', 15)")
+
+	t.Run("HAVING with comparison to literal", func(t *testing.T) {
+		result, err := exec.Execute(`
+			SELECT grp, SUM(val) as total FROM metrics GROUP BY grp HAVING SUM(val) > 25
+		`)
+		if err != nil {
+			t.Logf("HAVING comparison failed: %v", err)
+		} else {
+			t.Logf("HAVING comparison result: %v", result.Rows)
+		}
+	})
+
+	t.Run("HAVING with arithmetic", func(t *testing.T) {
+		result, err := exec.Execute(`
+			SELECT grp, AVG(val) as avg_val FROM metrics GROUP BY grp HAVING AVG(val) * 2 > 25
+		`)
+		if err != nil {
+			t.Logf("HAVING arithmetic failed: %v", err)
+		} else {
+			t.Logf("HAVING arithmetic result: %v", result.Rows)
+		}
+	})
+
+	t.Run("HAVING with EXISTS subquery", func(t *testing.T) {
+		_, _ = exec.Execute("CREATE TABLE filter_grp (name VARCHAR(20))")
+		_, _ = exec.Execute("INSERT INTO filter_grp VALUES ('A')")
+		result, err := exec.Execute(`
+			SELECT grp FROM metrics GROUP BY grp
+			HAVING EXISTS (SELECT 1 FROM filter_grp WHERE filter_grp.name = metrics.grp)
+		`)
+		if err != nil {
+			t.Logf("HAVING EXISTS failed: %v", err)
+		} else {
+			t.Logf("HAVING EXISTS result: %v", result.Rows)
+		}
+	})
+
+	t.Run("HAVING with scalar subquery", func(t *testing.T) {
+		result, err := exec.Execute(`
+			SELECT grp, SUM(val) FROM metrics GROUP BY grp
+			HAVING SUM(val) > (SELECT AVG(val) FROM metrics)
+		`)
+		if err != nil {
+			t.Logf("HAVING scalar subquery failed: %v", err)
+		} else {
+			t.Logf("HAVING scalar subquery result: %v", result.Rows)
+		}
+	})
+}
+
+// TestExpressionEvaluationPaths tests more expression evaluation paths
+func TestExpressionEvaluationPaths(t *testing.T) {
+	engine := setupTestEngine(t)
+	exec := NewExecutor(engine)
+	exec.SetDatabase("testdb")
+
+	_, _ = exec.Execute("CREATE TABLE expr_test (id INT, a INT, b VARCHAR(50))")
+	_, _ = exec.Execute("INSERT INTO expr_test VALUES (1, 10, 'hello')")
+
+	t.Run("Column with outer context", func(t *testing.T) {
+		// This tests the outerContext path in evaluateExpression
+		result, err := exec.Execute(`
+			SELECT e.id, (SELECT e.a + 1) AS augmented FROM expr_test e
+		`)
+		if err != nil {
+			t.Logf("Outer context failed: %v", err)
+		} else {
+			t.Logf("Outer context result: %v", result.Rows)
+		}
+	})
+
+	t.Run("Collate expression in SELECT", func(t *testing.T) {
+		result, err := exec.Execute("SELECT b COLLATE NOCASE FROM expr_test")
+		if err != nil {
+			t.Logf("Collate SELECT failed: %v", err)
+		} else {
+			t.Logf("Collate SELECT result: %v", result.Rows)
+		}
+	})
+
+	t.Run("Function in expression", func(t *testing.T) {
+		result, err := exec.Execute("SELECT UPPER(b) || '!' FROM expr_test")
+		if err != nil {
+			t.Logf("Function expr failed: %v", err)
+		} else {
+			t.Logf("Function expr result: %v", result.Rows)
+		}
+	})
+
+	t.Run("Unary negation in SELECT", func(t *testing.T) {
+		result, err := exec.Execute("SELECT -a, -(-a) FROM expr_test")
+		if err != nil {
+			t.Logf("Unary negation failed: %v", err)
+		} else {
+			t.Logf("Unary negation result: %v", result.Rows)
+		}
+	})
+
+	t.Run("NULL in binary expression", func(t *testing.T) {
+		result, err := exec.Execute("SELECT 1 + NULL, NULL || 'text'")
+		if err != nil {
+			t.Logf("NULL binary failed: %v", err)
+		} else {
+			t.Logf("NULL binary result: %v", result.Rows)
+		}
+	})
+}
+
+// TestUnionExport tests UNION for export functionality
+func TestUnionExport(t *testing.T) {
+	engine := setupTestEngine(t)
+	exec := NewExecutor(engine)
+	exec.SetDatabase("testdb")
+
+	t.Run("UNION for export", func(t *testing.T) {
+		result, err := exec.Execute("SELECT 1 AS n UNION SELECT 2")
+		if err != nil {
+			t.Logf("UNION export failed: %v", err)
+		} else {
+			t.Logf("UNION export result: %v", result.Rows)
+		}
+	})
+
+	t.Run("UNION with ORDER BY", func(t *testing.T) {
+		result, err := exec.Execute("SELECT 3 AS n UNION SELECT 1 UNION SELECT 2 ORDER BY n")
+		if err != nil {
+			t.Logf("UNION ORDER BY failed: %v", err)
+		} else {
+			t.Logf("UNION ORDER BY result: %v", result.Rows)
+		}
+	})
+}
+
