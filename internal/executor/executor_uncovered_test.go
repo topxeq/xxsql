@@ -23183,3 +23183,227 @@ func TestSubqueryExprEvaluation(t *testing.T) {
 	})
 }
 
+// TestHavingWithExists tests EXISTS in HAVING clause
+func TestHavingWithExists(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "xxsql-having-exists-test-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	engine := storage.NewEngine(tmpDir)
+	exec := NewExecutor(engine)
+	exec.SetDatabase("test")
+
+	// Create tables
+	_, err = exec.Execute(`
+		CREATE TABLE categories (
+			id SEQ PRIMARY KEY,
+			name VARCHAR(50)
+		)
+	`)
+	if err != nil {
+		t.Fatalf("Failed to create categories table: %v", err)
+	}
+
+	_, err = exec.Execute(`
+		CREATE TABLE products (
+			id SEQ PRIMARY KEY,
+			category_id INT,
+			name VARCHAR(50),
+			price INT
+		)
+	`)
+	if err != nil {
+		t.Fatalf("Failed to create products table: %v", err)
+	}
+
+	_, err = exec.Execute(`INSERT INTO categories (name) VALUES ('Electronics')`)
+	if err != nil {
+		t.Fatalf("Failed to insert: %v", err)
+	}
+	_, err = exec.Execute(`INSERT INTO categories (name) VALUES ('Books')`)
+	if err != nil {
+		t.Fatalf("Failed to insert: %v", err)
+	}
+
+	_, err = exec.Execute(`INSERT INTO products (category_id, name, price) VALUES (1, 'Phone', 500)`)
+	if err != nil {
+		t.Fatalf("Failed to insert: %v", err)
+	}
+	_, err = exec.Execute(`INSERT INTO products (category_id, name, price) VALUES (1, 'Tablet', 300)`)
+	if err != nil {
+		t.Fatalf("Failed to insert: %v", err)
+	}
+
+	// Test HAVING with EXISTS
+	t.Run("HAVING with EXISTS", func(t *testing.T) {
+		result, err := exec.Execute(`
+			SELECT c.name, COUNT(p.id) as product_count
+			FROM categories c
+			LEFT JOIN products p ON c.id = p.category_id
+			GROUP BY c.id, c.name
+			HAVING EXISTS (SELECT 1 FROM products WHERE category_id = c.id AND price > 400)
+		`)
+		if err != nil {
+			t.Logf("HAVING EXISTS failed: %v", err)
+		} else {
+			t.Logf("HAVING EXISTS result: %v", result.Rows)
+		}
+	})
+
+	// Test HAVING with ScalarSubquery returning bool
+	t.Run("HAVING with ScalarSubquery bool", func(t *testing.T) {
+		result, err := exec.Execute(`
+			SELECT c.name
+			FROM categories c
+			GROUP BY c.id, c.name
+			HAVING (SELECT COUNT(*) FROM products WHERE category_id = c.id) > 0
+		`)
+		if err != nil {
+			t.Logf("HAVING ScalarSubquery bool failed: %v", err)
+		} else {
+			t.Logf("HAVING ScalarSubquery bool result: %v", result.Rows)
+		}
+	})
+
+	// Test HAVING with ScalarSubquery returning 0 (false)
+	t.Run("HAVING with ScalarSubquery zero", func(t *testing.T) {
+		result, err := exec.Execute(`
+			SELECT c.name
+			FROM categories c
+			GROUP BY c.id, c.name
+			HAVING (SELECT COUNT(*) FROM products WHERE category_id = c.id AND price > 1000)
+		`)
+		if err != nil {
+			t.Logf("HAVING ScalarSubquery zero failed: %v", err)
+		} else {
+			t.Logf("HAVING ScalarSubquery zero result: %v", result.Rows)
+		}
+	})
+}
+
+// TestInExprWithValueList tests IN expression with value list
+func TestInExprWithValueList(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "xxsql-inlist-test-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	engine := storage.NewEngine(tmpDir)
+	exec := NewExecutor(engine)
+	exec.SetDatabase("test")
+
+	// Create table
+	_, err = exec.Execute(`CREATE TABLE items (id SEQ PRIMARY KEY, category VARCHAR(20), value INT)`)
+	if err != nil {
+		t.Fatalf("Failed to create table: %v", err)
+	}
+
+	_, err = exec.Execute(`INSERT INTO items (category, value) VALUES ('A', 10)`)
+	if err != nil {
+		t.Fatalf("Failed to insert: %v", err)
+	}
+	_, err = exec.Execute(`INSERT INTO items (category, value) VALUES ('B', 20)`)
+	if err != nil {
+		t.Fatalf("Failed to insert: %v", err)
+	}
+	_, err = exec.Execute(`INSERT INTO items (category, value) VALUES ('C', 30)`)
+	if err != nil {
+		t.Fatalf("Failed to insert: %v", err)
+	}
+
+	// Test IN with NOT
+	t.Run("IN with NOT", func(t *testing.T) {
+		result, err := exec.Execute(`SELECT * FROM items WHERE category NOT IN ('A', 'B')`)
+		if err != nil {
+			t.Logf("NOT IN failed: %v", err)
+		} else {
+			t.Logf("NOT IN result: %v", result.Rows)
+		}
+	})
+
+	// Test IN in HAVING
+	t.Run("IN in HAVING", func(t *testing.T) {
+		result, err := exec.Execute(`SELECT category, SUM(value) as total FROM items GROUP BY category HAVING category IN ('A', 'C')`)
+		if err != nil {
+			t.Logf("IN HAVING failed: %v", err)
+		} else {
+			t.Logf("IN HAVING result: %v", result.Rows)
+		}
+	})
+}
+
+// TestEvaluateWhereNullHandling tests NULL handling in WHERE
+func TestEvaluateWhereNullHandling(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "xxsql-where-null-test-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	engine := storage.NewEngine(tmpDir)
+	exec := NewExecutor(engine)
+	exec.SetDatabase("test")
+
+	// Create table with NULL values
+	_, err = exec.Execute(`CREATE TABLE data (id SEQ PRIMARY KEY, name VARCHAR(50), value INT)`)
+	if err != nil {
+		t.Fatalf("Failed to create table: %v", err)
+	}
+
+	_, err = exec.Execute(`INSERT INTO data (name, value) VALUES ('Alice', 10)`)
+	if err != nil {
+		t.Fatalf("Failed to insert: %v", err)
+	}
+	_, err = exec.Execute(`INSERT INTO data (name, value) VALUES (NULL, 20)`)
+	if err != nil {
+		t.Fatalf("Failed to insert: %v", err)
+	}
+	_, err = exec.Execute(`INSERT INTO data (name, value) VALUES ('Charlie', NULL)`)
+	if err != nil {
+		t.Fatalf("Failed to insert: %v", err)
+	}
+
+	// Test comparison with NULL
+	t.Run("Comparison with NULL", func(t *testing.T) {
+		result, err := exec.Execute(`SELECT * FROM data WHERE value = NULL`)
+		if err != nil {
+			t.Logf("NULL comparison failed: %v", err)
+		} else {
+			t.Logf("NULL comparison result: %v", result.Rows)
+		}
+	})
+
+	// Test IS NULL true path
+	t.Run("IS NULL true", func(t *testing.T) {
+		result, err := exec.Execute(`SELECT * FROM data WHERE name IS NULL`)
+		if err != nil {
+			t.Logf("IS NULL true failed: %v", err)
+		} else {
+			t.Logf("IS NULL true result: %v", result.Rows)
+		}
+	})
+
+	// Test IS NULL false path
+	t.Run("IS NULL false", func(t *testing.T) {
+		result, err := exec.Execute(`SELECT * FROM data WHERE value IS NULL`)
+		if err != nil {
+			t.Logf("IS NULL false failed: %v", err)
+		} else {
+			t.Logf("IS NULL false result: %v", result.Rows)
+		}
+	})
+
+	// Test binary comparison with NULL
+	t.Run("Binary with NULL", func(t *testing.T) {
+		result, err := exec.Execute(`SELECT * FROM data WHERE value > 5`)
+		if err != nil {
+			t.Logf("Binary with NULL failed: %v", err)
+		} else {
+			t.Logf("Binary with NULL result: %v", result.Rows)
+		}
+	})
+}
+
