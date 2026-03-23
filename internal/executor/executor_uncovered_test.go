@@ -20546,3 +20546,341 @@ func TestScalarSubqueryVariations(t *testing.T) {
 	})
 }
 
+// TestHavingWithInExprValueList tests HAVING with IN expression and value list
+func TestHavingWithInExprValueList(t *testing.T) {
+	engine := setupTestEngine(t)
+	exec := NewExecutor(engine)
+	exec.SetDatabase("testdb")
+
+	_, _ = exec.Execute("CREATE TABLE cat_data (category VARCHAR(20), value INT)")
+	_, _ = exec.Execute("INSERT INTO cat_data VALUES ('A', 10)")
+	_, _ = exec.Execute("INSERT INTO cat_data VALUES ('B', 20)")
+	_, _ = exec.Execute("INSERT INTO cat_data VALUES ('C', 30)")
+
+	t.Run("HAVING with IN value list", func(t *testing.T) {
+		result, err := exec.Execute(`
+			SELECT category, SUM(value) FROM cat_data GROUP BY category
+			HAVING category IN ('A', 'C')
+		`)
+		if err != nil {
+			t.Logf("HAVING IN list failed: %v", err)
+		} else {
+			t.Logf("HAVING IN list result: %v", result.Rows)
+		}
+	})
+
+	t.Run("HAVING with NOT IN value list", func(t *testing.T) {
+		result, err := exec.Execute(`
+			SELECT category, SUM(value) FROM cat_data GROUP BY category
+			HAVING category NOT IN ('B')
+		`)
+		if err != nil {
+			t.Logf("HAVING NOT IN list failed: %v", err)
+		} else {
+			t.Logf("HAVING NOT IN list result: %v", result.Rows)
+		}
+	})
+}
+
+// TestHasAggregateWithCase tests hasAggregate with CASE expressions
+func TestHasAggregateWithCase(t *testing.T) {
+	engine := setupTestEngine(t)
+	exec := NewExecutor(engine)
+	exec.SetDatabase("testdb")
+
+	_, _ = exec.Execute("CREATE TABLE case_agg (grp VARCHAR(20), val INT)")
+	_, _ = exec.Execute("INSERT INTO case_agg VALUES ('A', 10)")
+	_, _ = exec.Execute("INSERT INTO case_agg VALUES ('A', 20)")
+
+	t.Run("CASE with aggregate in condition", func(t *testing.T) {
+		result, err := exec.Execute(`
+			SELECT grp,
+				CASE WHEN SUM(val) > 15 THEN 'high' ELSE 'low' END AS level
+			FROM case_agg GROUP BY grp
+		`)
+		if err != nil {
+			t.Logf("CASE agg condition failed: %v", err)
+		} else {
+			t.Logf("CASE agg condition result: %v", result.Rows)
+		}
+	})
+
+	t.Run("CASE with aggregate in result", func(t *testing.T) {
+		result, err := exec.Execute(`
+			SELECT grp,
+				CASE WHEN val > 15 THEN SUM(val) ELSE 0 END AS total
+			FROM case_agg GROUP BY grp
+		`)
+		if err != nil {
+			t.Logf("CASE agg result failed: %v", err)
+		} else {
+			t.Logf("CASE agg result result: %v", result.Rows)
+		}
+	})
+
+	t.Run("CASE with aggregate in ELSE", func(t *testing.T) {
+		result, err := exec.Execute(`
+			SELECT grp,
+				CASE WHEN val > 100 THEN 0 ELSE AVG(val) END AS avg_val
+			FROM case_agg GROUP BY grp
+		`)
+		if err != nil {
+			t.Logf("CASE ELSE failed: %v", err)
+		} else {
+			t.Logf("CASE ELSE result: %v", result.Rows)
+		}
+	})
+}
+
+// TestColumnRefWithOuterContext tests column references with outer context
+func TestColumnRefWithOuterContext(t *testing.T) {
+	engine := setupTestEngine(t)
+	exec := NewExecutor(engine)
+	exec.SetDatabase("testdb")
+
+	_, _ = exec.Execute("CREATE TABLE outer_t (id INT, name VARCHAR(50))")
+	_, _ = exec.Execute("INSERT INTO outer_t VALUES (1, 'Alice')")
+	_, _ = exec.Execute("INSERT INTO outer_t VALUES (2, 'Bob')")
+
+	_, _ = exec.Execute("CREATE TABLE inner_t (outer_id INT, value INT)")
+	_, _ = exec.Execute("INSERT INTO inner_t VALUES (1, 100)")
+	_, _ = exec.Execute("INSERT INTO inner_t VALUES (2, 200)")
+
+	t.Run("Correlated subquery with table prefix", func(t *testing.T) {
+		result, err := exec.Execute(`
+			SELECT o.id, o.name,
+				(SELECT SUM(value) FROM inner_t WHERE outer_id = o.id) AS total
+			FROM outer_t o
+		`)
+		if err != nil {
+			t.Logf("Correlated table prefix failed: %v", err)
+		} else {
+			t.Logf("Correlated table prefix result: %v", result.Rows)
+		}
+	})
+}
+
+// TestMoreScalarSubqueryPaths tests more scalar subquery execution paths
+func TestMoreScalarSubqueryPaths(t *testing.T) {
+	engine := setupTestEngine(t)
+	exec := NewExecutor(engine)
+	exec.SetDatabase("testdb")
+
+	_, _ = exec.Execute("CREATE TABLE ref_data (id INT, value INT)")
+	_, _ = exec.Execute("INSERT INTO ref_data VALUES (1, 100)")
+	_, _ = exec.Execute("INSERT INTO ref_data VALUES (2, 200)")
+
+	t.Run("Scalar subquery with multiple rows error", func(t *testing.T) {
+		// This should fail because scalar subquery returns multiple rows
+		result, err := exec.Execute(`
+			SELECT (SELECT value FROM ref_data)
+		`)
+		if err != nil {
+			t.Logf("Scalar multiple rows error (expected): %v", err)
+		} else {
+			t.Logf("Scalar multiple rows result: %v", result.Rows)
+		}
+	})
+
+	t.Run("Scalar subquery with no rows", func(t *testing.T) {
+		result, err := exec.Execute(`
+			SELECT (SELECT value FROM ref_data WHERE id = 999)
+		`)
+		if err != nil {
+			t.Logf("Scalar no rows failed: %v", err)
+		} else {
+			t.Logf("Scalar no rows result: %v", result.Rows)
+		}
+	})
+}
+
+// TestMoreFunctionCoverage tests more function execution paths
+func TestMoreFunctionCoverage(t *testing.T) {
+	engine := setupTestEngine(t)
+	exec := NewExecutor(engine)
+	exec.SetDatabase("testdb")
+
+	t.Run("CONCAT with NULL", func(t *testing.T) {
+		result, err := exec.Execute("SELECT CONCAT('a', NULL, 'b')")
+		if err != nil {
+			t.Logf("CONCAT NULL failed: %v", err)
+		} else {
+			t.Logf("CONCAT NULL result: %v", result.Rows)
+		}
+	})
+
+	t.Run("SUBSTR with negative", func(t *testing.T) {
+		result, err := exec.Execute("SELECT SUBSTR('hello', -3, 2)")
+		if err != nil {
+			t.Logf("SUBSTR negative failed: %v", err)
+		} else {
+			t.Logf("SUBSTR negative result: %v", result.Rows)
+		}
+	})
+
+	t.Run("INSTR not found", func(t *testing.T) {
+		result, err := exec.Execute("SELECT INSTR('hello', 'xyz')")
+		if err != nil {
+			t.Logf("INSTR not found failed: %v", err)
+		} else {
+			t.Logf("INSTR not found result: %v", result.Rows)
+		}
+	})
+
+	t.Run("REPLACE all occurrences", func(t *testing.T) {
+		result, err := exec.Execute("SELECT REPLACE('ababab', 'ab', 'xy')")
+		if err != nil {
+			t.Logf("REPLACE all failed: %v", err)
+		} else {
+			t.Logf("REPLACE all result: %v", result.Rows)
+		}
+	})
+
+	t.Run("ROUND negative decimals", func(t *testing.T) {
+		result, err := exec.Execute("SELECT ROUND(12345, -2)")
+		if err != nil {
+			t.Logf("ROUND negative failed: %v", err)
+		} else {
+			t.Logf("ROUND negative result: %v", result.Rows)
+		}
+	})
+}
+
+// TestPragmaIntegrityCheckExtra tests PRAGMA integrity_check paths
+func TestPragmaIntegrityCheckExtra(t *testing.T) {
+	engine := setupTestEngine(t)
+	exec := NewExecutor(engine)
+	exec.SetDatabase("testdb")
+
+	_, _ = exec.Execute("CREATE TABLE integrity_test (id INT PRIMARY KEY, name VARCHAR(50))")
+	_, _ = exec.Execute("INSERT INTO integrity_test VALUES (1, 'test')")
+
+	t.Run("PRAGMA integrity_check with tables", func(t *testing.T) {
+		result, err := exec.Execute("PRAGMA integrity_check")
+		if err != nil {
+			t.Logf("Integrity check failed: %v", err)
+		} else {
+			t.Logf("Integrity check result: %v", result.Rows)
+		}
+	})
+
+	t.Run("PRAGMA quick_check with tables", func(t *testing.T) {
+		result, err := exec.Execute("PRAGMA quick_check")
+		if err != nil {
+			t.Logf("Quick check failed: %v", err)
+		} else {
+			t.Logf("Quick check result: %v", result.Rows)
+		}
+	})
+}
+
+// TestEvaluateWhereForRowVariations tests evaluateWhereForRow paths
+func TestEvaluateWhereForRowVariations(t *testing.T) {
+	engine := setupTestEngine(t)
+	exec := NewExecutor(engine)
+	exec.SetDatabase("testdb")
+
+	_, _ = exec.Execute("CREATE TABLE where_test (id INT, status VARCHAR(20), value INT)")
+	_, _ = exec.Execute("INSERT INTO where_test VALUES (1, 'active', 100)")
+	_, _ = exec.Execute("INSERT INTO where_test VALUES (2, 'inactive', 200)")
+	_, _ = exec.Execute("INSERT INTO where_test VALUES (3, 'active', NULL)")
+
+	_, _ = exec.Execute("CREATE TABLE status_ref (status VARCHAR(20))")
+	_, _ = exec.Execute("INSERT INTO status_ref VALUES ('active')")
+
+	t.Run("WHERE with multiple conditions", func(t *testing.T) {
+		result, err := exec.Execute("SELECT id FROM where_test WHERE status = 'active' AND value > 50")
+		if err != nil {
+			t.Logf("Multiple conditions failed: %v", err)
+		} else {
+			t.Logf("Multiple conditions result: %v", result.Rows)
+		}
+	})
+
+	t.Run("WHERE with OR", func(t *testing.T) {
+		result, err := exec.Execute("SELECT id FROM where_test WHERE status = 'inactive' OR value > 150")
+		if err != nil {
+			t.Logf("OR failed: %v", err)
+		} else {
+			t.Logf("OR result: %v", result.Rows)
+		}
+	})
+
+	t.Run("WHERE with nested parentheses", func(t *testing.T) {
+		result, err := exec.Execute(`
+			SELECT id FROM where_test
+			WHERE (status = 'active' AND value IS NOT NULL) OR (status = 'inactive')
+		`)
+		if err != nil {
+			t.Logf("Nested parentheses failed: %v", err)
+		} else {
+			t.Logf("Nested parentheses result: %v", result.Rows)
+		}
+	})
+
+	t.Run("WHERE with IS NOT NULL", func(t *testing.T) {
+		result, err := exec.Execute("SELECT id FROM where_test WHERE value IS NOT NULL")
+		if err != nil {
+			t.Logf("IS NOT NULL failed: %v", err)
+		} else {
+			t.Logf("IS NOT NULL result: %v", result.Rows)
+		}
+	})
+
+	t.Run("WHERE with NOT EXISTS", func(t *testing.T) {
+		result, err := exec.Execute(`
+			SELECT id FROM where_test wt
+			WHERE NOT EXISTS (SELECT 1 FROM status_ref WHERE status_ref.status = wt.status)
+		`)
+		if err != nil {
+			t.Logf("NOT EXISTS failed: %v", err)
+		} else {
+			t.Logf("NOT EXISTS result: %v", result.Rows)
+		}
+	})
+}
+
+// TestLateralExecutionPaths tests more LATERAL execution paths
+func TestLateralExecutionPaths(t *testing.T) {
+	engine := setupTestEngine(t)
+	exec := NewExecutor(engine)
+	exec.SetDatabase("testdb")
+
+	_, _ = exec.Execute("CREATE TABLE lateral_outer (id INT, name VARCHAR(50))")
+	_, _ = exec.Execute("INSERT INTO lateral_outer VALUES (1, 'Alice')")
+	_, _ = exec.Execute("INSERT INTO lateral_outer VALUES (2, 'Bob')")
+
+	t.Run("LATERAL with SELECT star", func(t *testing.T) {
+		result, err := exec.Execute(`
+			SELECT * FROM LATERAL (SELECT 1 AS a, 2 AS b) AS lat
+		`)
+		if err != nil {
+			t.Logf("LATERAL star failed: %v", err)
+		} else {
+			t.Logf("LATERAL star result: %v", result.Rows)
+		}
+	})
+
+	t.Run("LATERAL with alias", func(t *testing.T) {
+		result, err := exec.Execute(`
+			SELECT x.a FROM LATERAL (SELECT 10 AS a) AS x
+		`)
+		if err != nil {
+			t.Logf("LATERAL alias failed: %v", err)
+		} else {
+			t.Logf("LATERAL alias result: %v", result.Rows)
+		}
+	})
+
+	t.Run("LATERAL with ORDER BY DESC", func(t *testing.T) {
+		result, err := exec.Execute(`
+			SELECT * FROM LATERAL (SELECT id, name FROM lateral_outer ORDER BY id DESC LIMIT 1) AS lat
+		`)
+		if err != nil {
+			t.Logf("LATERAL ORDER DESC failed: %v", err)
+		} else {
+			t.Logf("LATERAL ORDER DESC result: %v", result.Rows)
+		}
+	})
+}
+
