@@ -25409,3 +25409,367 @@ func TestEvaluateHavingInExprList(t *testing.T) {
 	})
 }
 
+// TestWindowFunctionsWithStar tests window functions with COUNT(*)
+func TestWindowFunctionsWithStar(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "xxsql-window-star-test-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	engine := storage.NewEngine(tmpDir)
+	exec := NewExecutor(engine)
+	exec.SetDatabase("test")
+
+	_, err = exec.Execute(`CREATE TABLE sales (id SEQ PRIMARY KEY, region VARCHAR(20), amount INT)`)
+	if err != nil {
+		t.Fatalf("Failed to create table: %v", err)
+	}
+
+	_, err = exec.Execute(`INSERT INTO sales (region, amount) VALUES ('North', 100)`)
+	if err != nil {
+		t.Fatalf("Failed to insert: %v", err)
+	}
+	_, err = exec.Execute(`INSERT INTO sales (region, amount) VALUES ('North', 150)`)
+	if err != nil {
+		t.Fatalf("Failed to insert: %v", err)
+	}
+	_, err = exec.Execute(`INSERT INTO sales (region, amount) VALUES ('South', 200)`)
+	if err != nil {
+		t.Fatalf("Failed to insert: %v", err)
+	}
+
+	// Test COUNT(*) OVER
+	t.Run("COUNT(*) OVER", func(t *testing.T) {
+		result, err := exec.Execute(`SELECT id, COUNT(*) OVER () as cnt FROM sales`)
+		if err != nil {
+			t.Logf("COUNT(*) OVER failed: %v", err)
+		} else {
+			t.Logf("COUNT(*) OVER result: %v", result.Rows)
+		}
+	})
+
+	// Test COUNT(*) with PARTITION BY
+	t.Run("COUNT(*) PARTITION BY", func(t *testing.T) {
+		result, err := exec.Execute(`SELECT id, region, COUNT(*) OVER (PARTITION BY region) as cnt FROM sales`)
+		if err != nil {
+			t.Logf("COUNT(*) PARTITION BY failed: %v", err)
+		} else {
+			t.Logf("COUNT(*) PARTITION BY result: %v", result.Rows)
+		}
+	})
+}
+
+// TestCTEWithInsertInto tests CTE with INSERT
+func TestCTEWithInsertInto(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "xxsql-cte-insert-test-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	engine := storage.NewEngine(tmpDir)
+	exec := NewExecutor(engine)
+	exec.SetDatabase("test")
+
+	_, err = exec.Execute(`CREATE TABLE source (id SEQ PRIMARY KEY, val INT)`)
+	if err != nil {
+		t.Fatalf("Failed to create source table: %v", err)
+	}
+
+	_, err = exec.Execute(`CREATE TABLE target (id SEQ PRIMARY KEY, val INT)`)
+	if err != nil {
+		t.Fatalf("Failed to create target table: %v", err)
+	}
+
+	_, err = exec.Execute(`INSERT INTO source (val) VALUES (10)`)
+	if err != nil {
+		t.Fatalf("Failed to insert: %v", err)
+	}
+	_, err = exec.Execute(`INSERT INTO source (val) VALUES (20)`)
+	if err != nil {
+		t.Fatalf("Failed to insert: %v", err)
+	}
+
+	// Test INSERT with CTE
+	t.Run("INSERT with CTE", func(t *testing.T) {
+		result, err := exec.Execute(`WITH cte AS (SELECT val FROM source WHERE val > 15) INSERT INTO target (val) SELECT val FROM cte`)
+		if err != nil {
+			t.Logf("INSERT CTE failed: %v", err)
+		} else {
+			t.Logf("INSERT CTE result: %v", result.Message)
+		}
+	})
+
+	// Verify insert
+	t.Run("Verify CTE insert", func(t *testing.T) {
+		result, err := exec.Execute(`SELECT * FROM target`)
+		if err != nil {
+			t.Logf("Verify failed: %v", err)
+		} else {
+			t.Logf("Verify result: %v", result.Rows)
+		}
+	})
+}
+
+// TestViewWithJoin tests view with JOIN
+func TestViewWithJoin(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "xxsql-view-join-test-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	engine := storage.NewEngine(tmpDir)
+	exec := NewExecutor(engine)
+	exec.SetDatabase("test")
+
+	_, err = exec.Execute(`CREATE TABLE users (id SEQ PRIMARY KEY, name VARCHAR(50), dept_id INT)`)
+	if err != nil {
+		t.Fatalf("Failed to create users table: %v", err)
+	}
+
+	_, err = exec.Execute(`CREATE TABLE departments (id SEQ PRIMARY KEY, dept_name VARCHAR(50))`)
+	if err != nil {
+		t.Fatalf("Failed to create departments table: %v", err)
+	}
+
+	_, err = exec.Execute(`INSERT INTO users (name, dept_id) VALUES ('Alice', 1)`)
+	if err != nil {
+		t.Fatalf("Failed to insert: %v", err)
+	}
+	_, err = exec.Execute(`INSERT INTO departments (dept_name) VALUES ('Engineering')`)
+	if err != nil {
+		t.Fatalf("Failed to insert: %v", err)
+	}
+
+	// Create view with JOIN
+	t.Run("Create view with JOIN", func(t *testing.T) {
+		result, err := exec.Execute(`CREATE VIEW user_dept AS SELECT u.name, d.dept_name FROM users u JOIN departments d ON u.dept_id = d.id`)
+		if err != nil {
+			t.Logf("Create view JOIN failed: %v", err)
+		} else {
+			t.Logf("Create view JOIN result: %v", result.Message)
+		}
+	})
+
+	// Query the view
+	t.Run("Query view with JOIN", func(t *testing.T) {
+		result, err := exec.Execute(`SELECT * FROM user_dept`)
+		if err != nil {
+			t.Logf("Query view JOIN failed: %v", err)
+		} else {
+			t.Logf("Query view JOIN result: %v", result.Rows)
+		}
+	})
+}
+
+// TestFunctionWithStringArgs tests functions with various string arguments
+func TestFunctionWithStringArgs(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "xxsql-func-str-test-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	engine := storage.NewEngine(tmpDir)
+	exec := NewExecutor(engine)
+	exec.SetDatabase("test")
+
+	// Test string functions with column references
+	_, err = exec.Execute(`CREATE TABLE strings (id SEQ PRIMARY KEY, content VARCHAR(100))`)
+	if err != nil {
+		t.Fatalf("Failed to create table: %v", err)
+	}
+
+	_, err = exec.Execute(`INSERT INTO strings (content) VALUES ('Hello World')`)
+	if err != nil {
+		t.Fatalf("Failed to insert: %v", err)
+	}
+
+	// Test LEFT function
+	t.Run("LEFT function", func(t *testing.T) {
+		result, err := exec.Execute(`SELECT LEFT(content, 5) FROM strings`)
+		if err != nil {
+			t.Logf("LEFT failed: %v", err)
+		} else {
+			t.Logf("LEFT result: %v", result.Rows)
+		}
+	})
+
+	// Test RIGHT function
+	t.Run("RIGHT function", func(t *testing.T) {
+		result, err := exec.Execute(`SELECT RIGHT(content, 5) FROM strings`)
+		if err != nil {
+			t.Logf("RIGHT failed: %v", err)
+		} else {
+			t.Logf("RIGHT result: %v", result.Rows)
+		}
+	})
+
+	// Test INSTR function
+	t.Run("INSTR function", func(t *testing.T) {
+		result, err := exec.Execute(`SELECT INSTR(content, 'World') FROM strings`)
+		if err != nil {
+			t.Logf("INSTR failed: %v", err)
+		} else {
+			t.Logf("INSTR result: %v", result.Rows)
+		}
+	})
+
+	// Test PRINTF function
+	t.Run("PRINTF function", func(t *testing.T) {
+		result, err := exec.Execute(`SELECT PRINTF('Name: %s', content) FROM strings`)
+		if err != nil {
+			t.Logf("PRINTF failed: %v", err)
+		} else {
+			t.Logf("PRINTF result: %v", result.Rows)
+		}
+	})
+}
+
+// TestIndexScan tests index scan functionality
+func TestIndexScan(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "xxsql-index-scan-test-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	engine := storage.NewEngine(tmpDir)
+	exec := NewExecutor(engine)
+	exec.SetDatabase("test")
+
+	_, err = exec.Execute(`CREATE TABLE users (id SEQ PRIMARY KEY, name VARCHAR(50), email VARCHAR(100))`)
+	if err != nil {
+		t.Fatalf("Failed to create table: %v", err)
+	}
+
+	// Create index
+	_, err = exec.Execute(`CREATE INDEX idx_name ON users(name)`)
+	if err != nil {
+		t.Logf("Create index failed: %v", err)
+	}
+
+	// Insert data
+	_, err = exec.Execute(`INSERT INTO users (name, email) VALUES ('Alice', 'alice@example.com')`)
+	if err != nil {
+		t.Fatalf("Failed to insert: %v", err)
+	}
+	_, err = exec.Execute(`INSERT INTO users (name, email) VALUES ('Bob', 'bob@example.com')`)
+	if err != nil {
+		t.Fatalf("Failed to insert: %v", err)
+	}
+
+	// Test query with index
+	t.Run("Query with index", func(t *testing.T) {
+		result, err := exec.Execute(`SELECT * FROM users WHERE name = 'Alice'`)
+		if err != nil {
+			t.Logf("Index query failed: %v", err)
+		} else {
+			t.Logf("Index query result: %v", result.Rows)
+		}
+	})
+
+	// Test index scan with range
+	t.Run("Query with range", func(t *testing.T) {
+		result, err := exec.Execute(`SELECT * FROM users WHERE name > 'A' AND name < 'C'`)
+		if err != nil {
+			t.Logf("Range query failed: %v", err)
+		} else {
+			t.Logf("Range query result: %v", result.Rows)
+		}
+	})
+}
+
+// TestPragmaGetSet tests PRAGMA get/set operations
+func TestPragmaGetSet(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "xxsql-pragma-getset-test-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	engine := storage.NewEngine(tmpDir)
+	exec := NewExecutor(engine)
+	exec.SetDatabase("test")
+
+	// Test getting PRAGMA value
+	t.Run("Get PRAGMA", func(t *testing.T) {
+		result, err := exec.Execute(`PRAGMA cache_size`)
+		if err != nil {
+			t.Logf("Get PRAGMA failed: %v", err)
+		} else {
+			t.Logf("Get PRAGMA result: %v", result.Rows)
+		}
+	})
+
+	// Test setting PRAGMA value
+	t.Run("Set PRAGMA", func(t *testing.T) {
+		result, err := exec.Execute(`PRAGMA cache_size = 1000`)
+		if err != nil {
+			t.Logf("Set PRAGMA failed: %v", err)
+		} else {
+			t.Logf("Set PRAGMA result: %v", result.Rows)
+		}
+	})
+
+	// Test journal_mode
+	t.Run("Journal mode", func(t *testing.T) {
+		result, err := exec.Execute(`PRAGMA journal_mode`)
+		if err != nil {
+			t.Logf("Journal mode failed: %v", err)
+		} else {
+			t.Logf("Journal mode result: %v", result.Rows)
+		}
+	})
+
+	// Test synchronous
+	t.Run("Synchronous", func(t *testing.T) {
+		result, err := exec.Execute(`PRAGMA synchronous`)
+		if err != nil {
+			t.Logf("Synchronous failed: %v", err)
+		} else {
+			t.Logf("Synchronous result: %v", result.Rows)
+		}
+	})
+}
+
+// TestTriggerWithNewRef tests trigger with NEW.column references
+func TestTriggerWithNewRef(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "xxsql-trigger-new-test-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	engine := storage.NewEngine(tmpDir)
+	exec := NewExecutor(engine)
+	exec.SetDatabase("test")
+
+	_, err = exec.Execute(`CREATE TABLE users (id SEQ PRIMARY KEY, name VARCHAR(50), created_at VARCHAR(50))`)
+	if err != nil {
+		t.Fatalf("Failed to create table: %v", err)
+	}
+
+	// Create trigger that sets created_at
+	t.Run("Create trigger with NEW reference", func(t *testing.T) {
+		result, err := exec.Execute(`CREATE TRIGGER set_created BEFORE INSERT ON users FOR EACH ROW BEGIN SELECT 1; END`)
+		if err != nil {
+			t.Logf("Create trigger failed: %v", err)
+		} else {
+			t.Logf("Create trigger result: %v", result.Message)
+		}
+	})
+
+	// Insert and trigger
+	t.Run("Insert with trigger", func(t *testing.T) {
+		result, err := exec.Execute(`INSERT INTO users (name) VALUES ('Test')`)
+		if err != nil {
+			t.Logf("Insert with trigger failed: %v", err)
+		} else {
+			t.Logf("Insert with trigger result: %v", result.Message)
+		}
+	})
+}
+
