@@ -94,6 +94,7 @@
                 <h2>Projects</h2>
                 <div class="header-actions">
                     <button class="btn btn-primary" onclick="showCreateModal()">+ New Project</button>
+                    <button class="btn btn-secondary" onclick="showImportModal()">Import ZIP</button>
                     <div class="user-info"><span>{{.User}}</span><a href="/api/logout" onclick="logout(event)">Logout</a></div>
                 </div>
             </header>
@@ -140,6 +141,33 @@
             <div style="display: flex; gap: 10px; justify-content: flex-end; margin-top: 20px;">
                 <button class="btn btn-secondary" onclick="hideDeleteModal()">Cancel</button>
                 <button class="btn btn-danger" onclick="confirmDelete()">Delete</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Import Project Modal -->
+    <div class="modal" id="import-modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3>Import Project from ZIP</h3>
+                <button class="modal-close" onclick="hideImportModal()">&times;</button>
+            </div>
+            <div class="form-group">
+                <label>Project ZIP File</label>
+                <input type="file" id="import-file" accept=".zip" style="border: 2px dashed #ddd; padding: 20px; text-align: center; cursor: pointer;">
+                <p style="color: #7f8c8d; font-size: 0.85rem; margin-top: 10px;">
+                    The ZIP should contain: project.json, setup.sql (optional), and static files.
+                </p>
+            </div>
+            <div id="import-progress" style="display: none; margin-top: 15px;">
+                <p style="color: #3498db;"><span id="import-status">Uploading...</span></p>
+                <div style="background: #eee; height: 4px; border-radius: 2px; margin-top: 5px;">
+                    <div id="import-bar" style="background: #3498db; height: 100%; width: 0%; transition: width 0.3s;"></div>
+                </div>
+            </div>
+            <div style="display: flex; gap: 10px; justify-content: flex-end; margin-top: 20px;">
+                <button type="button" class="btn btn-secondary" onclick="hideImportModal()">Cancel</button>
+                <button type="button" class="btn btn-primary" id="import-btn" onclick="importProject()">Import</button>
             </div>
         </div>
     </div>
@@ -265,6 +293,69 @@
         function manageFiles(name) {
             // Navigate to file manager page
             window.location.href = '/files/' + encodeURIComponent(name);
+        }
+
+        // Import functions
+        function showImportModal() {
+            document.getElementById('import-file').value = '';
+            document.getElementById('import-progress').style.display = 'none';
+            document.getElementById('import-bar').style.width = '0%';
+            document.getElementById('import-btn').disabled = false;
+            document.getElementById('import-modal').classList.add('active');
+        }
+
+        function hideImportModal() {
+            document.getElementById('import-modal').classList.remove('active');
+        }
+
+        async function importProject() {
+            const fileInput = document.getElementById('import-file');
+            if (!fileInput.files || fileInput.files.length === 0) {
+                alert('Please select a ZIP file');
+                return;
+            }
+
+            const file = fileInput.files[0];
+            if (!file.name.endsWith('.zip')) {
+                alert('Please select a .zip file');
+                return;
+            }
+
+            // Show progress
+            document.getElementById('import-progress').style.display = 'block';
+            document.getElementById('import-status').textContent = 'Uploading...';
+            document.getElementById('import-bar').style.width = '30%';
+            document.getElementById('import-btn').disabled = true;
+
+            try {
+                const formData = new FormData();
+                formData.append('project', file);
+
+                const resp = await fetch('/api/projects/import', {
+                    method: 'POST',
+                    body: formData
+                });
+
+                const data = await resp.json();
+
+                if (resp.ok) {
+                    document.getElementById('import-bar').style.width = '100%';
+                    document.getElementById('import-status').textContent = 'Import complete!';
+
+                    setTimeout(() => {
+                        hideImportModal();
+                        loadProjects();
+                    }, 1000);
+                } else {
+                    document.getElementById('import-status').textContent = 'Error: ' + (data.error || 'Import failed');
+                    document.getElementById('import-bar').style.width = '0%';
+                    document.getElementById('import-btn').disabled = false;
+                }
+            } catch (err) {
+                document.getElementById('import-status').textContent = 'Error: ' + err.message;
+                document.getElementById('import-bar').style.width = '0%';
+                document.getElementById('import-btn').disabled = false;
+            }
         }
 
         function logout(e) {

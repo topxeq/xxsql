@@ -1,8 +1,11 @@
 package web
 
 import (
+	"archive/zip"
 	"bufio"
+	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -1091,6 +1094,248 @@ func (s *Server) deleteProject(w http.ResponseWriter, r *http.Request, name stri
 		"success": true,
 		"message": "Project deleted successfully",
 	})
+}
+
+// handleAPIProjectImport handles POST /api/projects/import - upload and install project from ZIP
+func (s *Server) handleAPIProjectImport(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+
+	// Parse multipart form (max 50MB)
+	if err := r.ParseMultipartForm(50 << 20); err != nil {
+		writeError(w, http.StatusBadRequest, "failed to parse form: "+err.Error())
+		return
+	}
+
+	file, header, err := r.FormFile("project")
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "no file uploaded")
+		return
+	}
+	defer file.Close()
+
+	// Read ZIP content
+	zipData, err := io.ReadAll(file)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to read file")
+		return
+	}
+
+	// Create temp directory for extraction
+	tempDir, err := os.MkdirTemp("", "project-import-*")
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to create temp dir")
+		return
+	}
+	defer os.RemoveAll(tempDir)
+
+	// Write ZIP to temp file
+	zipPath := filepath.Join(tempDir, header.Filename)
+	if err := os.WriteFile(zipPath, zipData, 0644); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to write zip file")
+		return
+	}
+
+	// Extract ZIP
+	extractDir := filepath.Join(tempDir, "extracted")
+	if err := os.MkdirAll(extractDir, 0755); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to create extract dir")
+		return
+	}
+
+	if err := extractZip(zipPath, extractDir); err != nil {
+		writeError(w, http.StatusBadRequest, "failed to extract zip: "+err.Error())
+		return
+	}
+
+	// Find project root (may be inside a subdirectory)
+	projectRoot, err := findProjectRoot(extractDir)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	// Read project.json
+	projectJsonPath := filepath.Join(projectRoot, "project.json")
+	projectData, err := os.ReadFile(projectJsonPath)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "project.json not found in ZIP")
+		return
+	}
+
+	var projectInfo struct {
+		Name        string                   `json:"name"`
+		Version     string                   `json:"version"`
+		Tables      string                   `json:"tables"`
+		Microservices []struct {
+			SKEY        string `json:"skey"`
+			Script      string `json:"script"`
+			Description string `json:"description"`
+		} `json:"microservices"`
+	}
+
+	if err := json.Unmarshal(projectData, &projectInfo); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid project.json: "+err.Error())
+		return
+	}
+
+	if projectInfo.Name == "" {
+		writeError(w, http.StatusBadRequest, "project name is required in project.json")
+		return
+	}
+
+	if projectInfo.Version == "" {
+		projectInfo.Version = "1.0.0"
+	}
+
+	exec := executor.NewExecutor(s.engine)
+
+	// Check if project already exists
+	existingResult, _ := exec.Execute(fmt.Sprintf("SELECT name FROM _sys_projects WHERE name = '%s'", projectInfo.Name))
+	if len(existingResult.Rows) > 0 {
+		// Delete existing project
+		exec.Execute(fmt.Sprintf("DELETE FROM _sys_projects WHERE name = '%s'", projectInfo.Name))
+	}
+
+	// Execute setup.sql if exists
+	setupSqlPath := filepath.Join(projectRoot, "setup.sql")
+	if _, err := os.Stat(setupSqlPath); err == nil {
+		sqlContent, err := os.ReadFile(setupSqlPath)
+		if err == nil {
+			// Execute SQL statements
+			sqlStatements := string(sqlContent)
+			exec.Execute(sqlStatements)
+		}
+	}
+
+	// Create project directory
+	projectDir := filepath.Join(s.config.Server.DataDir, "projects", projectInfo.Name)
+	os.RemoveAll(projectDir) // Remove existing if any
+	if err := os.MkdirAll(projectDir, 0755); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to create project directory")
+		return
+	}
+
+	// Copy all files from project root to project directory
+	filepath.Walk(projectRoot, func(path string, info os.FileInfo, err error) error {
+		if err != nil || path == projectRoot {
+			return nil
+		}
+
+		relPath, _ := filepath.Rel(projectRoot, path)
+		targetPath := filepath.Join(projectDir, relPath)
+
+		if info.IsDir() {
+			os.MkdirAll(targetPath, info.Mode())
+		} else {
+			// Skip project.json and setup.sql from being copied to project dir
+			if relPath == "project.json" || relPath == "setup.sql" {
+				return nil
+			}
+			data, err := os.ReadFile(path)
+			if err == nil {
+				os.WriteFile(targetPath, data, info.Mode())
+			}
+		}
+		return nil
+	})
+
+	// Register microservices
+	for _, ms := range projectInfo.Microservices {
+		if ms.SKEY != "" && ms.Script != "" {
+			// Delete existing if any
+			exec.Execute(fmt.Sprintf("DELETE FROM _sys_ms WHERE SKEY = '%s'", ms.SKEY))
+			// Insert new
+			desc := strings.ReplaceAll(ms.Description, "'", "''")
+			script := strings.ReplaceAll(ms.Script, "'", "''")
+			exec.Execute(fmt.Sprintf("INSERT INTO _sys_ms (SKEY, SCRIPT, description, created_at) VALUES ('%s', '%s', '%s', datetime('now'))",
+				ms.SKEY, script, desc))
+		}
+	}
+
+	// Register project in database
+	exec.Execute(fmt.Sprintf("INSERT INTO _sys_projects (name, version, installed_at, tables) VALUES ('%s', '%s', datetime('now'), '%s')",
+		projectInfo.Name, projectInfo.Version, projectInfo.Tables))
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"success":  true,
+		"message":  "Project imported successfully",
+		"name":     projectInfo.Name,
+		"version":  projectInfo.Version,
+		"tables":   projectInfo.Tables,
+		"services": len(projectInfo.Microservices),
+	})
+}
+
+// extractZip extracts a ZIP file to a directory
+func extractZip(zipPath, destDir string) error {
+	r, err := zip.OpenReader(zipPath)
+	if err != nil {
+		return err
+	}
+	defer r.Close()
+
+	for _, f := range r.File {
+		destPath := filepath.Join(destDir, f.Name)
+
+		// Security: prevent path traversal
+		if strings.Contains(f.Name, "..") {
+			continue
+		}
+
+		if f.FileInfo().IsDir() {
+			os.MkdirAll(destPath, f.Mode())
+			continue
+		}
+
+		// Create parent directories
+		os.MkdirAll(filepath.Dir(destPath), 0755)
+
+		// Extract file
+		srcFile, err := f.Open()
+		if err != nil {
+			return err
+		}
+
+		destFile, err := os.OpenFile(destPath, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, f.Mode())
+		if err != nil {
+			srcFile.Close()
+			return err
+		}
+
+		io.Copy(destFile, srcFile)
+		destFile.Close()
+		srcFile.Close()
+	}
+
+	return nil
+}
+
+// findProjectRoot finds the directory containing project.json
+func findProjectRoot(dir string) (string, error) {
+	// Check if project.json exists in current dir
+	if _, err := os.Stat(filepath.Join(dir, "project.json")); err == nil {
+		return dir, nil
+	}
+
+	// Check subdirectories (single level)
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return "", fmt.Errorf("project.json not found")
+	}
+
+	for _, entry := range entries {
+		if entry.IsDir() {
+			subPath := filepath.Join(dir, entry.Name())
+			if _, err := os.Stat(filepath.Join(subPath, "project.json")); err == nil {
+				return subPath, nil
+			}
+		}
+	}
+
+	return "", fmt.Errorf("project.json not found in ZIP")
 }
 
 // ============================================================================

@@ -126,6 +126,7 @@ func (s *Server) Start() error {
 
 	// Project API routes
 	mux.HandleFunc("/api/projects", s.handleAPIProjects)
+	mux.HandleFunc("/api/projects/import", s.handleAPIProjectImport)
 	mux.HandleFunc("/api/projects/", s.handleAPIProjectRoutes)
 
 	// Microservice API routes
