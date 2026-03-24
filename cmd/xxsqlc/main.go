@@ -497,7 +497,7 @@ func undeployProject(projectName string) error {
 
 	// Query project info from _sys_projects
 	var tables string
-	err := db.QueryRow("SELECT tables FROM _sys_projects WHERE name = ?", projectName).Scan(&tables)
+	err := db.QueryRow(fmt.Sprintf("SELECT tables FROM _sys_projects WHERE name = '%s'", projectName)).Scan(&tables)
 	if err != nil {
 		if err == sql.ErrNoRows {
 			fmt.Printf("Warning: Project '%s' not found in registry, proceeding anyway\n", projectName)
@@ -540,6 +540,9 @@ func undeployProject(projectName string) error {
 		return fmt.Errorf("failed to create delete request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
+	if *flagUser != "" && *flagPassword != "" {
+		req.SetBasicAuth(*flagUser, *flagPassword)
+	}
 
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
@@ -567,6 +570,9 @@ func undeployProject(projectName string) error {
 		return fmt.Errorf("failed to create unregister request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
+	if *flagUser != "" && *flagPassword != "" {
+		req.SetBasicAuth(*flagUser, *flagPassword)
+	}
 
 	resp, err = http.DefaultClient.Do(req)
 	if err != nil {

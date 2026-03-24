@@ -554,6 +554,11 @@ func (t *Table) Insert(values []types.Value) (row.RowID, error) {
 		return row.InvalidRowID, err
 	}
 
+	// Write page to disk immediately
+	if err := t.writePage(targetPage); err != nil {
+		return row.InvalidRowID, fmt.Errorf("failed to write page: %w", err)
+	}
+
 	// Record row ID to page mapping
 	t.rowPageMu.Lock()
 	t.rowToPage[rowID] = targetPage.ID
@@ -566,6 +571,9 @@ func (t *Table) Insert(values []types.Value) (row.RowID, error) {
 
 	t.info.RowCount++
 	t.info.ModifiedAt = time.Now()
+
+	// Save metadata to persist row count
+	_ = t.saveMeta()
 
 	return rowID, nil
 }
@@ -1559,6 +1567,8 @@ func (t *Table) Delete(predicate func(*row.Row) bool) (int, error) {
 	if affected > 0 {
 		t.info.RowCount -= uint64(affected)
 		t.info.ModifiedAt = time.Now()
+		// Save metadata to persist row count
+		_ = t.saveMeta()
 	}
 
 	return affected, nil

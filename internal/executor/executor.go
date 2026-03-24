@@ -6929,6 +6929,12 @@ func (e *Executor) tryIndexScan(tableName string, where sql.Expression, tbl *tab
 		return nil, false, err
 	}
 
+	// If index scan returned 0 rows but table has data, the index might be empty/corrupted
+	// Fall back to full table scan
+	if len(rows) == 0 && tableRowCount > 0 {
+		return nil, false, nil
+	}
+
 	return rows, true, nil
 }
 
