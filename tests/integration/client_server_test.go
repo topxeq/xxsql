@@ -18,9 +18,10 @@ import (
 func TestClientServerIntegration_BasicFlow(t *testing.T) {
 	tmpDir := t.TempDir()
 
-	// Find available ports
-	privatePort := findAvailablePort(t)
-	mysqlPort := findAvailablePort(t)
+	// Find available ports (get them all at once to avoid conflicts)
+	ports := findAvailablePorts(t, 2)
+	privatePort := ports[0]
+	mysqlPort := ports[1]
 
 	t.Logf("Using private port: %d, MySQL port: %d", privatePort, mysqlPort)
 
@@ -130,8 +131,9 @@ func TestClientServerIntegration_BasicFlow(t *testing.T) {
 
 func TestClientServerIntegration_CRUD(t *testing.T) {
 	tmpDir := t.TempDir()
-	privatePort := findAvailablePort(t)
-	mysqlPort := findAvailablePort(t)
+	ports := findAvailablePorts(t, 2)
+	privatePort := ports[0]
+	mysqlPort := ports[1]
 
 	cfg := &config.Config{
 		Server: config.ServerConfig{
@@ -219,8 +221,9 @@ func TestClientServerIntegration_CRUD(t *testing.T) {
 
 func TestClientServerIntegration_Aggregates(t *testing.T) {
 	tmpDir := t.TempDir()
-	privatePort := findAvailablePort(t)
-	mysqlPort := findAvailablePort(t)
+	ports := findAvailablePorts(t, 2)
+	privatePort := ports[0]
+	mysqlPort := ports[1]
 
 	cfg := &config.Config{
 		Server: config.ServerConfig{
@@ -356,8 +359,9 @@ func TestClientServerIntegration_Aggregates(t *testing.T) {
 
 func TestClientServerIntegration_WhereClause(t *testing.T) {
 	tmpDir := t.TempDir()
-	privatePort := findAvailablePort(t)
-	mysqlPort := findAvailablePort(t)
+	ports := findAvailablePorts(t, 2)
+	privatePort := ports[0]
+	mysqlPort := ports[1]
 
 	cfg := &config.Config{
 		Server: config.ServerConfig{
@@ -433,8 +437,9 @@ func TestClientServerIntegration_WhereClause(t *testing.T) {
 
 func TestClientServerIntegration_ShowTables(t *testing.T) {
 	tmpDir := t.TempDir()
-	privatePort := findAvailablePort(t)
-	mysqlPort := findAvailablePort(t)
+	ports := findAvailablePorts(t, 2)
+	privatePort := ports[0]
+	mysqlPort := ports[1]
 
 	cfg := &config.Config{
 		Server: config.ServerConfig{
@@ -490,19 +495,38 @@ func TestClientServerIntegration_ShowTables(t *testing.T) {
 	}
 }
 
+// Helper function to find available ports
+func findAvailablePorts(t *testing.T, count int) []int {
+	t.Helper()
+	var ports []int
+	var listeners []net.Listener
+
+	// Open all listeners first to reserve ports
+	for i := 0; i < count; i++ {
+		addr, err := net.ResolveTCPAddr("tcp", "127.0.0.1:0")
+		if err != nil {
+			t.Fatalf("Failed to resolve addr: %v", err)
+		}
+
+		l, err := net.ListenTCP("tcp", addr)
+		if err != nil {
+			t.Fatalf("Failed to listen: %v", err)
+		}
+		listeners = append(listeners, l)
+		ports = append(ports, l.Addr().(*net.TCPAddr).Port)
+	}
+
+	// Close all listeners after getting ports
+	for _, l := range listeners {
+		l.Close()
+	}
+
+	return ports
+}
+
 // Helper function to find an available port
 func findAvailablePort(t *testing.T) int {
 	t.Helper()
-	addr, err := net.ResolveTCPAddr("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatalf("Failed to resolve addr: %v", err)
-	}
-
-	l, err := net.ListenTCP("tcp", addr)
-	if err != nil {
-		t.Fatalf("Failed to listen: %v", err)
-	}
-	defer l.Close()
-
-	return l.Addr().(*net.TCPAddr).Port
+	ports := findAvailablePorts(t, 1)
+	return ports[0]
 }
