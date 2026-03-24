@@ -3,6 +3,7 @@ package storage
 
 import (
 	"fmt"
+	"os"
 	"sync"
 
 	"github.com/topxeq/xxsql/internal/storage/catalog"
@@ -606,4 +607,73 @@ func (e *Engine) ReleaseSavepoint(name string) error {
 func (e *Engine) RollbackToSavepoint(name string) error {
 	// For now, this is a no-op since we don't have full rollback support
 	return nil
+}
+
+// ResetToInitialState resets the server to its initial state.
+// It drops all user tables (keeping _sys_ms, _sys_projects), clears _sys_projects,
+// and deletes all files in the projects/ directory.
+// Returns a map with details about what was reset.
+func (e *Engine) ResetToInitialState(dataDir string) map[string]interface{} {
+	result := make(map[string]interface{})
+
+	// System tables to preserve
+	systemTables := map[string]bool{
+		"_sys_ms":       true,
+		"_sys_projects": true,
+	}
+
+	// Get all tables
+	allTables := e.ListTables()
+	droppedTables := make([]string, 0)
+
+	// Drop all user tables
+	for _, tableName := range allTables {
+		if !systemTables[tableName] {
+			if err := e.DropTable(tableName); err == nil {
+				droppedTables = append(droppedTables, tableName)
+			}
+		}
+	}
+	result["tables_dropped"] = droppedTables
+
+	// Clear _sys_projects table
+	projectsCleared := 0
+	if e.TableExists("_sys_projects") {
+		tbl, err := e.GetTable("_sys_projects")
+		if err == nil {
+			info := tbl.GetInfo()
+			projectsCleared = int(info.RowCount)
+			// Truncate by dropping and recreating
+			e.catalog.DropTable("_sys_projects")
+			// Recreate empty _sys_projects table
+			e.catalog.CreateTable("_sys_projects", []*types.ColumnInfo{
+				{Name: "name", Type: types.TypeVarchar, Size: 100, PrimaryKey: true},
+				{Name: "version", Type: types.TypeVarchar, Size: 20},
+				{Name: "installed_at", Type: types.TypeDatetime},
+				{Name: "tables", Type: types.TypeText},
+			})
+		}
+	}
+	result["projects_cleared"] = projectsCleared
+
+	// Delete all files in projects/ directory
+	projectsDir := dataDir + "/projects"
+	filesDeleted := 0
+	if entries, err := os.ReadDir(projectsDir); err == nil {
+		for _, entry := range entries {
+			entryPath := projectsDir + "/" + entry.Name()
+			if err := os.RemoveAll(entryPath); err == nil {
+				filesDeleted++
+			}
+		}
+	}
+	result["files_deleted"] = filesDeleted
+
+	// Clear FTS indexes
+	e.ftsMgr = fts.NewFTSManager(dataDir)
+
+	// Clear temp tables
+	e.ClearTempTables()
+
+	return result
 }

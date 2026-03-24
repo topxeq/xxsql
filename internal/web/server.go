@@ -111,6 +111,7 @@ func (s *Server) Start() error {
 	mux.HandleFunc("/api/logout", s.handleAPILogout)
 	mux.HandleFunc("/api/keys", s.handleAPIKeys)
 	mux.HandleFunc("/api/keys/", s.handleAPIKeyDetail)
+	mux.HandleFunc("/api/admin/reset", s.handleAPIAdminReset)
 
 	// Microservice routes (XxScript)
 	mux.HandleFunc("/ms/", s.handleMicroservice)

@@ -743,3 +743,66 @@ func (s *Server) handleMicroservice(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 }
+
+// handleAPIAdminReset handles POST /api/admin/reset.
+// It resets the server to its initial state by:
+// - Dropping all user tables (keeping _sys_ms, _sys_projects)
+// - Clearing _sys_projects table
+// - Deleting all files in projects/ directory
+func (s *Server) handleAPIAdminReset(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+
+	// Check if user is admin
+	username := getUsername(r.Context())
+	if username == "" {
+		writeError(w, http.StatusUnauthorized, "authentication required")
+		return
+	}
+
+	user, err := s.auth.GetUser(username)
+	if err != nil || user.Role != auth.RoleAdmin {
+		writeError(w, http.StatusForbidden, "admin access required")
+		return
+	}
+
+	// Parse request
+	var req struct {
+		Confirm string `json:"confirm"`
+		Full    bool   `json:"full"` // Full reset also deletes user accounts (except admin)
+	}
+	if err := readJSON(r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request")
+		return
+	}
+
+	// Require confirmation
+	if req.Confirm != "RESET" {
+		writeJSON(w, http.StatusBadRequest, map[string]interface{}{
+			"success": false,
+			"error":   "confirmation required: send {\"confirm\": \"RESET\"}",
+		})
+		return
+	}
+
+	// Perform reset
+	result := s.engine.ResetToInitialState(s.config.Server.DataDir)
+
+	// Full reset: delete all users except admin
+	if req.Full {
+		users := s.auth.ListUsers()
+		for _, u := range users {
+			if u.Username != "admin" {
+				s.auth.DeleteUser(u.Username)
+			}
+		}
+		result["users_deleted"] = len(users) - 1
+	}
+
+	result["success"] = true
+	result["message"] = "Server reset to initial state"
+
+	writeJSON(w, http.StatusOK, result)
+}

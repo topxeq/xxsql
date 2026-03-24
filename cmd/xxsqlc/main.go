@@ -43,6 +43,9 @@ var (
 	flagProgress = flag.Bool("progress", false, "Show progress when executing SQL file")
 	flagProject  = flag.String("project", "", "Deploy project from specified directory")
 	flagProtocol = flag.String("protocol", "", "Protocol to use: mysql or private (auto-detected from port if not specified)")
+	flagReset    = flag.Bool("reset", false, "Reset server to initial state (admin only)")
+	flagResetForce = flag.Bool("force", false, "Force reset without confirmation prompt")
+	flagResetFull = flag.Bool("full", false, "Full reset including user accounts (keeps admin)")
 )
 
 // Global state
@@ -120,6 +123,15 @@ func main() {
 	if *flagProject != "" {
 		if err := deployProject(*flagProject); err != nil {
 			fmt.Fprintf(os.Stderr, "Project deployment failed: %v\n", err)
+			os.Exit(1)
+		}
+		os.Exit(0)
+	}
+
+	// Handle reset mode
+	if *flagReset {
+		if err := resetServer(); err != nil {
+			fmt.Fprintf(os.Stderr, "Reset failed: %v\n", err)
 			os.Exit(1)
 		}
 		os.Exit(0)
@@ -374,4 +386,91 @@ func registerProject(name, version, tables string) error {
 		name, version, tables)
 	_, err := db.Exec(sql)
 	return err
+}
+
+// resetServer resets the server to its initial state via HTTP API
+func resetServer() error {
+	// Check for required credentials
+	if *flagUser == "" || *flagPassword == "" {
+		return fmt.Errorf("reset requires admin credentials: use -u admin -p <password>")
+	}
+
+	// Show warning and get confirmation unless --force is specified
+	if !*flagResetForce {
+		fmt.Println("⚠️  WARNING: This will DELETE ALL DATA and reset the server to initial state!")
+		fmt.Println("    - All user tables will be dropped")
+		fmt.Println("    - All user data will be lost")
+		fmt.Println("    - All projects will be unregistered")
+		fmt.Println("    - All uploaded files will be deleted")
+		if *flagResetFull {
+			fmt.Println("    - All user accounts will be deleted (except admin)")
+		}
+		fmt.Println()
+		fmt.Print("Type 'RESET' to confirm: ")
+
+		var confirmation string
+		fmt.Scanln(&confirmation)
+		if confirmation != "RESET" {
+			fmt.Println("Reset cancelled.")
+			return nil
+		}
+	}
+
+	// Call the reset API
+	resetURL := fmt.Sprintf("http://%s:%d/api/admin/reset", *flagHost, *flagHTTPPort)
+
+	payload := map[string]interface{}{
+		"confirm": "RESET",
+		"full":    *flagResetFull,
+	}
+	payloadJSON, _ := json.Marshal(payload)
+
+	req, err := http.NewRequest("POST", resetURL, bytes.NewReader(payloadJSON))
+	if err != nil {
+		return fmt.Errorf("failed to create request: %w", err)
+	}
+
+	req.Header.Set("Content-Type", "application/json")
+	req.SetBasicAuth(*flagUser, *flagPassword)
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("failed to connect to server: %w", err)
+	}
+	defer resp.Body.Close()
+
+	body, _ := io.ReadAll(resp.Body)
+
+	if resp.StatusCode == http.StatusUnauthorized {
+		return fmt.Errorf("authentication failed: invalid credentials")
+	}
+	if resp.StatusCode == http.StatusForbidden {
+		return fmt.Errorf("access denied: admin privileges required")
+	}
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("server error: %s", string(body))
+	}
+
+	// Parse and display result
+	var result map[string]interface{}
+	if err := json.Unmarshal(body, &result); err != nil {
+		return fmt.Errorf("failed to parse response: %w", err)
+	}
+
+	fmt.Println("\n✓ Server reset complete!")
+	if tables, ok := result["tables_dropped"].([]interface{}); ok {
+		fmt.Printf("  Tables dropped: %d\n", len(tables))
+	}
+	if projects, ok := result["projects_cleared"].(float64); ok {
+		fmt.Printf("  Projects cleared: %d\n", int(projects))
+	}
+	if files, ok := result["files_deleted"].(float64); ok {
+		fmt.Printf("  Files deleted: %d\n", int(files))
+	}
+	if users, ok := result["users_deleted"].(float64); ok {
+		fmt.Printf("  Users deleted: %d\n", int(users))
+	}
+	fmt.Println("\nServer has been reset to initial state.")
+
+	return nil
 }
