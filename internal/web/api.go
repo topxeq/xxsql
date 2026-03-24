@@ -986,6 +986,26 @@ func (s *Server) handleAPIProjectDetail(w http.ResponseWriter, r *http.Request) 
 	}
 }
 
+// handleAPIProjectRoutes handles all /api/projects/* routes including files
+func (s *Server) handleAPIProjectRoutes(w http.ResponseWriter, r *http.Request) {
+	path := strings.TrimPrefix(r.URL.Path, "/api/projects/")
+
+	// Check if it's a file operation (contains /files/)
+	if strings.Contains(path, "/files/") {
+		s.handleAPIProjectFileDetail(w, r)
+		return
+	}
+
+	// Check if it's listing files (ends with /files)
+	if strings.HasSuffix(path, "/files") {
+		s.handleAPIProjectFiles(w, r)
+		return
+	}
+
+	// Otherwise it's project detail
+	s.handleAPIProjectDetail(w, r)
+}
+
 func (s *Server) listProjects(w http.ResponseWriter, r *http.Request) {
 	exec := executor.NewExecutor(s.engine)
 	result, err := exec.Execute("SELECT name, version, installed_at, tables FROM _sys_projects")

@@ -103,6 +103,7 @@ func (s *Server) Start() error {
 	mux.HandleFunc("/login", s.handleLoginPage)
 	mux.HandleFunc("/projects", s.handlePage("projects"))
 	mux.HandleFunc("/microservices", s.handlePage("microservices"))
+	mux.HandleFunc("/files/", s.handleProjectFileManager)
 
 	// API routes
 	mux.HandleFunc("/api/status", s.handleAPIStatus)
@@ -125,7 +126,7 @@ func (s *Server) Start() error {
 
 	// Project API routes
 	mux.HandleFunc("/api/projects", s.handleAPIProjects)
-	mux.HandleFunc("/api/projects/", s.handleAPIProjectDetail)
+	mux.HandleFunc("/api/projects/", s.handleAPIProjectRoutes)
 
 	// Microservice API routes
 	mux.HandleFunc("/api/microservices", s.handleAPIMicroservices)
@@ -473,4 +474,38 @@ func (s *Server) handleProjectFiles(w http.ResponseWriter, r *http.Request) {
 
 	// Serve the file
 	http.ServeFile(w, r, fullPath)
+}
+
+// handleProjectFileManager handles the file management page.
+func (s *Server) handleProjectFileManager(w http.ResponseWriter, r *http.Request) {
+	// Check authentication
+	session := s.getSession(r)
+	if session == nil {
+		http.Redirect(w, r, "/login", http.StatusFound)
+		return
+	}
+
+	// Extract project name from path /files/{projectName}
+	path := strings.TrimPrefix(r.URL.Path, "/files/")
+	if path == "" {
+		http.Redirect(w, r, "/projects", http.StatusFound)
+		return
+	}
+
+	// Split to get project name
+	parts := strings.SplitN(path, "/", 2)
+	projectName := parts[0]
+
+	data := map[string]interface{}{
+		"Page":        "files",
+		"User":        session.Username,
+		"Server":      s.config.Server.Name,
+		"Version":     "0.0.1",
+		"ProjectName": projectName,
+	}
+
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	if err := s.templates.ExecuteTemplate(w, "project-files", data); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+	}
 }

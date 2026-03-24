@@ -1,0 +1,504 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Files - {{.ProjectName}} - XxSql</title>
+    <link rel="stylesheet" href="/static/style.css">
+    <script src="/static/xxscript-editor.js"></script>
+    <style>
+        .breadcrumb {
+            display: flex;
+            align-items: center;
+            gap: 5px;
+            margin-bottom: 20px;
+            font-size: 0.95rem;
+        }
+        .breadcrumb a {
+            color: #3498db;
+            text-decoration: none;
+        }
+        .breadcrumb a:hover {
+            text-decoration: underline;
+        }
+        .breadcrumb span {
+            color: #7f8c8d;
+        }
+        .file-toolbar {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 15px;
+        }
+        .file-list {
+            background: white;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        .file-item {
+            display: flex;
+            align-items: center;
+            padding: 12px 15px;
+            border-bottom: 1px solid #eee;
+            cursor: pointer;
+            transition: background 0.2s;
+        }
+        .file-item:last-child {
+            border-bottom: none;
+        }
+        .file-item:hover {
+            background: #f8f9fa;
+        }
+        .file-item .icon {
+            width: 24px;
+            font-size: 1.2rem;
+            margin-right: 10px;
+        }
+        .file-item .name {
+            flex: 1;
+            color: #2c3e50;
+        }
+        .file-item .size {
+            color: #7f8c8d;
+            font-size: 0.85rem;
+            margin-right: 15px;
+        }
+        .file-item .actions {
+            display: flex;
+            gap: 5px;
+            opacity: 0;
+            transition: opacity 0.2s;
+        }
+        .file-item:hover .actions {
+            opacity: 1;
+        }
+        .modal {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0,0,0,0.5);
+            justify-content: center;
+            align-items: center;
+            z-index: 1000;
+        }
+        .modal.active {
+            display: flex;
+        }
+        .modal-content {
+            background: white;
+            padding: 25px;
+            border-radius: 8px;
+            width: 100%;
+            max-width: 800px;
+            max-height: 90vh;
+            overflow-y: auto;
+        }
+        .modal-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 20px;
+        }
+        .modal-header h3 {
+            margin: 0;
+        }
+        .modal-close {
+            background: none;
+            border: none;
+            font-size: 1.5rem;
+            cursor: pointer;
+            color: #7f8c8d;
+        }
+        .file-editor {
+            width: 100%;
+            min-height: 400px;
+            font-family: 'Courier New', monospace;
+            font-size: 14px;
+            padding: 15px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            resize: vertical;
+            line-height: 1.5;
+            tab-size: 4;
+        }
+        .empty-state {
+            text-align: center;
+            padding: 60px 20px;
+            color: #7f8c8d;
+        }
+        .empty-state .icon {
+            font-size: 3rem;
+            margin-bottom: 15px;
+        }
+    </style>
+</head>
+<body>
+    <div class="layout">
+        <aside class="sidebar">
+            <div class="logo"><h1>XxSql</h1><span>Web Management</span></div>
+            <nav>
+                <a href="/"><span class="icon">📊</span><span>Dashboard</span></a>
+                <a href="/query"><span class="icon">🔍</span><span>Query</span></a>
+                <a href="/tables"><span class="icon">📋</span><span>Tables</span></a>
+                <a href="/projects" class="active"><span class="icon">📁</span><span>Projects</span></a>
+                <a href="/microservices"><span class="icon">⚡</span><span>Microservices</span></a>
+                <a href="/users"><span class="icon">👥</span><span>Users</span></a>
+                <a href="/backup"><span class="icon">💾</span><span>Backup</span></a>
+                <a href="/logs"><span class="icon">📜</span><span>Logs</span></a>
+                <a href="/config"><span class="icon">⚙️</span><span>Config</span></a>
+            </nav>
+        </aside>
+
+        <main class="main">
+            <header class="header">
+                <h2>Files: {{.ProjectName}}</h2>
+                <div class="user-info"><span>{{.User}}</span><a href="/api/logout" onclick="logout(event)">Logout</a></div>
+            </header>
+
+            <div class="breadcrumb">
+                <a href="/projects">Projects</a>
+                <span>›</span>
+                <span>{{.ProjectName}}</span>
+            </div>
+
+            <div class="file-toolbar">
+                <button class="btn btn-primary" onclick="showCreateFileModal()">+ New File</button>
+                <button class="btn btn-secondary" onclick="showCreateDirModal()">New Folder</button>
+                <a href="/projects/{{.ProjectName}}/" target="_blank" class="btn btn-secondary">View Site</a>
+            </div>
+
+            <div class="file-list" id="file-list">
+                <div class="empty-state">
+                    <div class="icon">📂</div>
+                    <p>Loading files...</p>
+                </div>
+            </div>
+        </main>
+    </div>
+
+    <!-- Create File Modal -->
+    <div class="modal" id="create-file-modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3>Create New File</h3>
+                <button class="modal-close" onclick="hideCreateFileModal()">&times;</button>
+            </div>
+            <form id="create-file-form" onsubmit="createFile(event)">
+                <div class="form-group">
+                    <label>File Path</label>
+                    <input type="text" id="new-file-path" required placeholder="index.html or subdir/file.js">
+                </div>
+                <div style="display: flex; gap: 10px; justify-content: flex-end;">
+                    <button type="button" class="btn btn-secondary" onclick="hideCreateFileModal()">Cancel</button>
+                    <button type="submit" class="btn btn-primary">Create</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Create Directory Modal -->
+    <div class="modal" id="create-dir-modal">
+        <div class="modal-content" style="max-width: 400px;">
+            <div class="modal-header">
+                <h3>Create New Folder</h3>
+                <button class="modal-close" onclick="hideCreateDirModal()">&times;</button>
+            </div>
+            <form id="create-dir-form" onsubmit="createDir(event)">
+                <div class="form-group">
+                    <label>Folder Path</label>
+                    <input type="text" id="new-dir-path" required placeholder="myfolder or path/to/folder">
+                </div>
+                <div style="display: flex; gap: 10px; justify-content: flex-end;">
+                    <button type="button" class="btn btn-secondary" onclick="hideCreateDirModal()">Cancel</button>
+                    <button type="submit" class="btn btn-primary">Create</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Edit File Modal -->
+    <div class="modal" id="edit-file-modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3>Edit: <span id="edit-file-name"></span></h3>
+                <button class="modal-close" onclick="hideEditFileModal()">&times;</button>
+            </div>
+            <form id="edit-file-form" onsubmit="saveFile(event)">
+                <input type="hidden" id="edit-file-path">
+                <div class="form-group">
+                    <textarea class="file-editor" id="file-content"></textarea>
+                </div>
+                <div style="display: flex; gap: 10px; justify-content: flex-end;">
+                    <button type="button" class="btn btn-secondary" onclick="hideEditFileModal()">Cancel</button>
+                    <button type="submit" class="btn btn-primary">Save</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Delete Confirmation Modal -->
+    <div class="modal" id="delete-modal">
+        <div class="modal-content" style="max-width: 400px;">
+            <div class="modal-header">
+                <h3>Delete File</h3>
+                <button class="modal-close" onclick="hideDeleteModal()">&times;</button>
+            </div>
+            <p>Are you sure you want to delete "<span id="delete-file-name"></span>"?</p>
+            <p style="color: #e74c3c; margin-top: 10px;">This action cannot be undone.</p>
+            <div style="display: flex; gap: 10px; justify-content: flex-end; margin-top: 20px;">
+                <button class="btn btn-secondary" onclick="hideDeleteModal()">Cancel</button>
+                <button class="btn btn-danger" onclick="confirmDelete()">Delete</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const projectName = '{{.ProjectName}}';
+        let files = [];
+        let deletePath = '';
+
+        async function loadFiles() {
+            try {
+                const resp = await fetch('/api/projects/' + encodeURIComponent(projectName) + '/files');
+                const data = await resp.json();
+
+                if (resp.ok) {
+                    files = data.files || [];
+                    renderFiles();
+                } else {
+                    document.getElementById('file-list').innerHTML = `
+                        <div class="empty-state">
+                            <div class="icon">❌</div>
+                            <p>${escapeHtml(data.error || 'Failed to load files')}</p>
+                        </div>
+                    `;
+                }
+            } catch (err) {
+                document.getElementById('file-list').innerHTML = `
+                    <div class="empty-state">
+                        <div class="icon">❌</div>
+                        <p>Error: ${escapeHtml(err.message)}</p>
+                    </div>
+                `;
+            }
+        }
+
+        function renderFiles() {
+            const container = document.getElementById('file-list');
+
+            if (files.length === 0) {
+                container.innerHTML = `
+                    <div class="empty-state">
+                        <div class="icon">📂</div>
+                        <p>No files yet. Create a new file to get started.</p>
+                    </div>
+                `;
+                return;
+            }
+
+            // Sort: folders first, then files, alphabetically
+            files.sort((a, b) => {
+                if (a.isDir !== b.isDir) return a.isDir ? -1 : 1;
+                return a.name.localeCompare(b.name);
+            });
+
+            container.innerHTML = files.map(f => `
+                <div class="file-item" onclick="${f.isDir ? '' : `editFile('${escapeHtml(f.path)}')`}">
+                    <span class="icon">${f.isDir ? '📁' : getFileIcon(f.name)}</span>
+                    <span class="name">${escapeHtml(f.name)}</span>
+                    <span class="size">${f.isDir ? '' : formatSize(f.size)}</span>
+                    <div class="actions">
+                        ${!f.isDir ? `<button class="btn btn-sm btn-secondary" onclick="event.stopPropagation(); editFile('${escapeHtml(f.path)}')">Edit</button>` : ''}
+                        <button class="btn btn-sm btn-danger" onclick="event.stopPropagation(); showDeleteModal('${escapeHtml(f.path)}', ${f.isDir})">Delete</button>
+                    </div>
+                </div>
+            `).join('');
+        }
+
+        function getFileIcon(name) {
+            const ext = name.split('.').pop().toLowerCase();
+            const icons = {
+                'html': '🌐', 'htm': '🌐',
+                'css': '🎨',
+                'js': '⚡',
+                'json': '📋',
+                'png': '🖼️', 'jpg': '🖼️', 'jpeg': '🖼️', 'gif': '🖼️', 'svg': '🖼️',
+                'md': '📝', 'txt': '📄',
+                'sql': '🗃️'
+            };
+            return icons[ext] || '📄';
+        }
+
+        function formatSize(bytes) {
+            if (bytes < 1024) return bytes + ' B';
+            if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
+            return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
+        }
+
+        function escapeHtml(str) {
+            if (str == null) return '';
+            return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+        }
+
+        // Create file
+        function showCreateFileModal() {
+            document.getElementById('new-file-path').value = '';
+            document.getElementById('create-file-modal').classList.add('active');
+            document.getElementById('new-file-path').focus();
+        }
+
+        function hideCreateFileModal() {
+            document.getElementById('create-file-modal').classList.remove('active');
+        }
+
+        async function createFile(e) {
+            e.preventDefault();
+            const path = document.getElementById('new-file-path').value.trim();
+            if (!path) return;
+
+            try {
+                const resp = await fetch('/api/projects/' + encodeURIComponent(projectName) + '/files', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ path, content: '', isDir: false })
+                });
+
+                const data = await resp.json();
+                if (resp.ok) {
+                    hideCreateFileModal();
+                    loadFiles();
+                    // Open for editing
+                    editFile(path);
+                } else {
+                    alert('Error: ' + (data.error || 'Failed to create file'));
+                }
+            } catch (err) {
+                alert('Error: ' + err.message);
+            }
+        }
+
+        // Create directory
+        function showCreateDirModal() {
+            document.getElementById('new-dir-path').value = '';
+            document.getElementById('create-dir-modal').classList.add('active');
+            document.getElementById('new-dir-path').focus();
+        }
+
+        function hideCreateDirModal() {
+            document.getElementById('create-dir-modal').classList.remove('active');
+        }
+
+        async function createDir(e) {
+            e.preventDefault();
+            const path = document.getElementById('new-dir-path').value.trim();
+            if (!path) return;
+
+            try {
+                const resp = await fetch('/api/projects/' + encodeURIComponent(projectName) + '/files', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ path, isDir: true })
+                });
+
+                const data = await resp.json();
+                if (resp.ok) {
+                    hideCreateDirModal();
+                    loadFiles();
+                } else {
+                    alert('Error: ' + (data.error || 'Failed to create folder'));
+                }
+            } catch (err) {
+                alert('Error: ' + err.message);
+            }
+        }
+
+        // Edit file
+        async function editFile(path) {
+            try {
+                const resp = await fetch('/api/projects/' + encodeURIComponent(projectName) + '/files/' + encodeURIComponent(path));
+                const data = await resp.json();
+
+                if (resp.ok) {
+                    document.getElementById('edit-file-name').textContent = path;
+                    document.getElementById('edit-file-path').value = path;
+                    document.getElementById('file-content').value = data.content || '';
+                    document.getElementById('edit-file-modal').classList.add('active');
+                } else {
+                    alert('Error: ' + (data.error || 'Failed to load file'));
+                }
+            } catch (err) {
+                alert('Error: ' + err.message);
+            }
+        }
+
+        function hideEditFileModal() {
+            document.getElementById('edit-file-modal').classList.remove('active');
+        }
+
+        async function saveFile(e) {
+            e.preventDefault();
+            const path = document.getElementById('edit-file-path').value;
+            const content = document.getElementById('file-content').value;
+
+            try {
+                const resp = await fetch('/api/projects/' + encodeURIComponent(projectName) + '/files/' + encodeURIComponent(path), {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ content })
+                });
+
+                const data = await resp.json();
+                if (resp.ok) {
+                    hideEditFileModal();
+                    loadFiles();
+                } else {
+                    alert('Error: ' + (data.error || 'Failed to save file'));
+                }
+            } catch (err) {
+                alert('Error: ' + err.message);
+            }
+        }
+
+        // Delete
+        function showDeleteModal(path, isDir) {
+            deletePath = path;
+            document.getElementById('delete-file-name').textContent = path;
+            document.getElementById('delete-modal').classList.add('active');
+        }
+
+        function hideDeleteModal() {
+            document.getElementById('delete-modal').classList.remove('active');
+            deletePath = '';
+        }
+
+        async function confirmDelete() {
+            if (!deletePath) return;
+
+            try {
+                const resp = await fetch('/api/projects/' + encodeURIComponent(projectName) + '/files/' + encodeURIComponent(deletePath), {
+                    method: 'DELETE'
+                });
+
+                const data = await resp.json();
+                if (resp.ok) {
+                    hideDeleteModal();
+                    loadFiles();
+                } else {
+                    alert('Error: ' + (data.error || 'Failed to delete'));
+                }
+            } catch (err) {
+                alert('Error: ' + err.message);
+            }
+        }
+
+        function logout(e) {
+            e.preventDefault();
+            fetch('/api/logout', { method: 'POST' }).then(() => window.location.href = '/login');
+        }
+
+        loadFiles();
+    </script>
+</body>
+</html>
