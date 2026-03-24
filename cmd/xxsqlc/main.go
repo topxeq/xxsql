@@ -352,6 +352,9 @@ func uploadFileViaMicroservice(filePath, projectName, relPath string) error {
 		mkdirURL := fmt.Sprintf("http://%s:%d/ms/_sys_ms/dir/create", *flagHost, httpPort())
 		req, _ := http.NewRequest("POST", mkdirURL, bytes.NewReader(mkdirJSON))
 		req.Header.Set("Content-Type", "application/json")
+		if *flagUser != "" && *flagPassword != "" {
+			req.SetBasicAuth(*flagUser, *flagPassword)
+		}
 		resp, err := http.DefaultClient.Do(req)
 		if err != nil {
 			fmt.Printf("  Warning: failed to create directory %s: %v\n", dirPath, err)
@@ -370,6 +373,9 @@ func uploadFileViaMicroservice(filePath, projectName, relPath string) error {
 	uploadURL := fmt.Sprintf("http://%s:%d/ms/_sys_ms/file/uploadBinary", *flagHost, httpPort())
 	req, _ := http.NewRequest("POST", uploadURL, bytes.NewReader(uploadJSON))
 	req.Header.Set("Content-Type", "application/json")
+	if *flagUser != "" && *flagPassword != "" {
+		req.SetBasicAuth(*flagUser, *flagPassword)
+	}
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		return fmt.Errorf("failed to upload %s: %w", relPath, err)
