@@ -16284,3 +16284,194 @@ func TestSQLCryptoFunctions(t *testing.T) {
 		}
 	}
 }
+
+// TestSQLBase64HexFunctions tests BASE64_ENCODE, BASE64_DECODE, HEX_ENCODE, HEX_DECODE
+func TestSQLBase64HexFunctions(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "xxsql-enc-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	engine := storage.NewEngine(tmpDir)
+	if err := engine.Open(); err != nil {
+		t.Fatalf("Failed to open engine: %v", err)
+	}
+	defer engine.Close()
+
+	exec := NewExecutor(engine)
+	exec.SetDatabase("testdb")
+
+	// Test BASE64_ENCODE
+	tests := []struct {
+		name     string
+		query    string
+		expected string
+	}{
+		{
+			"base64_encode string",
+			"SELECT BASE64_ENCODE('hello')",
+			"aGVsbG8=",
+		},
+		{
+			"base64encode alias",
+			"SELECT BASE64ENCODE('hello')",
+			"aGVsbG8=",
+		},
+		{
+			"base64_encode empty",
+			"SELECT BASE64_ENCODE('')",
+			"",
+		},
+		{
+			"hex_encode string",
+			"SELECT HEX_ENCODE('hello')",
+			"68656c6c6f",
+		},
+		{
+			"hexencode alias",
+			"SELECT HEXENCODE('hello')",
+			"68656c6c6f",
+		},
+		{
+			"hex_encode empty",
+			"SELECT HEX_ENCODE('')",
+			"",
+		},
+	}
+
+	for _, tt := range tests {
+		result, err := exec.Execute(tt.query)
+		if err != nil {
+			t.Errorf("%s failed: %v", tt.name, err)
+			continue
+		}
+		if len(result.Rows) == 0 {
+			t.Errorf("%s: no rows returned", tt.name)
+			continue
+		}
+		got := fmt.Sprintf("%v", result.Rows[0][0])
+		if got != tt.expected {
+			t.Errorf("%s: expected %q, got %q", tt.name, tt.expected, got)
+		} else {
+			t.Logf("%s: OK -> %s", tt.name, got)
+		}
+	}
+
+	// Test BASE64_DECODE
+	decodeTests := []struct {
+		name     string
+		query    string
+		expected string
+	}{
+		{
+			"base64_decode",
+			"SELECT BASE64_DECODE('aGVsbG8=')",
+			"hello",
+		},
+		{
+			"base64decode alias",
+			"SELECT BASE64DECODE('aGVsbG8=')",
+			"hello",
+		},
+		{
+			"hex_decode",
+			"SELECT HEX_DECODE('68656c6c6f')",
+			"hello",
+		},
+		{
+			"hexdecode alias",
+			"SELECT HEXDECODE('68656c6c6f')",
+			"hello",
+		},
+	}
+
+	for _, tt := range decodeTests {
+		result, err := exec.Execute(tt.query)
+		if err != nil {
+			t.Errorf("%s failed: %v", tt.name, err)
+			continue
+		}
+		if len(result.Rows) == 0 {
+			t.Errorf("%s: no rows returned", tt.name)
+			continue
+		}
+		// Result may be []byte
+		var got string
+		switch v := result.Rows[0][0].(type) {
+		case []byte:
+			got = string(v)
+		case string:
+			got = v
+		default:
+			got = fmt.Sprintf("%v", v)
+		}
+		if got != tt.expected {
+			t.Errorf("%s: expected %q, got %q", tt.name, tt.expected, got)
+		} else {
+			t.Logf("%s: OK -> %s", tt.name, got)
+		}
+	}
+
+	// Test roundtrip
+	roundtripTests := []string{
+		"SELECT BASE64_DECODE(BASE64_ENCODE('test message'))",
+		"SELECT HEX_DECODE(HEX_ENCODE('test message'))",
+	}
+
+	for _, query := range roundtripTests {
+		result, err := exec.Execute(query)
+		if err != nil {
+			t.Errorf("Roundtrip failed: %s, error: %v", query, err)
+			continue
+		}
+		if len(result.Rows) > 0 {
+			var got string
+			switch v := result.Rows[0][0].(type) {
+			case []byte:
+				got = string(v)
+			case string:
+				got = v
+			default:
+				got = fmt.Sprintf("%v", v)
+			}
+			if got == "test message" {
+				t.Logf("Roundtrip OK: %s", query)
+			} else {
+				t.Errorf("Roundtrip failed: %s, got %q", query, got)
+			}
+		}
+	}
+
+	// Test NULL handling
+	nullTests := []string{
+		"SELECT BASE64_ENCODE(NULL)",
+		"SELECT BASE64_DECODE(NULL)",
+		"SELECT HEX_ENCODE(NULL)",
+		"SELECT HEX_DECODE(NULL)",
+	}
+
+	for _, query := range nullTests {
+		result, err := exec.Execute(query)
+		if err != nil {
+			t.Logf("NULL test error: %s, error: %v", query, err)
+		} else if len(result.Rows) > 0 {
+			t.Logf("NULL test: %s -> %v", query, result.Rows[0][0])
+		}
+	}
+
+	// Test invalid decode
+	invalidTests := []string{
+		"SELECT BASE64_DECODE('!!!invalid')",
+		"SELECT HEX_DECODE('not_hex')",
+	}
+
+	for _, query := range invalidTests {
+		result, err := exec.Execute(query)
+		if err != nil {
+			t.Logf("Invalid decode error (expected): %s -> %v", query, err)
+		} else {
+			t.Logf("Invalid decode: %s -> %v", query, result)
+		}
+	}
+}

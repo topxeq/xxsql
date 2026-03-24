@@ -7,6 +7,7 @@ import (
 	"crypto/sha1"
 	"crypto/sha256"
 	"crypto/sha512"
+	"encoding/base64"
 	"encoding/csv"
 	"encoding/hex"
 	"encoding/json"
@@ -9528,6 +9529,88 @@ func (e *Executor) evaluateFunction(fc *sql.FunctionCall, r *row.Row, columnMap 
 		strVal := fmt.Sprintf("%v", arg)
 		hash := sha512.Sum512([]byte(strVal))
 		return hex.EncodeToString(hash[:]), nil
+
+	case "BASE64_ENCODE", "BASE64ENCODE":
+		if len(fc.Args) == 0 {
+			return nil, fmt.Errorf("BASE64_ENCODE requires 1 argument")
+		}
+		arg, err := evalExpr(fc.Args[0])
+		if err != nil {
+			return nil, err
+		}
+		if arg == nil {
+			return nil, nil
+		}
+		switch v := arg.(type) {
+		case []byte:
+			return base64.StdEncoding.EncodeToString(v), nil
+		case string:
+			return base64.StdEncoding.EncodeToString([]byte(v)), nil
+		default:
+			return base64.StdEncoding.EncodeToString([]byte(fmt.Sprintf("%v", v))), nil
+		}
+
+	case "BASE64_DECODE", "BASE64DECODE":
+		if len(fc.Args) == 0 {
+			return nil, fmt.Errorf("BASE64_DECODE requires 1 argument")
+		}
+		arg, err := evalExpr(fc.Args[0])
+		if err != nil {
+			return nil, err
+		}
+		if arg == nil {
+			return nil, nil
+		}
+		strVal, ok := arg.(string)
+		if !ok {
+			strVal = fmt.Sprintf("%v", arg)
+		}
+		decoded, err := base64.StdEncoding.DecodeString(strVal)
+		if err != nil {
+			return nil, fmt.Errorf("invalid base64 string: %v", err)
+		}
+		return decoded, nil
+
+	case "HEX_ENCODE", "HEXENCODE":
+		if len(fc.Args) == 0 {
+			return nil, fmt.Errorf("HEX_ENCODE requires 1 argument")
+		}
+		arg, err := evalExpr(fc.Args[0])
+		if err != nil {
+			return nil, err
+		}
+		if arg == nil {
+			return nil, nil
+		}
+		switch v := arg.(type) {
+		case []byte:
+			return hex.EncodeToString(v), nil
+		case string:
+			return hex.EncodeToString([]byte(v)), nil
+		default:
+			return hex.EncodeToString([]byte(fmt.Sprintf("%v", v))), nil
+		}
+
+	case "HEX_DECODE", "HEXDECODE":
+		if len(fc.Args) == 0 {
+			return nil, fmt.Errorf("HEX_DECODE requires 1 argument")
+		}
+		arg, err := evalExpr(fc.Args[0])
+		if err != nil {
+			return nil, err
+		}
+		if arg == nil {
+			return nil, nil
+		}
+		strVal, ok := arg.(string)
+		if !ok {
+			strVal = fmt.Sprintf("%v", arg)
+		}
+		decoded, err := hex.DecodeString(strVal)
+		if err != nil {
+			return nil, fmt.Errorf("invalid hex string: %v", err)
+		}
+		return decoded, nil
 
 	case "LENGTH", "OCTET_LENGTH":
 		if len(fc.Args) == 0 {

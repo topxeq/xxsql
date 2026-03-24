@@ -582,6 +582,10 @@ SELECT LEAST(10, 20, 30);     -- 10
 | `CAST(expr AS type)` | Type conversion |
 | `HEX(value)` | Convert to hexadecimal |
 | `UNHEX(string)` | Convert hex to binary |
+| `HEX_ENCODE(value)` | Encode to hex string |
+| `HEX_DECODE(string)` | Decode hex to binary |
+| `BASE64_ENCODE(value)` | Encode to Base64 string |
+| `BASE64_DECODE(string)` | Decode Base64 to binary |
 | `MD5(string)` | MD5 hash (hex string) |
 | `SHA1(string)` | SHA1 hash (hex string) |
 | `SHA256(string)` | SHA256 hash (hex string) |
@@ -601,6 +605,10 @@ SELECT TYPEOF('hello');           -- 'VARCHAR'
 SELECT CAST('123' AS INT);        -- 123
 SELECT HEX('Hello');              -- '48656c6c6f'
 SELECT UNHEX('48656c6c6f');       -- BLOB 'Hello'
+SELECT HEX_ENCODE('hello');       -- '68656c6c6f'
+SELECT HEX_DECODE('68656c6c6f');  -- BLOB 'hello'
+SELECT BASE64_ENCODE('hello');    -- 'aGVsbG8='
+SELECT BASE64_DECODE('aGVsbG8='); -- BLOB 'hello'
 SELECT MD5('hello');              -- '5d41402abc4b2a76b9719d911017c592'
 SELECT SHA256('hello');           -- '2cf24dba5fb0a30e...'
 SELECT UUID();
