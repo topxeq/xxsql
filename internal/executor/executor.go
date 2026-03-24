@@ -4223,8 +4223,23 @@ func (e *Executor) executeInsertInternal(stmt *sql.InsertStmt) (*Result, error) 
 		}
 
 		// Check for conflict (UNIQUE constraint or PRIMARY KEY violation)
+		// For composite primary keys, individual column checks are skipped - the table's Insert()
+		// method handles composite primary key uniqueness correctly.
 		var conflictIndex int = -1
+
+		// Build set of composite primary key columns (skip individual checks for these)
+		compositePKCols := make(map[string]bool)
+		if len(tblInfo.PrimaryKey) > 1 {
+			for _, pkCol := range tblInfo.PrimaryKey {
+				compositePKCols[strings.ToLower(pkCol)] = true
+			}
+		}
+
 		for i, col := range tblInfo.Columns {
+			// Skip individual column check if this column is part of a composite primary key
+			if compositePKCols[strings.ToLower(col.Name)] {
+				continue
+			}
 			if (col.Unique || col.PrimaryKey) && !values[i].Null {
 				if e.valueExistsInColumn(tbl, i, values[i]) {
 					conflictIndex = i

@@ -143,7 +143,7 @@ func TestBuildDSN(t *testing.T) {
 			user:     "root",
 			password: "secret",
 			database: "test",
-			expected: "root:secret@tcp(localhost:3306)/test",
+			expected: "root:secret@tcp(localhost:3306)/test?protocol=mysql",
 		},
 		{
 			name:     "no password",
@@ -152,7 +152,7 @@ func TestBuildDSN(t *testing.T) {
 			user:     "root",
 			password: "",
 			database: "test",
-			expected: "root@tcp(localhost:3306)/test",
+			expected: "root@tcp(localhost:3306)/test?protocol=mysql",
 		},
 		{
 			name:     "no user",
@@ -161,7 +161,7 @@ func TestBuildDSN(t *testing.T) {
 			user:     "",
 			password: "",
 			database: "test",
-			expected: "tcp(localhost:3306)/test",
+			expected: "tcp(localhost:3306)/test?protocol=mysql",
 		},
 		{
 			name:     "no database",
@@ -170,7 +170,7 @@ func TestBuildDSN(t *testing.T) {
 			user:     "admin",
 			password: "pass",
 			database: "",
-			expected: "admin:pass@tcp(127.0.0.1:9527)/",
+			expected: "admin:pass@tcp(127.0.0.1:9527)/?protocol=private",
 		},
 		{
 			name:     "minimal DSN",
@@ -179,7 +179,7 @@ func TestBuildDSN(t *testing.T) {
 			user:     "",
 			password: "",
 			database: "",
-			expected: "tcp(db.example.com:3306)/",
+			expected: "tcp(db.example.com:3306)/?protocol=mysql",
 		},
 	}
 
