@@ -6,7 +6,7 @@
 [![Go Version](https://img.shields.io/badge/Go-1.21+-00ADD8?logo=go)](https://golang.org/)
 [![Release](https://img.shields.io/github/v/release/topxeq/xxsql)](https://github.com/topxeq/xxsql/releases)
 
-A lightweight SQL database implemented in pure Go, featuring a B+ tree storage engine and MySQL-compatible protocol.
+A lightweight SQL database with **built-in microservices engine**, implemented in pure Go. Features B+ tree storage, MySQL-compatible protocol, and XxScript-powered HTTP endpoints - deploy backend services directly from your database.
 
 ## Documentation
 
@@ -45,6 +45,74 @@ If you need:
 - Pure Go implementation for easy cross-platform deployment
 
 Then XxSql might be the right choice.
+
+## 🚀 Microservices Mode - A Unique Advantage
+
+**XxSql is not just a database - it's also an application backend server.**
+
+Traditional architecture requires separate components:
+```
+┌─────────────┐     ┌─────────────┐     ┌─────────────┐
+│   Client    │ ──► │ API Server  │ ──► │  Database   │
+└─────────────┘     │ (Node.js/   │     │ (MySQL/     │
+                    │  Python/Go) │     │  PostgreSQL)│
+                    └─────────────┘     └─────────────┘
+        3+ components to deploy, configure, and maintain
+```
+
+**With XxSql's microservices mode:**
+```
+┌─────────────┐     ┌─────────────────────────────────┐
+│   Client    │ ──► │           XxSql                 │
+└─────────────┘     │  ┌───────────┐ ┌─────────────┐ │
+                    │  │ Database  │ │Microservices│ │
+                    │  │  Engine   │ │   Engine    │ │
+                    │  └───────────┘ └─────────────┘ │
+                    │    Single deployment, simple    │
+                    └─────────────────────────────────┘
+```
+
+### Microservices Comparison
+
+| Feature | Traditional DB | SQLite | Firebase | Supabase | **XxSql** |
+|---------|---------------|--------|----------|----------|-----------|
+| **SQL Database** | ✅ | ✅ | ❌ (NoSQL) | ✅ | ✅ |
+| **Built-in HTTP API** | ❌ | ❌ | ✅ | ✅ | ✅ |
+| **Custom Endpoints** | ❌ | ❌ | Cloud Functions | Edge Functions | ✅ **In-process** |
+| **Server-side Scripting** | Stored Procs | ❌ | ❌ | ❌ | ✅ **XxScript** |
+| **Self-hosted** | ✅ | ✅ | ❌ | Self-host option | ✅ |
+| **No External Dependencies** | ✅ | ✅ | ❌ | ❌ | ✅ |
+| **Lightweight (< 20MB)** | ❌ | ✅ | ❌ | ❌ | ✅ |
+| **Full Backend Logic** | ❌ | ❌ | ❌ | ❌ | ✅ |
+
+### What Can You Build?
+
+With XxScript microservices, you can create complete backend services:
+
+```sql
+-- A complete REST API endpoint in one statement
+INSERT INTO _sys_ms (SKEY, SCRIPT) VALUES ('api/users',
+'http.responseJSON(200, db.query("SELECT * FROM users"))'
+);
+```
+
+**Use Cases:**
+- **REST APIs** - CRUD endpoints for web/mobile apps
+- **Webhooks** - Handle third-party callbacks
+- **Static Sites** - Serve HTML/CSS/JS from projects
+- **URL Shorteners** - Redirect services
+- **Form Handlers** - Process and store submissions
+- **Real-time Data** - Polling endpoints for dashboards
+- **Admin Panels** - Web management interface included
+
+**Benefits:**
+1. **Reduced Complexity** - One deployment instead of database + API server + Nginx
+2. **Lower Latency** - No network hop between API and database
+3. **Simpler Stack** - Learn SQL + XxScript, not multiple languages/frameworks
+4. **Cost Effective** - Single server handles everything
+5. **Easy Deployment** - One binary, zero external dependencies
+
+See the [Microservices Guide](docs/microservices.md) for detailed documentation and examples.
 
 ## XxSql vs SQLite Comparison
 
@@ -91,6 +159,24 @@ The following comparison highlights key differences between XxSql and SQLite acr
 | **Client Libraries** | Language-specific drivers | Native Go driver + Any MySQL client/driver |
 | **Multiple Clients** | Requires careful coordination | Native multi-client support |
 | **Private Protocol** | N/A | Custom binary protocol (port 9527) |
+
+### Microservices & Application Server
+
+| Feature | SQLite | XxSql |
+|---------|--------|-------|
+| **Built-in HTTP Server** | ❌ | ✅ Port 8080 |
+| **REST API Endpoints** | ❌ | ✅ Via XxScript |
+| **Server-side Scripting** | ❌ | ✅ XxScript (JavaScript-like) |
+| **Static File Serving** | ❌ | ✅ Project-based hosting |
+| **Request Handling** | N/A | `http` object with full request access |
+| **Database Access in Scripts** | N/A | `db` object for queries |
+| **JSON Response** | N/A | `http.responseJSON()` |
+| **HTML Rendering** | N/A | `http.responseHTML()` |
+| **Redirects** | N/A | `http.redirect()` |
+| **Custom Headers** | N/A | Full header control |
+| **Form Handling** | N/A | `http.formValue()` |
+| **URL Parameters** | N/A | `http.pathParam()` |
+| **Backend-as-a-Service** | ❌ | ✅ Complete backend solution |
 
 ### SQL Feature Support
 
@@ -252,12 +338,17 @@ The following comparison highlights key differences between XxSql and SQLite acr
 | **Mobile Apps** | ✅ Built-in | ⚠️ Requires server |
 | **Desktop Apps** | ✅ Ideal | ⚠️ Requires server setup |
 | **Web Applications** | ⚠️ Limited concurrency | ✅ Good concurrency |
-| **Microservices** | ⚠️ Single process | ✅ Network accessible |
+| **Microservices Backend** | ❌ Not supported | ✅ **Built-in XxScript** |
+| **REST API Server** | ❌ Need external app | ✅ **Database + API in one** |
+| **Static Site Hosting** | ❌ Need web server | ✅ **Projects feature** |
+| **Serverless Functions** | ❌ Need cloud provider | ✅ **Self-hosted endpoints** |
 | **Development/Testing** | ✅ Zero config | ⚠️ Server setup needed |
 | **Small-Medium Web Services** | ⚠️ Concurrency limits | ✅ Designed for this |
 | **Enterprise Applications** | ❌ Limited scalability | ⚠️ Missing some features |
 | **Real-time Applications** | ❌ Write blocking | ✅ Concurrent writes |
 | **Multi-tenant SaaS** | ❌ File-per-tenant | ⚠️ Possible with schema |
+| **IoT Data Collection** | ⚠️ Single writer | ✅ Concurrent writes + HTTP |
+| **Admin Dashboards** | ❌ Need separate backend | ✅ **Web UI included** |
 
 ### Summary
 
@@ -270,6 +361,7 @@ The following comparison highlights key differences between XxSql and SQLite acr
 - Working with desktop or mobile apps
 
 **Choose XxSql when:**
+- **You want Database + Backend in one** - XxScript microservices replace separate API servers
 - Building web services requiring concurrent access
 - Need MySQL protocol compatibility
 - Multiple clients need simultaneous access
@@ -277,6 +369,8 @@ The following comparison highlights key differences between XxSql and SQLite acr
 - Need built-in authentication and permissions
 - Want built-in REST API and web management
 - Need fine-grained locking for concurrent operations
+- Deploying to resource-constrained environments (single binary, < 20MB)
+- Want to simplify your stack (no separate Node.js/Python/Go backend needed)
 
 ## Features
 
@@ -288,6 +382,28 @@ The following comparison highlights key differences between XxSql and SQLite acr
 - **B+ tree storage engine** - Efficient indexing and range queries
 - **High concurrency** - Supports 100+ simultaneous connections
 - **ACID transactions** - WAL-based durability with ARIES-style crash recovery
+
+### Microservices Engine ⭐
+
+XxSql includes a powerful microservices engine that transforms it from a database into a complete backend solution:
+
+- **XxScript Language** - JavaScript-like scripting for HTTP endpoints
+- **HTTP Object** - Full request/response handling (`http.query`, `http.formValue`, `http.responseJSON`)
+- **Database Object** - Direct SQL access from scripts (`db.query`, `db.exec`)
+- **Project Management** - Organize microservices, static files, and assets
+- **ZIP Import** - Deploy complete projects with one upload
+- **Built-in Web UI** - Manage microservices through browser interface
+
+**Quick Example:**
+```sql
+-- Create a REST API endpoint
+INSERT INTO _sys_ms (SKEY, SCRIPT) VALUES ('api/products',
+  'var products = db.query("SELECT * FROM products");
+   http.responseJSON(200, products);'
+);
+
+-- Access at: http://localhost:8080/ms/api/products
+```
 
 ### Storage & Concurrency
 
@@ -420,6 +536,40 @@ db, err := sql.Open("xxsql", "admin:password@tcp(localhost:3306)/testdb")
 ```
 http://localhost:8080
 ```
+
+### Creating Your First Microservice
+
+XxSql lets you create REST API endpoints directly in the database:
+
+```sql
+-- Connect via MySQL client or CLI
+mysql -h 127.0.0.1 -P 3306 -u admin -p
+
+-- Create a products table
+CREATE TABLE products (
+    id SEQ PRIMARY KEY,
+    name VARCHAR(100),
+    price FLOAT
+);
+
+-- Insert some data
+INSERT INTO products (name, price) VALUES ('Widget', 29.99);
+INSERT INTO products (name, price) VALUES ('Gadget', 49.99);
+
+-- Create a REST API endpoint
+INSERT INTO _sys_ms (SKEY, SCRIPT) VALUES ('api/products',
+  'var products = db.query("SELECT * FROM products");
+   http.responseJSON(200, {"data": products});'
+);
+
+-- Test it!
+-- curl http://localhost:8080/ms/api/products
+-- Returns: {"data": [{"id": 1, "name": "Widget", "price": 29.99}, ...]}
+```
+
+**That's it!** You've created a complete REST API endpoint without writing a separate backend server.
+
+See [docs/microservices.md](docs/microservices.md) for more examples including CRUD operations, URL shorteners, and blog APIs.
 
 ## SQL Support
 
