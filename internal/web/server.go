@@ -115,9 +115,6 @@ func (s *Server) Start() error {
 	// Microservice routes (XxScript)
 	mux.HandleFunc("/ms/", s.handleMicroservice)
 
-	// Project static files
-	mux.HandleFunc("/projects/", s.handleProjectFiles)
-
 	// Create server
 	addr := fmt.Sprintf("%s:%d", s.config.Network.Bind, s.config.Network.HTTPPort)
 	s.server = &http.Server{

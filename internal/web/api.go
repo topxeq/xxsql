@@ -679,16 +679,23 @@ func (s *Server) handleAPIKeyDetail(w http.ResponseWriter, r *http.Request) {
 // It looks up the script from the specified table and executes it.
 func (s *Server) handleMicroservice(w http.ResponseWriter, r *http.Request) {
 	// Parse path: /ms/<table>/<skey>
+	// skey can contain slashes, so we need to handle it specially
 	path := strings.TrimPrefix(r.URL.Path, "/ms/")
-	parts := strings.Split(path, "/")
 
-	if len(parts) < 2 {
+	// Find the first slash to separate table name from skey
+	slashIdx := strings.Index(path, "/")
+	if slashIdx == -1 {
 		writeError(w, http.StatusBadRequest, "invalid path format: expected /ms/<table>/<skey>")
 		return
 	}
 
-	tableName := parts[0]
-	skey := parts[1]
+	tableName := path[:slashIdx]
+	skey := path[slashIdx+1:] // Everything after the first slash is the skey
+
+	if tableName == "" || skey == "" {
+		writeError(w, http.StatusBadRequest, "invalid path format: expected /ms/<table>/<skey>")
+		return
+	}
 
 	// Query the script from the table
 	// Table must have SKEY (primary key) and SCRIPT columns
@@ -735,74 +742,4 @@ func (s *Server) handleMicroservice(w http.ResponseWriter, r *http.Request) {
 		fmt.Fprintf(w, `{"error": %q}`, err.Error())
 		return
 	}
-}
-
-// handleProjectFiles serves static files from the projects directory.
-func (s *Server) handleProjectFiles(w http.ResponseWriter, r *http.Request) {
-	// Parse path: /projects/<project>/<filepath>
-	path := strings.TrimPrefix(r.URL.Path, "/projects/")
-	if path == "" {
-		writeError(w, http.StatusBadRequest, "invalid path format: expected /projects/<project>/<filepath>")
-		return
-	}
-
-	// Build file path
-	filePath := filepath.Join(s.config.Server.DataDir, "projects", path)
-
-	// Security check: ensure path is within projects directory
-	absPath, err := filepath.Abs(filePath)
-	if err != nil {
-		writeError(w, http.StatusBadRequest, "invalid file path")
-		return
-	}
-	projectsDir := filepath.Join(s.config.Server.DataDir, "projects")
-	absProjectsDir, _ := filepath.Abs(projectsDir)
-	if !strings.HasPrefix(absPath, absProjectsDir) {
-		writeError(w, http.StatusForbidden, "access denied")
-		return
-	}
-
-	// Check if file exists
-	info, err := os.Stat(filePath)
-	if err != nil {
-		writeError(w, http.StatusNotFound, "file not found")
-		return
-	}
-
-	if info.IsDir() {
-		writeError(w, http.StatusBadRequest, "directory listing not allowed")
-		return
-	}
-
-	// Read and serve the file directly
-	data, err := os.ReadFile(filePath)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to read file")
-		return
-	}
-
-	// Set content type based on file extension
-	ext := filepath.Ext(filePath)
-	contentType := "application/octet-stream"
-	switch ext {
-	case ".html", ".htm":
-		contentType = "text/html; charset=utf-8"
-	case ".css":
-		contentType = "text/css; charset=utf-8"
-	case ".js":
-		contentType = "application/javascript"
-	case ".json":
-		contentType = "application/json"
-	case ".png":
-		contentType = "image/png"
-	case ".jpg", ".jpeg":
-		contentType = "image/jpeg"
-	case ".gif":
-		contentType = "image/gif"
-	case ".svg":
-		contentType = "image/svg+xml"
-	}
-
-	w.Header().Set("Content-Type", contentType)
-	w.Write(data)
 }

@@ -2,11 +2,14 @@
 package main
 
 import (
+	"bytes"
 	"database/sql"
 	"encoding/base64"
 	"encoding/json"
 	"flag"
 	"fmt"
+	"io"
+	"net/http"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -27,6 +30,7 @@ var (
 var (
 	flagHost     = flag.String("host", "localhost", "Server host")
 	flagPort     = flag.Int("port", 3306, "Server port")
+	flagHTTPPort = flag.Int("http-port", 8080, "HTTP API port (for project deployment)")
 	flagUser     = flag.String("u", "", "Username")
 	flagPassword = flag.String("p", "", "Password")
 	flagDatabase = flag.String("d", "", "Database name")
@@ -267,7 +271,7 @@ func deployProject(projectPath string) error {
 	indexFile := filepath.Join(projectPath, "index.html")
 	if _, err := os.Stat(indexFile); err == nil {
 		fmt.Println("Uploading index.html...")
-		if err := uploadFile(indexFile, project.Name, "index.html"); err != nil {
+		if err := uploadFileViaMicroservice(indexFile, project.Name, "index.html"); err != nil {
 			return fmt.Errorf("failed to upload index.html: %w", err)
 		}
 	}
@@ -298,12 +302,12 @@ func uploadStaticFiles(dir, projectName string) error {
 			return err
 		}
 
-		return uploadFile(path, projectName, relPath)
+		return uploadFileViaMicroservice(path, projectName, relPath)
 	})
 }
 
-// uploadFile uploads a single file to the server
-func uploadFile(filePath, projectName, relPath string) error {
+// uploadFileViaMicroservice uploads a single file via microservice HTTP endpoint
+func uploadFileViaMicroservice(filePath, projectName, relPath string) error {
 	// Read file content
 	content, err := os.ReadFile(filePath)
 	if err != nil {
@@ -316,23 +320,52 @@ func uploadFile(filePath, projectName, relPath string) error {
 	// Determine file path on server
 	serverPath := fmt.Sprintf("projects/%s/%s", projectName, filepath.ToSlash(relPath))
 
-	// Create directory first
+	// Create directory first via microservice
 	dirPath := filepath.Dir(serverPath)
-	mkdirSQL := fmt.Sprintf("SELECT dirCreate('%s')", dirPath)
-	_, err = db.Exec(mkdirSQL)
-	if err != nil {
-		fmt.Printf("  Warning: failed to create directory %s: %v\n", dirPath, err)
+	if dirPath != "." && dirPath != "" {
+		mkdirPayload := map[string]interface{}{
+			"path": dirPath,
+		}
+		mkdirJSON, _ := json.Marshal(mkdirPayload)
+		mkdirURL := fmt.Sprintf("http://%s:%d/ms/_sys_ms/dir/create", *flagHost, httpPort())
+		req, _ := http.NewRequest("POST", mkdirURL, bytes.NewReader(mkdirJSON))
+		req.Header.Set("Content-Type", "application/json")
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			fmt.Printf("  Warning: failed to create directory %s: %v\n", dirPath, err)
+		} else {
+			resp.Body.Close()
+		}
 	}
 
-	// Upload via system microservice
-	uploadSQL := fmt.Sprintf("SELECT fileSave('%s', '%s', 'binary')", serverPath, encoded)
-	_, err = db.Exec(uploadSQL)
+	// Upload file via microservice
+	uploadPayload := map[string]interface{}{
+		"path":    serverPath,
+		"content": encoded,
+		"mode":    "binary",
+	}
+	uploadJSON, _ := json.Marshal(uploadPayload)
+	uploadURL := fmt.Sprintf("http://%s:%d/ms/_sys_ms/file/uploadBinary", *flagHost, httpPort())
+	req, _ := http.NewRequest("POST", uploadURL, bytes.NewReader(uploadJSON))
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
 		return fmt.Errorf("failed to upload %s: %w", relPath, err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode >= 400 {
+		body, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("failed to upload %s: %s", relPath, string(body))
 	}
 
 	fmt.Printf("  Uploaded: %s\n", relPath)
 	return nil
+}
+
+// httpPort returns the HTTP port based on server configuration
+func httpPort() int {
+	return *flagHTTPPort
 }
 
 // registerProject registers the project in _sys_projects table

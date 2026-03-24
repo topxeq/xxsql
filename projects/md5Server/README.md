@@ -43,8 +43,8 @@ This will:
 
 ### 3. Access the Service
 
-- **Web Interface**: `http://localhost:8080/projects/md5Server/index.html`
-- **API Endpoint**: `POST http://localhost:8080/ms/api/md5`
+- **Web Interface**: `GET /ms/_sys_ms/file/serve?path=projects/md5Server/index.html`
+- **API Endpoint**: `POST /ms/api/md5`
 
 ## API Usage
 

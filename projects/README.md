@@ -24,13 +24,13 @@ Each project folder contains:
 Use xxsqlc with the `--project` flag to deploy a project:
 
 ```bash
-xxsqlc --project ./projects/md5Server -host localhost -port 9527 -u admin -p password
+xxsqlc --project ./projects/md5Server -host localhost -port 3306 -protocol mysql -http-port 8080
 ```
 
 This will:
 1. Read `project.json` for project metadata
 2. Execute `setup.sql` to create tables and microservices
-3. Upload all files from `static/` to `projects/<project_name>/`
+3. Upload all files from `static/` via system microservices
 4. Register the project in `_sys_projects` table
 
 ## Project Configuration
@@ -65,9 +65,12 @@ INSERT INTO api (SKEY, SCRIPT) VALUES ('endpoint', '
 
 ### Static Files
 
-Files in `static/` are uploaded to `<data_dir>/projects/<project_name>/`.
+Files in `static/` are uploaded via system microservices to `<data_dir>/projects/<project_name>/`.
 
-Access at: `http://localhost:8080/projects/<project_name>/filename.html`
+Access static files via the file serve microservice:
+```
+GET /ms/_sys_ms/file/serve?path=projects/<project_name>/filename.html
+```
 
 ## System Tables
 
@@ -80,18 +83,20 @@ XxSql automatically creates these system tables on first startup:
 
 ## System Microservices
 
-Preset microservices for file operations:
+Preset microservices for file operations (all under `/ms/_sys_ms/`):
 
 | Endpoint | Description |
 |----------|-------------|
-| `POST /ms/_sys/file/upload` | Upload text file |
-| `POST /ms/_sys/file/uploadBinary` | Upload binary file (base64) |
-| `GET /ms/_sys/file/read?path=...` | Read file |
-| `POST /ms/_sys/file/delete` | Delete file |
-| `GET /ms/_sys/dir/list?path=...` | List directory |
-| `POST /ms/_sys/dir/create` | Create directory |
-| `POST /ms/_sys/project/check` | Check if project installed |
-| `POST /ms/_sys/project/register` | Register installed project |
+| `POST /file/upload` | Upload text file |
+| `POST /file/uploadBinary` | Upload binary file (base64) |
+| `GET /file/read?path=...` | Read file |
+| `POST /file/delete` | Delete file |
+| `GET /file/serve?path=...` | Serve static file with proper Content-Type |
+| `GET /dir/list?path=...` | List directory |
+| `POST /dir/create` | Create directory |
+| `POST /project/check` | Check if project installed |
+| `POST /project/register` | Register installed project |
+| `GET /health` | Health check |
 
 ## Creating a New Project
 

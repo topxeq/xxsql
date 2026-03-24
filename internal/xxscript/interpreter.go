@@ -1148,6 +1148,8 @@ func (i *Interpreter) callBuiltin(name string, args []Value) (Value, bool) {
 		return i.builtinDirCreate(args), true
 	case "dirDelete":
 		return i.builtinDirDelete(args), true
+	case "fileServe":
+		return i.builtinFileServe(args), true
 	default:
 		return nil, false
 	}
@@ -2768,6 +2770,77 @@ func (i *Interpreter) builtinDirDelete(args []Value) Value {
 	if err != nil {
 		return map[string]Value{"success": false, "error": fmt.Sprintf("failed to delete directory: %v", err)}
 	}
+
+	return map[string]Value{"success": true}
+}
+
+// builtinFileServe serves a static file with proper Content-Type
+// fileServe(path) - serves file with auto-detected content type
+func (i *Interpreter) builtinFileServe(args []Value) Value {
+	if len(args) == 0 {
+		return map[string]Value{"success": false, "error": "fileServe requires 1 argument (path)"}
+	}
+
+	path, ok := args[0].(string)
+	if !ok {
+		return map[string]Value{"success": false, "error": "path must be a string"}
+	}
+
+	// Resolve path relative to BaseDir
+	if i.ctx.BaseDir != "" {
+		path = filepath.Join(i.ctx.BaseDir, path)
+	}
+
+	// Check if HTTP writer is available
+	if i.ctx.HTTPWriter == nil {
+		return map[string]Value{"success": false, "error": "no HTTP context available"}
+	}
+
+	// Read file
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return map[string]Value{"success": false, "error": fmt.Sprintf("failed to read file: %v", err)}
+	}
+
+	// Determine content type based on extension
+	ext := strings.ToLower(filepath.Ext(path))
+	contentType := "application/octet-stream"
+	switch ext {
+	case ".html", ".htm":
+		contentType = "text/html; charset=utf-8"
+	case ".css":
+		contentType = "text/css; charset=utf-8"
+	case ".js":
+		contentType = "application/javascript"
+	case ".json":
+		contentType = "application/json"
+	case ".txt":
+		contentType = "text/plain; charset=utf-8"
+	case ".xml":
+		contentType = "application/xml"
+	case ".png":
+		contentType = "image/png"
+	case ".jpg", ".jpeg":
+		contentType = "image/jpeg"
+	case ".gif":
+		contentType = "image/gif"
+	case ".svg":
+		contentType = "image/svg+xml"
+	case ".ico":
+		contentType = "image/x-icon"
+	case ".woff", ".woff2":
+		contentType = "font/woff2"
+	case ".ttf":
+		contentType = "font/ttf"
+	case ".pdf":
+		contentType = "application/pdf"
+	case ".zip":
+		contentType = "application/zip"
+	}
+
+	// Set headers and write response
+	i.ctx.HTTPWriter.Header().Set("Content-Type", contentType)
+	i.ctx.HTTPWriter.Write(data)
 
 	return map[string]Value{"success": true}
 }

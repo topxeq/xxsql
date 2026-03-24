@@ -181,6 +181,24 @@ http.json({"status": "ok", "service": "xxsql"})
 		return fmt.Errorf("failed to insert health: %w", err)
 	}
 
+	// Static file serve microservice
+	serveScript := `
+var path = http.param("path")
+if (path == "") {
+    http.status(400)
+    http.json({"success": false, "error": "Missing path parameter"})
+} else {
+    var result = fileServe(path)
+    if (result.success == false) {
+        http.status(404)
+        http.json(result)
+    }
+}
+`
+	if err := InsertSystemMicroservice(engine, "file/serve", serveScript, "Serve static file with proper content type"); err != nil {
+		return fmt.Errorf("failed to insert file/serve: %w", err)
+	}
+
 	return nil
 }
 
