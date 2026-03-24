@@ -105,6 +105,7 @@ func run() int {
 
 	// Create and start server
 	srv = server.New(cfg, logger, engine)
+	srv.SetConfigPath(getConfigPath())
 	if err := srv.Start(); err != nil {
 		logger.Error("Failed to start server: %v", err)
 		return 1

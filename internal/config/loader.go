@@ -164,6 +164,20 @@ func (l *Loader) envKey(key string) string {
 	return l.envPrefix + key
 }
 
+// Save saves the configuration to a JSON file.
+func Save(cfg *Config, path string) error {
+	data, err := json.MarshalIndent(cfg, "", "  ")
+	if err != nil {
+		return fmt.Errorf("failed to marshal config: %w", err)
+	}
+
+	if err := os.WriteFile(path, data, 0644); err != nil {
+		return fmt.Errorf("failed to write config file: %w", err)
+	}
+
+	return nil
+}
+
 // Validate validates the configuration.
 func (c *Config) Validate() error {
 	// Validate network ports (only if service is enabled)

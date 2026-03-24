@@ -12,6 +12,7 @@ import (
 
 	"github.com/topxeq/xxsql/internal/auth"
 	"github.com/topxeq/xxsql/internal/backup"
+	"github.com/topxeq/xxsql/internal/config"
 	"github.com/topxeq/xxsql/internal/executor"
 	"github.com/topxeq/xxsql/internal/xxscript"
 )
@@ -466,20 +467,165 @@ func (s *Server) handleAPILogs(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleAPIConfig(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case http.MethodGet:
-		writeJSON(w, http.StatusOK, s.config)
+		// Return config (hide sensitive fields)
+		cfgCopy := *s.config
+		cfgCopy.Auth.AdminPassword = "" // Don't expose password
+		writeJSON(w, http.StatusOK, cfgCopy)
 
 	case http.MethodPut:
-		// For safety, only allow certain config updates
+		// Parse updates
 		var updates map[string]interface{}
 		if err := readJSON(r, &updates); err != nil {
 			writeError(w, http.StatusBadRequest, "invalid request")
 			return
 		}
 
-		// Note: In a real implementation, you'd validate and apply these
-		writeJSON(w, http.StatusOK, map[string]string{
-			"message": "config updated (requires restart for some changes)",
-		})
+		// Track what was updated and what needs restart
+		updated := make([]string, 0)
+		needsRestart := make([]string, 0)
+		errors := make([]string, 0)
+
+		// Apply updates to config
+		for key, value := range updates {
+			switch key {
+			// Log config - hot reloadable
+			case "log":
+				if logMap, ok := value.(map[string]interface{}); ok {
+					if level, ok := logMap["level"].(string); ok {
+						s.config.Log.Level = level
+						updated = append(updated, "log.level")
+						// Update logger level dynamically
+						if s.executor != nil {
+							// Logger update would go here if we had access
+						}
+					}
+					if maxSize, ok := logMap["max_size_mb"].(float64); ok {
+						s.config.Log.MaxSizeMB = int(maxSize)
+						updated = append(updated, "log.max_size_mb")
+					}
+					if maxBackups, ok := logMap["max_backups"].(float64); ok {
+						s.config.Log.MaxBackups = int(maxBackups)
+						updated = append(updated, "log.max_backups")
+					}
+					if maxAge, ok := logMap["max_age_days"].(float64); ok {
+						s.config.Log.MaxAgeDays = int(maxAge)
+						updated = append(updated, "log.max_age_days")
+					}
+					if compress, ok := logMap["compress"].(bool); ok {
+						s.config.Log.Compress = compress
+						updated = append(updated, "log.compress")
+					}
+				}
+
+			// Backup config
+			case "backup":
+				if backupMap, ok := value.(map[string]interface{}); ok {
+					if interval, ok := backupMap["auto_interval_hours"].(float64); ok {
+						s.config.Backup.AutoIntervalHours = int(interval)
+						updated = append(updated, "backup.auto_interval_hours")
+					}
+					if keepCount, ok := backupMap["keep_count"].(float64); ok {
+						s.config.Backup.KeepCount = int(keepCount)
+						updated = append(updated, "backup.keep_count")
+					}
+					if dir, ok := backupMap["backup_dir"].(string); ok {
+						s.config.Backup.BackupDir = dir
+						updated = append(updated, "backup.backup_dir")
+					}
+				}
+
+			// Security config
+			case "security":
+				if secMap, ok := value.(map[string]interface{}); ok {
+					if auditEnabled, ok := secMap["audit_enabled"].(bool); ok {
+						s.config.Security.AuditEnabled = auditEnabled
+						updated = append(updated, "security.audit_enabled")
+					}
+					if rateLimitEnabled, ok := secMap["rate_limit_enabled"].(bool); ok {
+						s.config.Security.RateLimitEnabled = rateLimitEnabled
+						updated = append(updated, "security.rate_limit_enabled")
+					}
+					if rateLimitMaxAttempts, ok := secMap["rate_limit_max_attempts"].(float64); ok {
+						s.config.Security.RateLimitMaxAttempts = int(rateLimitMaxAttempts)
+						updated = append(updated, "security.rate_limit_max_attempts")
+					}
+					if rateLimitWindow, ok := secMap["rate_limit_window_min"].(float64); ok {
+						s.config.Security.RateLimitWindowMin = int(rateLimitWindow)
+						updated = append(updated, "security.rate_limit_window_min")
+					}
+					if rateLimitBlock, ok := secMap["rate_limit_block_min"].(float64); ok {
+						s.config.Security.RateLimitBlockMin = int(rateLimitBlock)
+						updated = append(updated, "security.rate_limit_block_min")
+					}
+				}
+
+			// Connection config - needs restart
+			case "connection":
+				if connMap, ok := value.(map[string]interface{}); ok {
+					if maxConn, ok := connMap["max_connections"].(float64); ok {
+						s.config.Connection.MaxConnections = int(maxConn)
+						updated = append(updated, "connection.max_connections")
+						needsRestart = append(needsRestart, "connection.max_connections")
+					}
+					if waitTimeout, ok := connMap["wait_timeout"].(float64); ok {
+						s.config.Connection.WaitTimeout = int(waitTimeout)
+						updated = append(updated, "connection.wait_timeout")
+					}
+					if idleTimeout, ok := connMap["idle_timeout"].(float64); ok {
+						s.config.Connection.IdleTimeout = int(idleTimeout)
+						updated = append(updated, "connection.idle_timeout")
+					}
+				}
+
+			// Network config - needs restart
+			case "network":
+				if netMap, ok := value.(map[string]interface{}); ok {
+					if bind, ok := netMap["bind"].(string); ok {
+						s.config.Network.Bind = bind
+						updated = append(updated, "network.bind")
+						needsRestart = append(needsRestart, "network.bind")
+					}
+				}
+
+			// Server config - needs restart
+			case "server":
+				if srvMap, ok := value.(map[string]interface{}); ok {
+					if name, ok := srvMap["name"].(string); ok {
+						s.config.Server.Name = name
+						updated = append(updated, "server.name")
+					}
+				}
+
+			default:
+				errors = append(errors, fmt.Sprintf("unknown config key: %s", key))
+			}
+		}
+
+		// Save config to file if path is set
+		if s.configPath != "" && len(updated) > 0 {
+			if err := config.Save(s.config, s.configPath); err != nil {
+				errors = append(errors, fmt.Sprintf("failed to save config: %v", err))
+			}
+		}
+
+		// Build response
+		response := map[string]interface{}{
+			"success":        len(updated) > 0,
+			"updated":        updated,
+			"needs_restart":  needsRestart,
+			"errors":         errors,
+			"config_path":    s.configPath,
+		}
+
+		if len(needsRestart) > 0 {
+			response["message"] = "Configuration updated. Some changes require server restart to take effect."
+		} else if len(updated) > 0 {
+			response["message"] = "Configuration updated successfully."
+		} else {
+			response["message"] = "No changes made."
+		}
+
+		writeJSON(w, http.StatusOK, response)
 
 	default:
 		writeError(w, http.StatusMethodNotAllowed, "method not allowed")

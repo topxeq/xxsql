@@ -27,6 +27,7 @@ var assets embed.FS
 // Server represents the web management server.
 type Server struct {
 	config        *config.Config
+	configPath    string
 	engine        *storage.Engine
 	auth          *auth.Manager
 	apiKeyManager *auth.APIKeyManager
@@ -65,6 +66,11 @@ func NewServer(cfg *config.Config, engine *storage.Engine, authMgr *auth.Manager
 		sessions:      make(map[string]*Session),
 		startTime:     time.Now(),
 	}
+}
+
+// SetConfigPath sets the configuration file path.
+func (s *Server) SetConfigPath(path string) {
+	s.configPath = path
 }
 
 // Start starts the web server.

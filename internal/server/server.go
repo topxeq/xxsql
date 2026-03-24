@@ -25,6 +25,7 @@ import (
 // Server represents the XxSql server.
 type Server struct {
 	config     *config.Config
+	configPath string
 	logger     *log.Logger
 	auth       *auth.Manager
 	backup     *backup.Manager
@@ -78,6 +79,11 @@ func New(cfg *config.Config, logger *log.Logger, engine *storage.Engine) *Server
 	}
 
 	return s
+}
+
+// SetConfigPath sets the configuration file path for saving updates.
+func (s *Server) SetConfigPath(path string) {
+	s.configPath = path
 }
 
 // Start starts the server.
@@ -608,6 +614,7 @@ func (s *HTTPServer) Start() error {
 
 	// Create web server
 	s.web = web.NewServer(s.server.config, s.server.engine, s.server.auth, s.server.backup)
+	s.web.SetConfigPath(s.server.configPath)
 	if err := s.web.Start(); err != nil {
 		atomic.StoreInt32(&s.running, 0)
 		return fmt.Errorf("failed to start web server: %w", err)

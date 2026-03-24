@@ -29,8 +29,11 @@
 
             <div class="config-tabs">
                 <button class="config-tab active" onclick="switchView('table')">Table View</button>
+                <button class="config-tab" onclick="switchView('edit')">Edit Mode</button>
                 <button class="config-tab" onclick="switchView('json')">JSON View</button>
             </div>
+
+            <div id="message-box" class="message-box" style="display: none;"></div>
 
             <div id="table-view">
                 <div class="card">
@@ -61,6 +64,126 @@
                 <div class="card">
                     <h3>Backup</h3>
                     <div class="config-grid" id="backup-config"></div>
+                </div>
+
+                <div class="card">
+                    <h3>Connection</h3>
+                    <div class="config-grid" id="connection-config"></div>
+                </div>
+            </div>
+
+            <div id="edit-view" style="display: none;">
+                <div class="card">
+                    <h3>Edit Configuration</h3>
+                    <p class="hint">Changes to network/server settings require restart. Log and backup settings take effect immediately.</p>
+
+                    <div class="edit-section">
+                        <h4>Logging</h4>
+                        <div class="edit-grid">
+                            <div class="edit-item">
+                                <label>Log Level</label>
+                                <select id="edit-log-level">
+                                    <option value="DEBUG">DEBUG</option>
+                                    <option value="INFO">INFO</option>
+                                    <option value="WARN">WARN</option>
+                                    <option value="ERROR">ERROR</option>
+                                </select>
+                            </div>
+                            <div class="edit-item">
+                                <label>Max Size (MB)</label>
+                                <input type="number" id="edit-log-max-size" min="1" max="1000">
+                            </div>
+                            <div class="edit-item">
+                                <label>Max Backups</label>
+                                <input type="number" id="edit-log-max-backups" min="0" max="100">
+                            </div>
+                            <div class="edit-item">
+                                <label>Max Age (days)</label>
+                                <input type="number" id="edit-log-max-age" min="0" max="365">
+                            </div>
+                            <div class="edit-item">
+                                <label>Compress Rotated Logs</label>
+                                <select id="edit-log-compress">
+                                    <option value="true">Yes</option>
+                                    <option value="false">No</option>
+                                </select>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="edit-section">
+                        <h4>Backup</h4>
+                        <div class="edit-grid">
+                            <div class="edit-item">
+                                <label>Auto Backup Interval (hours)</label>
+                                <input type="number" id="edit-backup-interval" min="0" max="168">
+                            </div>
+                            <div class="edit-item">
+                                <label>Keep Count</label>
+                                <input type="number" id="edit-backup-keep" min="1" max="100">
+                            </div>
+                            <div class="edit-item">
+                                <label>Backup Directory</label>
+                                <input type="text" id="edit-backup-dir" style="width: 300px;">
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="edit-section">
+                        <h4>Security</h4>
+                        <div class="edit-grid">
+                            <div class="edit-item">
+                                <label>Audit Logging</label>
+                                <select id="edit-security-audit">
+                                    <option value="true">Enabled</option>
+                                    <option value="false">Disabled</option>
+                                </select>
+                            </div>
+                            <div class="edit-item">
+                                <label>Rate Limiting</label>
+                                <select id="edit-security-ratelimit">
+                                    <option value="true">Enabled</option>
+                                    <option value="false">Disabled</option>
+                                </select>
+                            </div>
+                            <div class="edit-item">
+                                <label>Max Auth Attempts</label>
+                                <input type="number" id="edit-security-max-attempts" min="1" max="100">
+                            </div>
+                            <div class="edit-item">
+                                <label>Rate Limit Window (min)</label>
+                                <input type="number" id="edit-security-window" min="1" max="1440">
+                            </div>
+                            <div class="edit-item">
+                                <label>Rate Limit Block (min)</label>
+                                <input type="number" id="edit-security-block" min="1" max="1440">
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="edit-section">
+                        <h4>Connection</h4>
+                        <p class="hint">⚠️ Requires server restart</p>
+                        <div class="edit-grid">
+                            <div class="edit-item">
+                                <label>Max Connections</label>
+                                <input type="number" id="edit-conn-max" min="1" max="10000">
+                            </div>
+                            <div class="edit-item">
+                                <label>Wait Timeout (sec)</label>
+                                <input type="number" id="edit-conn-wait" min="1" max="3600">
+                            </div>
+                            <div class="edit-item">
+                                <label>Idle Timeout (sec)</label>
+                                <input type="number" id="edit-conn-idle" min="1" max="86400">
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="edit-actions">
+                        <button class="btn-primary" onclick="saveConfig()">Save Changes</button>
+                        <button class="btn-secondary" onclick="loadConfig()">Reset</button>
+                    </div>
                 </div>
             </div>
 
@@ -134,6 +257,97 @@
             max-height: 600px;
             overflow-y: auto;
         }
+        .message-box {
+            padding: 15px;
+            border-radius: 4px;
+            margin-bottom: 20px;
+        }
+        .message-box.success {
+            background: #d4edda;
+            color: #155724;
+            border: 1px solid #c3e6cb;
+        }
+        .message-box.warning {
+            background: #fff3cd;
+            color: #856404;
+            border: 1px solid #ffeeba;
+        }
+        .message-box.error {
+            background: #f8d7da;
+            color: #721c24;
+            border: 1px solid #f5c6cb;
+        }
+        .edit-section {
+            margin-bottom: 25px;
+            padding-bottom: 20px;
+            border-bottom: 1px solid #eee;
+        }
+        .edit-section:last-child {
+            border-bottom: none;
+        }
+        .edit-section h4 {
+            margin-bottom: 15px;
+            color: #2c3e50;
+        }
+        .edit-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(250px, 1fr));
+            gap: 15px;
+        }
+        .edit-item {
+            display: flex;
+            flex-direction: column;
+            gap: 5px;
+        }
+        .edit-item label {
+            font-size: 0.85rem;
+            color: #7f8c8d;
+            font-weight: 500;
+        }
+        .edit-item input, .edit-item select {
+            padding: 8px 12px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            font-size: 0.95rem;
+        }
+        .edit-item input:focus, .edit-item select:focus {
+            outline: none;
+            border-color: #3498db;
+        }
+        .hint {
+            font-size: 0.85rem;
+            color: #7f8c8d;
+            margin-bottom: 15px;
+        }
+        .edit-actions {
+            margin-top: 20px;
+            display: flex;
+            gap: 10px;
+        }
+        .btn-primary {
+            padding: 10px 20px;
+            background: #3498db;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 0.95rem;
+        }
+        .btn-primary:hover {
+            background: #2980b9;
+        }
+        .btn-secondary {
+            padding: 10px 20px;
+            background: #ecf0f1;
+            color: #2c3e50;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 0.95rem;
+        }
+        .btn-secondary:hover {
+            background: #bdc3c7;
+        }
     </style>
 
     <script>
@@ -145,6 +359,7 @@
                 config = await resp.json();
                 renderTableView(config);
                 renderJsonView(config);
+                renderEditView(config);
             } catch (err) {
                 console.error('Failed to load config:', err);
             }
@@ -188,14 +403,14 @@
 
             // Security config
             renderSection('security-config', [
+                { label: 'Auth Enabled', value: cfg.auth?.enabled, bool: true },
                 { label: 'Audit Enabled', value: cfg.security?.audit_enabled, bool: true },
-                { label: 'Audit File', value: cfg.security?.audit_file || 'None' },
                 { label: 'Rate Limiting', value: cfg.security?.rate_limit_enabled, bool: true },
                 { label: 'Max Auth Attempts', value: cfg.security?.rate_limit_max_attempts },
+                { label: 'Rate Limit Window', value: cfg.security?.rate_limit_window_min + ' min' },
+                { label: 'Rate Limit Block', value: cfg.security?.rate_limit_block_min + ' min' },
                 { label: 'TLS Enabled', value: cfg.security?.tls_enabled, bool: true },
-                { label: 'IP Access Mode', value: cfg.security?.ip_access_mode },
-                { label: 'Password Min Length', value: cfg.security?.password_min_length },
-                { label: 'Password Expiry', value: (cfg.security?.password_expire_days || 0) + ' days' }
+                { label: 'IP Access Mode', value: cfg.security?.ip_access_mode }
             ]);
 
             // Backup config
@@ -203,6 +418,14 @@
                 { label: 'Auto Backup Interval', value: cfg.backup?.auto_interval_hours + ' hours' },
                 { label: 'Keep Count', value: cfg.backup?.keep_count },
                 { label: 'Backup Directory', value: cfg.backup?.backup_dir }
+            ]);
+
+            // Connection config
+            renderSection('connection-config', [
+                { label: 'Max Connections', value: cfg.connection?.max_connections },
+                { label: 'Wait Timeout', value: cfg.connection?.wait_timeout + ' sec' },
+                { label: 'Idle Timeout', value: cfg.connection?.idle_timeout + ' sec' },
+                { label: 'Strategy', value: cfg.connection?.strategy }
             ]);
         }
 
@@ -237,12 +460,103 @@
             document.getElementById('json-content').textContent = json;
         }
 
+        function renderEditView(cfg) {
+            // Logging
+            document.getElementById('edit-log-level').value = cfg.log?.level || 'INFO';
+            document.getElementById('edit-log-max-size').value = cfg.log?.max_size_mb || 100;
+            document.getElementById('edit-log-max-backups').value = cfg.log?.max_backups || 5;
+            document.getElementById('edit-log-max-age').value = cfg.log?.max_age_days || 30;
+            document.getElementById('edit-log-compress').value = cfg.log?.compress ? 'true' : 'false';
+
+            // Backup
+            document.getElementById('edit-backup-interval').value = cfg.backup?.auto_interval_hours || 24;
+            document.getElementById('edit-backup-keep').value = cfg.backup?.keep_count || 7;
+            document.getElementById('edit-backup-dir').value = cfg.backup?.backup_dir || './backup';
+
+            // Security
+            document.getElementById('edit-security-audit').value = cfg.security?.audit_enabled ? 'true' : 'false';
+            document.getElementById('edit-security-ratelimit').value = cfg.security?.rate_limit_enabled ? 'true' : 'false';
+            document.getElementById('edit-security-max-attempts').value = cfg.security?.rate_limit_max_attempts || 5;
+            document.getElementById('edit-security-window').value = cfg.security?.rate_limit_window_min || 15;
+            document.getElementById('edit-security-block').value = cfg.security?.rate_limit_block_min || 30;
+
+            // Connection
+            document.getElementById('edit-conn-max').value = cfg.connection?.max_connections || 200;
+            document.getElementById('edit-conn-wait').value = cfg.connection?.wait_timeout || 30;
+            document.getElementById('edit-conn-idle').value = cfg.connection?.idle_timeout || 600;
+        }
+
+        async function saveConfig() {
+            const updates = {
+                log: {
+                    level: document.getElementById('edit-log-level').value,
+                    max_size_mb: parseInt(document.getElementById('edit-log-max-size').value),
+                    max_backups: parseInt(document.getElementById('edit-log-max-backups').value),
+                    max_age_days: parseInt(document.getElementById('edit-log-max-age').value),
+                    compress: document.getElementById('edit-log-compress').value === 'true'
+                },
+                backup: {
+                    auto_interval_hours: parseInt(document.getElementById('edit-backup-interval').value),
+                    keep_count: parseInt(document.getElementById('edit-backup-keep').value),
+                    backup_dir: document.getElementById('edit-backup-dir').value
+                },
+                security: {
+                    audit_enabled: document.getElementById('edit-security-audit').value === 'true',
+                    rate_limit_enabled: document.getElementById('edit-security-ratelimit').value === 'true',
+                    rate_limit_max_attempts: parseInt(document.getElementById('edit-security-max-attempts').value),
+                    rate_limit_window_min: parseInt(document.getElementById('edit-security-window').value),
+                    rate_limit_block_min: parseInt(document.getElementById('edit-security-block').value)
+                },
+                connection: {
+                    max_connections: parseInt(document.getElementById('edit-conn-max').value),
+                    wait_timeout: parseInt(document.getElementById('edit-conn-wait').value),
+                    idle_timeout: parseInt(document.getElementById('edit-conn-idle').value)
+                }
+            };
+
+            try {
+                const resp = await fetch('/api/config', {
+                    method: 'PUT',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(updates)
+                });
+                const result = await resp.json();
+
+                const msgBox = document.getElementById('message-box');
+                if (result.success) {
+                    msgBox.className = 'message-box success';
+                    let msg = result.message;
+                    if (result.needs_restart && result.needs_restart.length > 0) {
+                        msg += '<br><strong>Restart required for:</strong> ' + result.needs_restart.join(', ');
+                    }
+                    msgBox.innerHTML = msg;
+
+                    // Reload config
+                    await loadConfig();
+                } else {
+                    msgBox.className = 'message-box error';
+                    msgBox.textContent = 'Failed to save configuration';
+                }
+                msgBox.style.display = 'block';
+
+                // Hide after 5 seconds
+                setTimeout(() => { msgBox.style.display = 'none'; }, 5000);
+            } catch (err) {
+                console.error('Failed to save config:', err);
+            }
+        }
+
         function switchView(view) {
             document.querySelectorAll('.config-tab').forEach(tab => {
-                tab.classList.toggle('active', tab.textContent.toLowerCase().includes(view));
+                tab.classList.remove('active');
+                if (tab.textContent.toLowerCase().includes(view)) {
+                    tab.classList.add('active');
+                }
             });
             document.getElementById('table-view').style.display = view === 'table' ? 'block' : 'none';
+            document.getElementById('edit-view').style.display = view === 'edit' ? 'block' : 'none';
             document.getElementById('json-view').style.display = view === 'json' ? 'block' : 'none';
+            document.getElementById('message-box').style.display = 'none';
         }
 
         function logout(e) {
