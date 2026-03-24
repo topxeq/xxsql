@@ -13,6 +13,7 @@ A lightweight SQL database implemented in pure Go, featuring a B+ tree storage e
 | Document | Description |
 |----------|-------------|
 | [Reference Manual](docs/REFERENCE.md) | Complete SQL syntax, data types, functions, and features reference |
+| [Microservices Guide](docs/microservices.md) | Microservices and Projects: XxScript HTTP endpoints, project management |
 | [Maintenance Manual](docs/MAINTENANCE.md) | Installation, configuration, upgrade, backup, migration, and administration guide |
 | [Testing Guide](docs/TESTING.md) | Testing guidelines and procedures |
 | [Contributing Guide](CONTRIBUTING.md) | How to contribute to XxSql |
@@ -329,6 +330,14 @@ The following comparison highlights key differences between XxSql and SQLite acr
 - **CLI Client** - Interactive REPL with readline support
 - **Web Management** - Browser-based admin interface
 - **Backup/Recovery** - Full backup with compression support
+
+### Microservices & Projects
+
+- **XxScript Microservices** - Create HTTP endpoints with embedded XxScript
+- **Project Management** - Organize files, static sites, and microservices
+- **ZIP Import** - Deploy projects from ZIP archives with setup.sql
+- **Built-in HTTP Object** - Handle requests and responses in scripts
+- **Database Access** - Query and modify data from microservices
 
 ## Quick Start
 
