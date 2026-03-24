@@ -877,6 +877,7 @@ func (s *Server) handleMicroservice(w http.ResponseWriter, r *http.Request) {
 	ctx.Engine = s.engine
 	ctx.HTTPWriter = w
 	ctx.HTTPRequest = r
+	ctx.BaseDir = s.config.Server.DataDir // Set base directory for file operations
 	ctx.SetupBuiltins()
 
 	// Execute the script

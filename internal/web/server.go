@@ -11,6 +11,8 @@ import (
 	"io/fs"
 	"net"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -121,6 +123,9 @@ func (s *Server) Start() error {
 
 	// Microservice routes (XxScript)
 	mux.HandleFunc("/ms/", s.handleMicroservice)
+
+	// Project static files
+	mux.HandleFunc("/projects/", s.handleProjectFiles)
 
 	// Create server
 	addr := fmt.Sprintf("%s:%d", s.config.Network.Bind, s.config.Network.HTTPPort)
@@ -254,6 +259,7 @@ func (s *Server) authMiddleware(next http.Handler) http.Handler {
 
 		// Allow static files and login without auth
 		if strings.HasPrefix(r.URL.Path, "/static/") ||
+			strings.HasPrefix(r.URL.Path, "/projects/") ||
 			r.URL.Path == "/login" ||
 			r.URL.Path == "/api/login" {
 			next.ServeHTTP(w, r)
@@ -408,4 +414,53 @@ func readJSON(r *http.Request, v interface{}) error {
 		return err
 	}
 	return json.Unmarshal(data, v)
+}
+
+// handleProjectFiles serves static files from deployed projects.
+func (s *Server) handleProjectFiles(w http.ResponseWriter, r *http.Request) {
+	// Path format: /projects/{projectName}/...
+	path := strings.TrimPrefix(r.URL.Path, "/projects/")
+	if path == "" {
+		http.Error(w, "Project name required", http.StatusBadRequest)
+		return
+	}
+
+	// Split path into project name and file path
+	parts := strings.SplitN(path, "/", 2)
+	projectName := parts[0]
+	var filePath string
+	if len(parts) > 1 {
+		filePath = parts[1]
+	} else {
+		filePath = "index.html"
+	}
+
+	// Build full file path
+	fullPath := filepath.Join(s.config.Server.DataDir, "projects", projectName, filePath)
+
+	// Security: prevent directory traversal
+	if strings.Contains(filePath, "..") {
+		http.Error(w, "Invalid path", http.StatusBadRequest)
+		return
+	}
+
+	// Check if file exists
+	info, err := os.Stat(fullPath)
+	if err != nil {
+		http.Error(w, "File not found", http.StatusNotFound)
+		return
+	}
+
+	// If it's a directory, try index.html
+	if info.IsDir() {
+		fullPath = filepath.Join(fullPath, "index.html")
+		info, err = os.Stat(fullPath)
+		if err != nil {
+			http.Error(w, "File not found", http.StatusNotFound)
+			return
+		}
+	}
+
+	// Serve the file
+	http.ServeFile(w, r, fullPath)
 }
