@@ -46,6 +46,7 @@ var (
 	flagReset    = flag.Bool("reset", false, "Reset server to initial state (admin only)")
 	flagResetForce = flag.Bool("force", false, "Force reset without confirmation prompt")
 	flagResetFull = flag.Bool("full", false, "Full reset including user accounts (keeps admin)")
+	flagUndeploy  = flag.String("undeploy", "", "Undeploy/remove a project by name")
 )
 
 // Global state
@@ -132,6 +133,15 @@ func main() {
 	if *flagReset {
 		if err := resetServer(); err != nil {
 			fmt.Fprintf(os.Stderr, "Reset failed: %v\n", err)
+			os.Exit(1)
+		}
+		os.Exit(0)
+	}
+
+	// Handle undeploy mode
+	if *flagUndeploy != "" {
+		if err := undeployProject(*flagUndeploy); err != nil {
+			fmt.Fprintf(os.Stderr, "Undeploy failed: %v\n", err)
 			os.Exit(1)
 		}
 		os.Exit(0)
@@ -472,5 +482,105 @@ func resetServer() error {
 	}
 	fmt.Println("\nServer has been reset to initial state.")
 
+	return nil
+}
+
+// undeployProject removes a deployed project from the server
+func undeployProject(projectName string) error {
+	fmt.Printf("Undeploying project: %s\n", projectName)
+
+	// Query project info from _sys_projects
+	var tables string
+	err := db.QueryRow("SELECT tables FROM _sys_projects WHERE name = ?", projectName).Scan(&tables)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			fmt.Printf("Warning: Project '%s' not found in registry, proceeding anyway\n", projectName)
+		} else {
+			fmt.Printf("Warning: Failed to query project info: %v\n", err)
+		}
+	} else {
+		fmt.Printf("Project tables: %s\n", tables)
+	}
+
+	// Drop project tables
+	if tables != "" {
+		tableList := strings.Split(tables, ",")
+		for _, tbl := range tableList {
+			tbl = strings.TrimSpace(tbl)
+			if tbl == "" {
+				continue
+			}
+			fmt.Printf("  Dropping table: %s... ", tbl)
+			_, err := db.Exec(fmt.Sprintf("DROP TABLE IF EXISTS %s", tbl))
+			if err != nil {
+				fmt.Printf("failed: %v\n", err)
+			} else {
+				fmt.Println("ok")
+			}
+		}
+	}
+
+	// Delete project files via microservice
+	fmt.Println("Deleting project files...")
+	deleteURL := fmt.Sprintf("http://%s:%d/ms/_sys_ms/dir/delete", *flagHost, httpPort())
+	deletePayload := map[string]interface{}{
+		"path":      fmt.Sprintf("projects/%s", projectName),
+		"recursive": true,
+	}
+	deleteJSON, _ := json.Marshal(deletePayload)
+
+	req, err := http.NewRequest("POST", deleteURL, bytes.NewReader(deleteJSON))
+	if err != nil {
+		return fmt.Errorf("failed to create delete request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		fmt.Printf("Warning: Failed to delete project files: %v\n", err)
+	} else {
+		defer resp.Body.Close()
+		if resp.StatusCode == http.StatusOK {
+			fmt.Println("  Project files deleted")
+		} else {
+			body, _ := io.ReadAll(resp.Body)
+			fmt.Printf("Warning: Failed to delete project files: %s\n", string(body))
+		}
+	}
+
+	// Unregister project from _sys_projects via microservice
+	fmt.Println("Unregistering project...")
+	unregisterURL := fmt.Sprintf("http://%s:%d/ms/_sys_ms/project/unregister", *flagHost, httpPort())
+	unregisterPayload := map[string]interface{}{
+		"name": projectName,
+	}
+	unregisterJSON, _ := json.Marshal(unregisterPayload)
+
+	req, err = http.NewRequest("POST", unregisterURL, bytes.NewReader(unregisterJSON))
+	if err != nil {
+		return fmt.Errorf("failed to create unregister request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	resp, err = http.DefaultClient.Do(req)
+	if err != nil {
+		// Fallback: delete directly via SQL
+		_, err = db.Exec("DELETE FROM _sys_projects WHERE name = ?", projectName)
+		if err != nil {
+			fmt.Printf("Warning: Failed to unregister project: %v\n", err)
+		} else {
+			fmt.Println("  Project unregistered")
+		}
+	} else {
+		defer resp.Body.Close()
+		if resp.StatusCode == http.StatusOK {
+			fmt.Println("  Project unregistered")
+		} else {
+			body, _ := io.ReadAll(resp.Body)
+			fmt.Printf("Warning: Failed to unregister project: %s\n", string(body))
+		}
+	}
+
+	fmt.Printf("\n✓ Project '%s' has been undeployed successfully!\n", projectName)
 	return nil
 }

@@ -139,6 +139,25 @@ if (data == null || data.path == null) {
 		return fmt.Errorf("failed to insert dir/create: %w", err)
 	}
 
+	// Directory delete microservice
+	dirDeleteScript := `
+var data = http.bodyJSON()
+if (data == null || data.path == null) {
+    http.status(400)
+    http.json({"success": false, "error": "Missing path"})
+} else {
+    var recursive = true
+    if (data.recursive != null) {
+        recursive = data.recursive
+    }
+    var result = dirDelete(data.path, recursive)
+    http.json(result)
+}
+`
+	if err := InsertSystemMicroservice(engine, "dir/delete", dirDeleteScript, "Delete directory on server"); err != nil {
+		return fmt.Errorf("failed to insert dir/delete: %w", err)
+	}
+
 	// Project check microservice
 	projectCheckScript := `
 var data = http.bodyJSON()
@@ -171,6 +190,21 @@ if (data == null || data.name == null) {
 `
 	if err := InsertSystemMicroservice(engine, "project/register", projectRegisterScript, "Register installed project"); err != nil {
 		return fmt.Errorf("failed to insert project/register: %w", err)
+	}
+
+	// Project unregister microservice
+	projectUnregisterScript := `
+var data = http.bodyJSON()
+if (data == null || data.name == null) {
+    http.status(400)
+    http.json({"success": false, "error": "Missing name"})
+} else {
+    var result = db.exec("DELETE FROM _sys_projects WHERE name = '" + data.name + "'")
+    http.json({"success": true, "affected": result.affected})
+}
+`
+	if err := InsertSystemMicroservice(engine, "project/unregister", projectUnregisterScript, "Unregister project"); err != nil {
+		return fmt.Errorf("failed to insert project/unregister: %w", err)
 	}
 
 	// Health check microservice
