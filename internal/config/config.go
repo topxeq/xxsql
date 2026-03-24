@@ -249,8 +249,9 @@ func DefaultConfig() *Config {
 			Compress:   false,
 		},
 		Auth: AuthConfig{
-			Enabled:       false,
-			AdminUser:     "admin",
+			Enabled:          true,
+			AdminUser:        "admin",
+			AdminPassword:    "xxsql",
 			SessionTimeouSec: 3600,
 		},
 		Security: SecurityConfig{

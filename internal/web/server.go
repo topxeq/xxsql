@@ -254,7 +254,7 @@ func (s *Server) authMiddleware(next http.Handler) http.Handler {
 			return
 		}
 
-		// For API routes and microservice routes, check session or API key
+		// For API routes and microservice routes, check session, API key, or Basic Auth
 		if strings.HasPrefix(r.URL.Path, "/api/") || strings.HasPrefix(r.URL.Path, "/ms/") {
 			// First, try session authentication
 			session := s.getSession(r)
@@ -267,6 +267,11 @@ func (s *Server) authMiddleware(next http.Handler) http.Handler {
 
 			// Try API key authentication
 			if s.authenticateAPIKey(w, r, next) {
+				return
+			}
+
+			// Try HTTP Basic Auth
+			if s.authenticateBasicAuth(w, r, next) {
 				return
 			}
 
@@ -285,6 +290,25 @@ func (s *Server) authMiddleware(next http.Handler) http.Handler {
 		r = r.WithContext(setUsername(r.Context(), session.Username))
 		next.ServeHTTP(w, r)
 	})
+}
+
+// authenticateBasicAuth authenticates using HTTP Basic Auth.
+func (s *Server) authenticateBasicAuth(w http.ResponseWriter, r *http.Request, next http.Handler) bool {
+	username, password, ok := r.BasicAuth()
+	if !ok {
+		return false
+	}
+
+	// Validate credentials
+	session, err := s.auth.Authenticate(username, password)
+	if err != nil {
+		return false
+	}
+
+	// Set username in context
+	r = r.WithContext(setUsername(r.Context(), session.Username))
+	next.ServeHTTP(w, r)
+	return true
 }
 
 // authenticateAPIKey authenticates using API key header.
