@@ -16179,3 +16179,108 @@ func TestGetPragmaValuePaths(t *testing.T) {
 		}
 	}
 }
+
+// TestSQLCryptoFunctions tests MD5, SHA1, SHA256, SHA512 SQL functions
+func TestSQLCryptoFunctions(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "xxsql-crypto-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	engine := storage.NewEngine(tmpDir)
+	if err := engine.Open(); err != nil {
+		t.Fatalf("Failed to open engine: %v", err)
+	}
+	defer engine.Close()
+
+	exec := NewExecutor(engine)
+	exec.SetDatabase("testdb")
+
+	// Create test table
+	_, _ = exec.Execute("CREATE TABLE crypto_test (id INT, data VARCHAR(100))")
+	_, _ = exec.Execute("INSERT INTO crypto_test VALUES (1, 'hello')")
+	_, _ = exec.Execute("INSERT INTO crypto_test VALUES (2, 'world')")
+
+	tests := []struct {
+		query    string
+		expected string
+	}{
+		{
+			"SELECT MD5('hello')",
+			"5d41402abc4b2a76b9719d911017c592",
+		},
+		{
+			"SELECT SHA1('hello')",
+			"aaf4c61ddcc5e8a2dabede0f3b482cd9aea9434d",
+		},
+		{
+			"SELECT SHA256('hello')",
+			"2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824",
+		},
+		{
+			"SELECT SHA512('hello')",
+			"9b71d224bd62f3785d96d46ad3ea3d73319bfbc2890caadae2dff72519673ca72323c3d99ba5c11d7c7acc6e14b8c5da0c4663475c2e5c3adef46f73bcdec043",
+		},
+		{
+			"SELECT MD5(data) FROM crypto_test WHERE id = 1",
+			"5d41402abc4b2a76b9719d911017c592",
+		},
+		{
+			"SELECT SHA256(data) FROM crypto_test WHERE id = 2",
+			"486ea46224d1bb4fb680f34f7c9ad96a8f24ec88be73ea8e5a6c65260e9cb8a7",
+		},
+	}
+
+	for _, tt := range tests {
+		result, err := exec.Execute(tt.query)
+		if err != nil {
+			t.Errorf("Query failed: %s, error: %v", tt.query, err)
+			continue
+		}
+		if len(result.Rows) == 0 {
+			t.Errorf("Query returned no rows: %s", tt.query)
+			continue
+		}
+		got := fmt.Sprintf("%v", result.Rows[0][0])
+		if got != tt.expected {
+			t.Errorf("Query: %s\nExpected: %s\nGot: %s", tt.query, tt.expected, got)
+		} else {
+			t.Logf("Query: %s -> OK", tt.query)
+		}
+	}
+
+	// Test with NULL
+	nullTests := []string{
+		"SELECT MD5(NULL)",
+		"SELECT SHA1(NULL)",
+		"SELECT SHA256(NULL)",
+		"SELECT SHA512(NULL)",
+	}
+
+	for _, query := range nullTests {
+		result, err := exec.Execute(query)
+		if err != nil {
+			t.Logf("Query failed: %s, error: %v", query, err)
+		} else if len(result.Rows) > 0 {
+			t.Logf("Query: %s -> %v (NULL expected)", query, result.Rows[0][0])
+		}
+	}
+
+	// Test with numbers
+	numTests := []string{
+		"SELECT MD5(123)",
+		"SELECT SHA256(12345)",
+	}
+
+	for _, query := range numTests {
+		result, err := exec.Execute(query)
+		if err != nil {
+			t.Errorf("Query failed: %s, error: %v", query, err)
+			continue
+		}
+		if len(result.Rows) > 0 {
+			t.Logf("Query: %s -> %v", query, result.Rows[0][0])
+		}
+	}
+}

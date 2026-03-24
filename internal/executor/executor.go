@@ -3,7 +3,12 @@ package executor
 
 import (
 	"bufio"
+	"crypto/md5"
+	"crypto/sha1"
+	"crypto/sha256"
+	"crypto/sha512"
 	"encoding/csv"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -9463,6 +9468,66 @@ func (e *Executor) evaluateFunction(fc *sql.FunctionCall, r *row.Row, columnMap 
 			return nil, err
 		}
 		return blob.Data, nil
+
+	case "MD5":
+		if len(fc.Args) == 0 {
+			return nil, fmt.Errorf("MD5 requires 1 argument")
+		}
+		arg, err := evalExpr(fc.Args[0])
+		if err != nil {
+			return nil, err
+		}
+		if arg == nil {
+			return nil, nil
+		}
+		strVal := fmt.Sprintf("%v", arg)
+		hash := md5.Sum([]byte(strVal))
+		return hex.EncodeToString(hash[:]), nil
+
+	case "SHA1":
+		if len(fc.Args) == 0 {
+			return nil, fmt.Errorf("SHA1 requires 1 argument")
+		}
+		arg, err := evalExpr(fc.Args[0])
+		if err != nil {
+			return nil, err
+		}
+		if arg == nil {
+			return nil, nil
+		}
+		strVal := fmt.Sprintf("%v", arg)
+		hash := sha1.Sum([]byte(strVal))
+		return hex.EncodeToString(hash[:]), nil
+
+	case "SHA256":
+		if len(fc.Args) == 0 {
+			return nil, fmt.Errorf("SHA256 requires 1 argument")
+		}
+		arg, err := evalExpr(fc.Args[0])
+		if err != nil {
+			return nil, err
+		}
+		if arg == nil {
+			return nil, nil
+		}
+		strVal := fmt.Sprintf("%v", arg)
+		hash := sha256.Sum256([]byte(strVal))
+		return hex.EncodeToString(hash[:]), nil
+
+	case "SHA512":
+		if len(fc.Args) == 0 {
+			return nil, fmt.Errorf("SHA512 requires 1 argument")
+		}
+		arg, err := evalExpr(fc.Args[0])
+		if err != nil {
+			return nil, err
+		}
+		if arg == nil {
+			return nil, nil
+		}
+		strVal := fmt.Sprintf("%v", arg)
+		hash := sha512.Sum512([]byte(strVal))
+		return hex.EncodeToString(hash[:]), nil
 
 	case "LENGTH", "OCTET_LENGTH":
 		if len(fc.Args) == 0 {

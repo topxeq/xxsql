@@ -582,6 +582,10 @@ SELECT LEAST(10, 20, 30);     -- 10
 | `CAST(expr AS type)` | Type conversion |
 | `HEX(value)` | Convert to hexadecimal |
 | `UNHEX(string)` | Convert hex to binary |
+| `MD5(string)` | MD5 hash (hex string) |
+| `SHA1(string)` | SHA1 hash (hex string) |
+| `SHA256(string)` | SHA256 hash (hex string) |
+| `SHA512(string)` | SHA512 hash (hex string) |
 | `UUID()` | Generate UUID |
 | `LAST_INSERT_ID()` | Last auto-increment ID |
 | `ROW_COUNT()` | Rows affected by last statement |
@@ -597,6 +601,8 @@ SELECT TYPEOF('hello');           -- 'VARCHAR'
 SELECT CAST('123' AS INT);        -- 123
 SELECT HEX('Hello');              -- '48656c6c6f'
 SELECT UNHEX('48656c6c6f');       -- BLOB 'Hello'
+SELECT MD5('hello');              -- '5d41402abc4b2a76b9719d911017c592'
+SELECT SHA256('hello');           -- '2cf24dba5fb0a30e...'
 SELECT UUID();
 SELECT LAST_INSERT_ID();
 ```
