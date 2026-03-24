@@ -692,7 +692,8 @@ func (s *Server) handleMicroservice(w http.ResponseWriter, r *http.Request) {
 
 	// Query the script from the table
 	// Table must have SKEY (primary key) and SCRIPT columns
-	query := fmt.Sprintf("SELECT SCRIPT FROM %s WHERE SKEY = '%s'", tableName, skey)
+	// Use LIKE instead of = to work around a bug with VARCHAR primary key equality
+	query := fmt.Sprintf("SELECT SCRIPT FROM %s WHERE SKEY LIKE '%s'", tableName, skey)
 
 	exec := executor.NewExecutor(s.engine)
 	result, err := exec.Execute(query)
@@ -734,4 +735,74 @@ func (s *Server) handleMicroservice(w http.ResponseWriter, r *http.Request) {
 		fmt.Fprintf(w, `{"error": %q}`, err.Error())
 		return
 	}
+}
+
+// handleProjectFiles serves static files from the projects directory.
+func (s *Server) handleProjectFiles(w http.ResponseWriter, r *http.Request) {
+	// Parse path: /projects/<project>/<filepath>
+	path := strings.TrimPrefix(r.URL.Path, "/projects/")
+	if path == "" {
+		writeError(w, http.StatusBadRequest, "invalid path format: expected /projects/<project>/<filepath>")
+		return
+	}
+
+	// Build file path
+	filePath := filepath.Join(s.config.Server.DataDir, "projects", path)
+
+	// Security check: ensure path is within projects directory
+	absPath, err := filepath.Abs(filePath)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid file path")
+		return
+	}
+	projectsDir := filepath.Join(s.config.Server.DataDir, "projects")
+	absProjectsDir, _ := filepath.Abs(projectsDir)
+	if !strings.HasPrefix(absPath, absProjectsDir) {
+		writeError(w, http.StatusForbidden, "access denied")
+		return
+	}
+
+	// Check if file exists
+	info, err := os.Stat(filePath)
+	if err != nil {
+		writeError(w, http.StatusNotFound, "file not found")
+		return
+	}
+
+	if info.IsDir() {
+		writeError(w, http.StatusBadRequest, "directory listing not allowed")
+		return
+	}
+
+	// Read and serve the file directly
+	data, err := os.ReadFile(filePath)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to read file")
+		return
+	}
+
+	// Set content type based on file extension
+	ext := filepath.Ext(filePath)
+	contentType := "application/octet-stream"
+	switch ext {
+	case ".html", ".htm":
+		contentType = "text/html; charset=utf-8"
+	case ".css":
+		contentType = "text/css; charset=utf-8"
+	case ".js":
+		contentType = "application/javascript"
+	case ".json":
+		contentType = "application/json"
+	case ".png":
+		contentType = "image/png"
+	case ".jpg", ".jpeg":
+		contentType = "image/jpeg"
+	case ".gif":
+		contentType = "image/gif"
+	case ".svg":
+		contentType = "image/svg+xml"
+	}
+
+	w.Header().Set("Content-Type", contentType)
+	w.Write(data)
 }

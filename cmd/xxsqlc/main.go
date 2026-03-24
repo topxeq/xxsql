@@ -38,6 +38,7 @@ var (
 	flagDSN      = flag.String("dsn", "", "Connection string (URL format: xxsql://user:pass@host:port/db)")
 	flagProgress = flag.Bool("progress", false, "Show progress when executing SQL file")
 	flagProject  = flag.String("project", "", "Deploy project from specified directory")
+	flagProtocol = flag.String("protocol", "", "Protocol to use: mysql or private (auto-detected from port if not specified)")
 )
 
 // Global state
@@ -159,6 +160,21 @@ func buildDSN() string {
 	dsn.WriteString("/")
 	if *flagDatabase != "" {
 		dsn.WriteString(*flagDatabase)
+	}
+
+	// Protocol
+	protocol := *flagProtocol
+	if protocol == "" {
+		// Auto-detect: port 3306 -> mysql, port 9527 -> private
+		if *flagPort == 3306 {
+			protocol = "mysql"
+		} else if *flagPort == 9527 {
+			protocol = "private"
+		}
+	}
+	if protocol != "" {
+		dsn.WriteString("?protocol=")
+		dsn.WriteString(protocol)
 	}
 
 	return dsn.String()
@@ -303,15 +319,14 @@ func uploadFile(filePath, projectName, relPath string) error {
 	// Create directory first
 	dirPath := filepath.Dir(serverPath)
 	mkdirSQL := fmt.Sprintf("SELECT dirCreate('%s')", dirPath)
-	var result []interface{}
-	err = db.QueryRow(mkdirSQL).Scan(&result)
+	_, err = db.Exec(mkdirSQL)
 	if err != nil {
 		fmt.Printf("  Warning: failed to create directory %s: %v\n", dirPath, err)
 	}
 
 	// Upload via system microservice
 	uploadSQL := fmt.Sprintf("SELECT fileSave('%s', '%s', 'binary')", serverPath, encoded)
-	err = db.QueryRow(uploadSQL).Scan(&result)
+	_, err = db.Exec(uploadSQL)
 	if err != nil {
 		return fmt.Errorf("failed to upload %s: %w", relPath, err)
 	}

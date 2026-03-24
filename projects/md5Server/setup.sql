@@ -7,6 +7,10 @@ CREATE TABLE IF NOT EXISTS api (
     SCRIPT TEXT
 );
 
+-- Delete existing entries (for re-deployment)
+DELETE FROM api WHERE SKEY = 'md5';
+DELETE FROM api WHERE SKEY = 'health';
+
 -- MD5 hash generation endpoint
 -- Usage: POST /ms/api/md5 with JSON body {"text": "your text here"}
 -- Returns: {"hash": "md5_hash_value"}

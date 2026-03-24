@@ -115,6 +115,9 @@ func (s *Server) Start() error {
 	// Microservice routes (XxScript)
 	mux.HandleFunc("/ms/", s.handleMicroservice)
 
+	// Project static files
+	mux.HandleFunc("/projects/", s.handleProjectFiles)
+
 	// Create server
 	addr := fmt.Sprintf("%s:%d", s.config.Network.Bind, s.config.Network.HTTPPort)
 	s.server = &http.Server{
@@ -239,6 +242,12 @@ func (s *Server) loggingMiddleware(next http.Handler) http.Handler {
 // authMiddleware checks authentication for protected routes.
 func (s *Server) authMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// If authentication is disabled, allow all requests
+		if !s.config.Auth.Enabled {
+			next.ServeHTTP(w, r)
+			return
+		}
+
 		// Allow static files and login without auth
 		if strings.HasPrefix(r.URL.Path, "/static/") ||
 			r.URL.Path == "/login" ||
