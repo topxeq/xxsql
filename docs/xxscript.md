@@ -305,6 +305,44 @@ try {
 | `hexDecode(s)` | Decode from hex | `hexDecode("68656c6c6f")` → `"hello"` |
 | `hmacSHA256(data, key)` | HMAC-SHA256 | `hmacSHA256("msg", "key")` → `"...hash..."` |
 
+### File Functions
+
+| Function | Description | Example |
+|----------|-------------|---------|
+| `fileSave(path, content)` | Save string to file | `fileSave("test.txt", "hello")` |
+| `fileSave(path, content, "binary")` | Save binary (base64) | `fileSave("img.png", data, "binary")` |
+| `fileRead(path)` | Read file as string | `fileRead("test.txt")` → `{"success":true, "data":"..."}` |
+| `fileRead(path, "binary")` | Read file as base64 | `fileRead("img.png", "binary")` |
+| `fileDelete(path)` | Delete file | `fileDelete("test.txt")` |
+| `fileExists(path)` | Check if file exists | `fileExists("test.txt")` → `true/false` |
+| `dirCreate(path)` | Create directory | `dirCreate("mydir/subdir")` |
+| `dirList(path)` | List directory contents | `dirList("mydir")` → `[{"name":"...", "isDir":false, "size":100}, ...]` |
+| `dirDelete(path)` | Delete empty directory | `dirDelete("mydir")` |
+| `dirDelete(path, true)` | Delete directory recursively | `dirDelete("mydir", true)` |
+
+**File paths** are relative to the server's configured data directory.
+
+**Examples:**
+```javascript
+// Save and read text file
+fileSave("data/hello.txt", "Hello World")
+var result = fileRead("data/hello.txt")
+print(result.data)
+
+// Create nested directories
+dirCreate("projects/myapp/static")
+
+// Save binary data
+var base64Image = "iVBORw0KGgo..."
+fileSave("images/logo.png", base64Image, "binary")
+
+// List files
+var files = dirList("projects/myapp")
+for (var i = 0; i < len(files); i = i + 1) {
+    print(files[i].name, files[i].isDir)
+}
+```
+
 ### Output Functions
 
 | Function | Description | Example |

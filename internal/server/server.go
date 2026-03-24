@@ -88,6 +88,21 @@ func (s *Server) Start() error {
 
 	s.startTime = time.Now()
 
+	// Initialize system tables
+	if s.engine != nil {
+		if err := executor.InitSystemTables(s.engine); err != nil {
+			s.logger.Warn("Failed to initialize system tables: %v", err)
+		} else {
+			s.logger.Info("System tables initialized")
+		}
+		// Initialize system microservices
+		if err := executor.InitSystemMicroservices(s.engine, s.config.Server.DataDir); err != nil {
+			s.logger.Warn("Failed to initialize system microservices: %v", err)
+		} else {
+			s.logger.Info("System microservices initialized")
+		}
+	}
+
 	// Load persisted users
 	if err := s.auth.Load(); err != nil {
 		s.logger.Warn("Failed to load users: %v", err)

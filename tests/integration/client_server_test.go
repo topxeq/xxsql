@@ -484,8 +484,9 @@ func TestClientServerIntegration_ShowTables(t *testing.T) {
 	for rows.Next() {
 		tableCount++
 	}
-	if tableCount != 2 {
-		t.Errorf("Expected 2 tables, got %d", tableCount)
+	// 2 user tables + 2 system tables (_sys_ms, _sys_projects)
+	if tableCount != 4 {
+		t.Errorf("Expected 4 tables (2 user + 2 system), got %d", tableCount)
 	}
 }
 

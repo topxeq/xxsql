@@ -10,7 +10,7 @@ Each project folder contains:
 |------|-------------|
 | `project.json` | Project configuration and metadata |
 | `setup.sql` | SQL script to create tables and microservice endpoints |
-| `*.html` | Static web files |
+| `static/` | Static web files directory |
 | `README.md` | Project documentation |
 
 ## Available Projects
@@ -19,62 +19,107 @@ Each project folder contains:
 |---------|-------------|
 | [md5Server](./md5Server/) | Simple MD5/SHA hash generation microservice with web UI |
 
-## Setting Up a Project
+## Quick Deploy
 
-### Method 1: Using xxsqlc Client
-
-```bash
-# Start xxsqlc and connect to server
-xxsqlc -host 127.0.0.1 -port 9527
-
-# Execute setup script
-\i setup.sql
-```
-
-### Method 2: Using HTTP API
+Use xxsqlc with the `--project` flag to deploy a project:
 
 ```bash
-# Login
-curl -c cookies.txt -X POST -H "Content-Type: application/json" \
-  -d '{"username":"admin","password":"your_password"}' \
-  http://localhost:8080/api/login
-
-# Execute SQL
-curl -b cookies.txt -X POST -H "Content-Type: application/json" \
-  -d @setup.sql \
-  http://localhost:8080/api/query
+xxsqlc --project ./projects/md5Server -host localhost -port 9527 -u admin -p password
 ```
 
-### Method 3: Using Web Admin
+This will:
+1. Read `project.json` for project metadata
+2. Execute `setup.sql` to create tables and microservices
+3. Upload all files from `static/` to `projects/<project_name>/`
+4. Register the project in `_sys_projects` table
 
-1. Open `http://localhost:8080/` in your browser
-2. Login with admin credentials
-3. Navigate to SQL Editor
-4. Paste and execute the setup.sql content
+## Project Configuration
 
-## Deploying Static Files
+### project.json
 
-Static files (HTML, CSS, JS, images) should be placed in:
-
-```
-<data_directory>/static/
-```
-
-For example, if your data directory is `/var/xxsql/data`:
-
-```bash
-cp index.html /var/xxsql/data/static/
+```json
+{
+  "name": "projectName",
+  "version": "1.0.0",
+  "description": "Project description",
+  "tables": "table1,table2"
+}
 ```
 
-The file will then be accessible at `http://localhost:8080/index.html`.
+### setup.sql
+
+Contains SQL statements to:
+- Create tables needed by the project
+- Insert microservice scripts into tables
+
+```sql
+CREATE TABLE api (
+    SKEY VARCHAR(50) PRIMARY KEY,
+    SCRIPT TEXT
+);
+
+INSERT INTO api (SKEY, SCRIPT) VALUES ('endpoint', '
+    // XxScript code here
+');
+```
+
+### Static Files
+
+Files in `static/` are uploaded to `<data_dir>/projects/<project_name>/`.
+
+Access at: `http://localhost:8080/projects/<project_name>/filename.html`
+
+## System Tables
+
+XxSql automatically creates these system tables on first startup:
+
+| Table | Purpose |
+|-------|---------|
+| `_sys_ms` | System microservice scripts |
+| `_sys_projects` | Installed projects registry |
+
+## System Microservices
+
+Preset microservices for file operations:
+
+| Endpoint | Description |
+|----------|-------------|
+| `POST /ms/_sys/file/upload` | Upload text file |
+| `POST /ms/_sys/file/uploadBinary` | Upload binary file (base64) |
+| `GET /ms/_sys/file/read?path=...` | Read file |
+| `POST /ms/_sys/file/delete` | Delete file |
+| `GET /ms/_sys/dir/list?path=...` | List directory |
+| `POST /ms/_sys/dir/create` | Create directory |
+| `POST /ms/_sys/project/check` | Check if project installed |
+| `POST /ms/_sys/project/register` | Register installed project |
 
 ## Creating a New Project
 
-1. Create a new folder: `mkdir myproject`
+1. Create a new folder: `mkdir projects/myproject`
 2. Create `project.json` with project metadata
 3. Create `setup.sql` with table definitions and microservice scripts
-4. Create any static files needed (HTML, etc.)
+4. Create `static/` directory with web files
 5. Document in `README.md`
+
+## Project Isolation
+
+To avoid conflicts between projects:
+
+- Tables should use project-specific prefixes (e.g., `md5_api` instead of `api`)
+- Static files are automatically namespaced under `projects/<project_name>/`
+- Each project is registered with a unique name in `_sys_projects`
+
+## File Storage
+
+Project files are stored at:
+
+```
+<data_dir>/projects/
+├── md5Server/
+│   └── index.html
+└── anotherProject/
+    └── static files...
+```
 
 ## Microservice Development
 

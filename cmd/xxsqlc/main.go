@@ -3,6 +3,8 @@ package main
 
 import (
 	"database/sql"
+	"encoding/base64"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"os"
@@ -35,6 +37,7 @@ var (
 	flagFormat   = flag.String("format", "table", "Output format: table, vertical, json, tsv")
 	flagDSN      = flag.String("dsn", "", "Connection string (URL format: xxsql://user:pass@host:port/db)")
 	flagProgress = flag.Bool("progress", false, "Show progress when executing SQL file")
+	flagProject  = flag.String("project", "", "Deploy project from specified directory")
 )
 
 // Global state
@@ -103,6 +106,15 @@ func main() {
 	if *flagFile != "" {
 		if err := executeFile(*flagFile, *flagProgress); err != nil {
 			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			os.Exit(1)
+		}
+		os.Exit(0)
+	}
+
+	// Handle project deployment mode
+	if *flagProject != "" {
+		if err := deployProject(*flagProject); err != nil {
+			fmt.Fprintf(os.Stderr, "Project deployment failed: %v\n", err)
 			os.Exit(1)
 		}
 		os.Exit(0)
@@ -191,4 +203,127 @@ func getHistoryPath() string {
 		return ""
 	}
 	return filepath.Join(home, ".xxsql_history")
+}
+
+// deployProject deploys a project to the XxSql server
+func deployProject(projectPath string) error {
+	fmt.Printf("Deploying project from: %s\n", projectPath)
+
+	// Read project.json
+	projectFile := filepath.Join(projectPath, "project.json")
+	projectData, err := os.ReadFile(projectFile)
+	if err != nil {
+		return fmt.Errorf("failed to read project.json: %w", err)
+	}
+
+	var project struct {
+		Name    string `json:"name"`
+		Version string `json:"version"`
+		Tables  string `json:"tables"`
+	}
+	if err := json.Unmarshal(projectData, &project); err != nil {
+		return fmt.Errorf("failed to parse project.json: %w", err)
+	}
+
+	fmt.Printf("Project: %s v%s\n", project.Name, project.Version)
+
+	// Execute setup.sql
+	setupFile := filepath.Join(projectPath, "setup.sql")
+	if _, err := os.Stat(setupFile); err == nil {
+		fmt.Println("Executing setup.sql...")
+		if err := executeFile(setupFile, true); err != nil {
+			return fmt.Errorf("failed to execute setup.sql: %w", err)
+		}
+		fmt.Println("setup.sql executed successfully")
+	}
+
+	// Upload static files
+	staticDir := filepath.Join(projectPath, "static")
+	if _, err := os.Stat(staticDir); err == nil {
+		fmt.Println("Uploading static files...")
+		if err := uploadStaticFiles(staticDir, project.Name); err != nil {
+			return fmt.Errorf("failed to upload static files: %w", err)
+		}
+		fmt.Println("Static files uploaded successfully")
+	}
+
+	// Check for index.html in project root (backward compatibility)
+	indexFile := filepath.Join(projectPath, "index.html")
+	if _, err := os.Stat(indexFile); err == nil {
+		fmt.Println("Uploading index.html...")
+		if err := uploadFile(indexFile, project.Name, "index.html"); err != nil {
+			return fmt.Errorf("failed to upload index.html: %w", err)
+		}
+	}
+
+	// Register project
+	fmt.Println("Registering project...")
+	if err := registerProject(project.Name, project.Version, project.Tables); err != nil {
+		fmt.Printf("Warning: failed to register project: %v\n", err)
+	}
+
+	fmt.Printf("Project '%s' deployed successfully!\n", project.Name)
+	return nil
+}
+
+// uploadStaticFiles uploads all files from a directory recursively
+func uploadStaticFiles(dir, projectName string) error {
+	return filepath.Walk(dir, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+		if info.IsDir() {
+			return nil
+		}
+
+		// Calculate relative path
+		relPath, err := filepath.Rel(dir, path)
+		if err != nil {
+			return err
+		}
+
+		return uploadFile(path, projectName, relPath)
+	})
+}
+
+// uploadFile uploads a single file to the server
+func uploadFile(filePath, projectName, relPath string) error {
+	// Read file content
+	content, err := os.ReadFile(filePath)
+	if err != nil {
+		return fmt.Errorf("failed to read file %s: %w", filePath, err)
+	}
+
+	// Encode to base64
+	encoded := base64.StdEncoding.EncodeToString(content)
+
+	// Determine file path on server
+	serverPath := fmt.Sprintf("projects/%s/%s", projectName, filepath.ToSlash(relPath))
+
+	// Create directory first
+	dirPath := filepath.Dir(serverPath)
+	mkdirSQL := fmt.Sprintf("SELECT dirCreate('%s')", dirPath)
+	var result []interface{}
+	err = db.QueryRow(mkdirSQL).Scan(&result)
+	if err != nil {
+		fmt.Printf("  Warning: failed to create directory %s: %v\n", dirPath, err)
+	}
+
+	// Upload via system microservice
+	uploadSQL := fmt.Sprintf("SELECT fileSave('%s', '%s', 'binary')", serverPath, encoded)
+	err = db.QueryRow(uploadSQL).Scan(&result)
+	if err != nil {
+		return fmt.Errorf("failed to upload %s: %w", relPath, err)
+	}
+
+	fmt.Printf("  Uploaded: %s\n", relPath)
+	return nil
+}
+
+// registerProject registers the project in _sys_projects table
+func registerProject(name, version, tables string) error {
+	sql := fmt.Sprintf("INSERT INTO _sys_projects (name, version, installed_at, tables) VALUES ('%s', '%s', datetime('now'), '%s')",
+		name, version, tables)
+	_, err := db.Exec(sql)
+	return err
 }

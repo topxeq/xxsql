@@ -10,10 +10,9 @@
       "description": "Generate MD5 hash for input string"
     },
     {
-      "path": "/",
-      "description": "Web interface (static HTML)"
+      "path": "/projects/md5Server/",
+      "description": "Web interface"
     }
   ],
-  "tables": ["api"],
-  "static_files": ["index.html"]
+  "tables": "api"
 }

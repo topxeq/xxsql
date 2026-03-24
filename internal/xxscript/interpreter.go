@@ -13,6 +13,8 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"time"
@@ -47,6 +49,7 @@ type Context struct {
 	HTTPWriter  http.ResponseWriter
 	HTTPRequest *http.Request
 	MaxSteps    int
+	BaseDir     string // Base directory for file operations
 	steps       int
 	returning   bool
 	breaking    bool
@@ -1130,6 +1133,21 @@ func (i *Interpreter) callBuiltin(name string, args []Value) (Value, bool) {
 		return i.builtinHexDecode(args), true
 	case "hmacSHA256":
 		return i.builtinHmacSHA256(args), true
+	// File operations
+	case "fileSave":
+		return i.builtinFileSave(args), true
+	case "fileRead":
+		return i.builtinFileRead(args), true
+	case "fileDelete":
+		return i.builtinFileDelete(args), true
+	case "fileExists":
+		return i.builtinFileExists(args), true
+	case "dirList":
+		return i.builtinDirList(args), true
+	case "dirCreate":
+		return i.builtinDirCreate(args), true
+	case "dirDelete":
+		return i.builtinDirDelete(args), true
 	default:
 		return nil, false
 	}
@@ -2503,6 +2521,255 @@ func extractExecResult(result interface{}) (int64, int64) {
 	}
 
 	return affected, insertID
+}
+
+// ============================================================================
+// File Operation Functions
+// ============================================================================
+
+// builtinFileSave saves content to a file
+// fileSave(path, content) - saves string content to file
+// fileSave(path, content, "binary") - saves binary content (base64 encoded string)
+func (i *Interpreter) builtinFileSave(args []Value) Value {
+	if len(args) < 2 {
+		return map[string]Value{"success": false, "error": "fileSave requires at least 2 arguments (path, content)"}
+	}
+
+	path, ok := args[0].(string)
+	if !ok {
+		return map[string]Value{"success": false, "error": "path must be a string"}
+	}
+
+	// Resolve path relative to BaseDir
+	if i.ctx.BaseDir != "" {
+		path = filepath.Join(i.ctx.BaseDir, path)
+	}
+
+	// Ensure parent directory exists
+	dir := filepath.Dir(path)
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		return map[string]Value{"success": false, "error": fmt.Sprintf("failed to create directory: %v", err)}
+	}
+
+	var data []byte
+	switch v := args[1].(type) {
+	case string:
+		// Check if binary mode
+		if len(args) > 2 {
+			mode, _ := args[2].(string)
+			if mode == "binary" {
+				// Decode base64
+				decoded, err := base64.StdEncoding.DecodeString(v)
+				if err != nil {
+					return map[string]Value{"success": false, "error": fmt.Sprintf("invalid base64: %v", err)}
+				}
+				data = decoded
+			} else {
+				data = []byte(v)
+			}
+		} else {
+			data = []byte(v)
+		}
+	case []byte:
+		data = v
+	case []Value:
+		// Array of bytes
+		data = make([]byte, len(v))
+		for idx, b := range v {
+			if n, ok := b.(int); ok {
+				data[idx] = byte(n)
+			} else if n, ok := b.(int64); ok {
+				data[idx] = byte(n)
+			} else if n, ok := b.(float64); ok {
+				data[idx] = byte(n)
+			}
+		}
+	default:
+		data = []byte(fmt.Sprintf("%v", v))
+	}
+
+	if err := os.WriteFile(path, data, 0644); err != nil {
+		return map[string]Value{"success": false, "error": fmt.Sprintf("failed to write file: %v", err)}
+	}
+
+	return map[string]Value{"success": true, "path": path}
+}
+
+// builtinFileRead reads content from a file
+// fileRead(path) - returns string content
+// fileRead(path, "binary") - returns base64 encoded string
+func (i *Interpreter) builtinFileRead(args []Value) Value {
+	if len(args) == 0 {
+		return map[string]Value{"success": false, "error": "fileRead requires at least 1 argument (path)"}
+	}
+
+	path, ok := args[0].(string)
+	if !ok {
+		return map[string]Value{"success": false, "error": "path must be a string"}
+	}
+
+	// Resolve path relative to BaseDir
+	if i.ctx.BaseDir != "" {
+		path = filepath.Join(i.ctx.BaseDir, path)
+	}
+
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return map[string]Value{"success": false, "error": fmt.Sprintf("failed to read file: %v", err)}
+	}
+
+	// Check if binary mode
+	if len(args) > 1 {
+		mode, _ := args[1].(string)
+		if mode == "binary" {
+			return map[string]Value{"success": true, "data": base64.StdEncoding.EncodeToString(data)}
+		}
+	}
+
+	return map[string]Value{"success": true, "data": string(data)}
+}
+
+// builtinFileDelete deletes a file
+func (i *Interpreter) builtinFileDelete(args []Value) Value {
+	if len(args) == 0 {
+		return map[string]Value{"success": false, "error": "fileDelete requires 1 argument (path)"}
+	}
+
+	path, ok := args[0].(string)
+	if !ok {
+		return map[string]Value{"success": false, "error": "path must be a string"}
+	}
+
+	// Resolve path relative to BaseDir
+	if i.ctx.BaseDir != "" {
+		path = filepath.Join(i.ctx.BaseDir, path)
+	}
+
+	if err := os.Remove(path); err != nil {
+		return map[string]Value{"success": false, "error": fmt.Sprintf("failed to delete file: %v", err)}
+	}
+
+	return map[string]Value{"success": true}
+}
+
+// builtinFileExists checks if a file exists
+func (i *Interpreter) builtinFileExists(args []Value) Value {
+	if len(args) == 0 {
+		return false
+	}
+
+	path, ok := args[0].(string)
+	if !ok {
+		return false
+	}
+
+	// Resolve path relative to BaseDir
+	if i.ctx.BaseDir != "" {
+		path = filepath.Join(i.ctx.BaseDir, path)
+	}
+
+	_, err := os.Stat(path)
+	return err == nil
+}
+
+// builtinDirList lists files in a directory
+// Returns array of {name, is_dir, size}
+func (i *Interpreter) builtinDirList(args []Value) Value {
+	if len(args) == 0 {
+		return []Value{}
+	}
+
+	path, ok := args[0].(string)
+	if !ok {
+		return []Value{}
+	}
+
+	// Resolve path relative to BaseDir
+	if i.ctx.BaseDir != "" {
+		path = filepath.Join(i.ctx.BaseDir, path)
+	}
+
+	entries, err := os.ReadDir(path)
+	if err != nil {
+		return []Value{}
+	}
+
+	result := make([]Value, 0, len(entries))
+	for _, entry := range entries {
+		info, err := entry.Info()
+		size := int64(0)
+		if err == nil {
+			size = info.Size()
+		}
+		result = append(result, map[string]Value{
+			"name":  entry.Name(),
+			"isDir": entry.IsDir(),
+			"size":  size,
+		})
+	}
+
+	return result
+}
+
+// builtinDirCreate creates a directory
+func (i *Interpreter) builtinDirCreate(args []Value) Value {
+	if len(args) == 0 {
+		return map[string]Value{"success": false, "error": "dirCreate requires 1 argument (path)"}
+	}
+
+	path, ok := args[0].(string)
+	if !ok {
+		return map[string]Value{"success": false, "error": "path must be a string"}
+	}
+
+	// Resolve path relative to BaseDir
+	if i.ctx.BaseDir != "" {
+		path = filepath.Join(i.ctx.BaseDir, path)
+	}
+
+	if err := os.MkdirAll(path, 0755); err != nil {
+		return map[string]Value{"success": false, "error": fmt.Sprintf("failed to create directory: %v", err)}
+	}
+
+	return map[string]Value{"success": true, "path": path}
+}
+
+// builtinDirDelete deletes a directory
+func (i *Interpreter) builtinDirDelete(args []Value) Value {
+	if len(args) == 0 {
+		return map[string]Value{"success": false, "error": "dirDelete requires 1 argument (path)"}
+	}
+
+	path, ok := args[0].(string)
+	if !ok {
+		return map[string]Value{"success": false, "error": "path must be a string"}
+	}
+
+	// Resolve path relative to BaseDir
+	if i.ctx.BaseDir != "" {
+		path = filepath.Join(i.ctx.BaseDir, path)
+	}
+
+	// Check if recursive
+	recursive := false
+	if len(args) > 1 {
+		if r, ok := args[1].(bool); ok {
+			recursive = r
+		}
+	}
+
+	var err error
+	if recursive {
+		err = os.RemoveAll(path)
+	} else {
+		err = os.Remove(path)
+	}
+
+	if err != nil {
+		return map[string]Value{"success": false, "error": fmt.Sprintf("failed to delete directory: %v", err)}
+	}
+
+	return map[string]Value{"success": true}
 }
 
 // SetupBuiltins sets up built-in objects.

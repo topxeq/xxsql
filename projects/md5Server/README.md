@@ -15,7 +15,8 @@ A simple web-based MD5 hash generation service built with XxSql.
 md5Server/
 ├── project.json    # Project configuration
 ├── setup.sql       # SQL script to set up the microservice
-├── index.html      # Web interface (static file)
+├── static/         # Static files directory
+│   └── index.html  # Web interface
 └── README.md       # This file
 ```
 
@@ -27,39 +28,22 @@ md5Server/
 xxsqls -config your-config.json
 ```
 
-### 2. Set Up the Project
+### 2. Deploy the Project
 
-Using xxsqlc client:
-
-```bash
-# Connect to server
-xxsqlc -host 127.0.0.1 -port 9527
-
-# Execute setup script
-\i setup.sql
-```
-
-Or via HTTP API:
+Using xxsqlc client with --project flag:
 
 ```bash
-# Login first
-curl -c cookies.txt -X POST -H "Content-Type: application/json" \
-  -d '{"username":"admin","password":"your_password"}' \
-  http://localhost:8080/api/login
-
-# Execute setup script
-curl -b cookies.txt -X POST -H "Content-Type: application/json" \
-  -d '{"sql":"CREATE TABLE IF NOT EXISTS api (SKEY VARCHAR(50) PRIMARY KEY, SCRIPT TEXT);"}' \
-  http://localhost:8080/api/query
+xxsqlc --project ./projects/md5Server -host 127.0.0.1 -port 9527 -u admin -p your_password
 ```
 
-### 3. Upload Static Files
+This will:
+1. Execute `setup.sql` to create tables and microservice endpoints
+2. Upload static files to the server
+3. Register the project in the system
 
-Place `index.html` in the static files directory configured in your XxSql server (typically `<data_dir>/static/`).
+### 3. Access the Service
 
-### 4. Access the Service
-
-- **Web Interface**: `http://localhost:8080/` (serves index.html)
+- **Web Interface**: `http://localhost:8080/projects/md5Server/index.html`
 - **API Endpoint**: `POST http://localhost:8080/ms/api/md5`
 
 ## API Usage
@@ -93,7 +77,7 @@ GET /ms/api/health
 ```json
 {
   "status": "ok",
-  "service": "md5Server"
+  "service": "xxsql"
 }
 ```
 
@@ -114,3 +98,14 @@ SELECT SHA512('hello');     -- 9b71d224bd62f3785d96d46ad3ea3d...
 3. **SCRIPT**: XxScript code that handles the HTTP request and returns a response
 
 The web interface uses XxSql's HTTP API to execute SQL hash functions directly.
+
+## Manual Setup (Alternative)
+
+If you prefer to set up manually:
+
+```bash
+# Execute setup script
+xxsqlc -host 127.0.0.1 -port 9527 -f setup.sql
+
+# Static files are stored in <data_dir>/projects/md5Server/
+```

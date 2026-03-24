@@ -3,6 +3,7 @@ package xxscript
 import (
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"testing"
 )
@@ -4512,6 +4513,189 @@ func TestCryptoFunctions(t *testing.T) {
 		}
 		if result != "" {
 			t.Errorf("md5() = %v, want empty string", result)
+		}
+	})
+}
+
+// TestFileOperations tests file operation functions
+func TestFileOperations(t *testing.T) {
+	// Create temp directory for testing
+	tmpDir, err := os.MkdirTemp("", "xxscript-file-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	ctx := NewContext()
+	ctx.BaseDir = tmpDir
+	ctx.SetupBuiltins()
+
+	t.Run("fileSave and fileRead", func(t *testing.T) {
+		script := `
+			var result = fileSave("test.txt", "hello world")
+			result.success
+		`
+		result, err := Run(script, ctx)
+		if err != nil {
+			t.Fatalf("Run error: %v", err)
+		}
+		if success, ok := result.(bool); !ok || !success {
+			t.Errorf("fileSave failed: %v", result)
+		}
+
+		// Read back
+		script2 := `fileRead("test.txt")`
+		result2, err := Run(script2, ctx)
+		if err != nil {
+			t.Fatalf("Run error: %v", err)
+		}
+		m, ok := result2.(map[string]Value)
+		if !ok {
+			t.Fatalf("Expected map, got %T", result2)
+		}
+		if m["data"] != "hello world" {
+			t.Errorf("fileRead data = %v, want 'hello world'", m["data"])
+		}
+	})
+
+	t.Run("fileSave with subdirectory", func(t *testing.T) {
+		script := `
+			var result = fileSave("subdir/deep/test.txt", "nested content")
+			result.success
+		`
+		result, err := Run(script, ctx)
+		if err != nil {
+			t.Fatalf("Run error: %v", err)
+		}
+		if success, ok := result.(bool); !ok || !success {
+			t.Errorf("fileSave with subdir failed: %v", result)
+		}
+
+		// Verify file exists
+		script2 := `fileExists("subdir/deep/test.txt")`
+		result2, err := Run(script2, ctx)
+		if err != nil {
+			t.Fatalf("Run error: %v", err)
+		}
+		if result2 != true {
+			t.Errorf("fileExists should be true")
+		}
+	})
+
+	t.Run("fileExists", func(t *testing.T) {
+		// File doesn't exist
+		result, err := Run(`fileExists("nonexistent.txt")`, ctx)
+		if err != nil {
+			t.Fatalf("Run error: %v", err)
+		}
+		if result != false {
+			t.Errorf("fileExists for nonexistent should be false")
+		}
+
+		// Create file then check
+		Run(`fileSave("exists.txt", "content")`, ctx)
+		result2, err := Run(`fileExists("exists.txt")`, ctx)
+		if err != nil {
+			t.Fatalf("Run error: %v", err)
+		}
+		if result2 != true {
+			t.Errorf("fileExists for existing should be true")
+		}
+	})
+
+	t.Run("dirCreate and dirList", func(t *testing.T) {
+		script := `
+			var result = dirCreate("mydir/subdir")
+			result.success
+		`
+		result, err := Run(script, ctx)
+		if err != nil {
+			t.Fatalf("Run error: %v", err)
+		}
+		if success, ok := result.(bool); !ok || !success {
+			t.Errorf("dirCreate failed: %v", result)
+		}
+
+		// Create files in directory
+		Run(`fileSave("mydir/file1.txt", "content1")`, ctx)
+		Run(`fileSave("mydir/file2.txt", "content2")`, ctx)
+
+		// List directory
+		result2, err := Run(`dirList("mydir")`, ctx)
+		if err != nil {
+			t.Fatalf("Run error: %v", err)
+		}
+		files, ok := result2.([]Value)
+		if !ok {
+			t.Fatalf("Expected array, got %T", result2)
+		}
+		if len(files) < 2 {
+			t.Errorf("dirList should return at least 2 files, got %d", len(files))
+		}
+	})
+
+	t.Run("fileDelete", func(t *testing.T) {
+		// Create file
+		Run(`fileSave("todelete.txt", "delete me")`, ctx)
+
+		// Delete
+		result, err := Run(`fileDelete("todelete.txt")`, ctx)
+		if err != nil {
+			t.Fatalf("Run error: %v", err)
+		}
+		m, ok := result.(map[string]Value)
+		if !ok || m["success"] != true {
+			t.Logf("fileDelete result: %v", result)
+		}
+
+		// Verify deleted
+		result2, _ := Run(`fileExists("todelete.txt")`, ctx)
+		if result2 == true {
+			t.Errorf("File should be deleted")
+		}
+	})
+
+	t.Run("dirDelete", func(t *testing.T) {
+		// Create directory with files
+		Run(`dirCreate("deldir")`, ctx)
+		Run(`fileSave("deldir/file.txt", "content")`, ctx)
+
+		// Delete with recursive
+		result, err := Run(`dirDelete("deldir", true)`, ctx)
+		if err != nil {
+			t.Fatalf("Run error: %v", err)
+		}
+		m, ok := result.(map[string]Value)
+		if !ok || m["success"] != true {
+			t.Logf("dirDelete result: %v", result)
+		}
+	})
+
+	t.Run("binary file", func(t *testing.T) {
+		// Save binary (base64 encoded)
+		script := `
+			var result = fileSave("binary.bin", "SGVsbG8gV29ybGQ=", "binary")
+			result.success
+		`
+		result, err := Run(script, ctx)
+		if err != nil {
+			t.Fatalf("Run error: %v", err)
+		}
+		if success, ok := result.(bool); !ok || !success {
+			t.Errorf("binary fileSave failed: %v", result)
+		}
+
+		// Read binary
+		result2, err := Run(`fileRead("binary.bin", "binary")`, ctx)
+		if err != nil {
+			t.Fatalf("Run error: %v", err)
+		}
+		m, ok := result2.(map[string]Value)
+		if !ok {
+			t.Fatalf("Expected map, got %T", result2)
+		}
+		if m["data"] != "SGVsbG8gV29ybGQ=" {
+			t.Errorf("binary fileRead incorrect: %v", m["data"])
 		}
 	})
 }
