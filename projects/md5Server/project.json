@@ -1,0 +1,19 @@
+{
+  "name": "md5Server",
+  "version": "1.0.0",
+  "description": "A simple MD5 hash generation microservice with web interface",
+  "author": "XxSql",
+  "endpoints": [
+    {
+      "path": "/ms/api/md5",
+      "method": "POST",
+      "description": "Generate MD5 hash for input string"
+    },
+    {
+      "path": "/",
+      "description": "Web interface (static HTML)"
+    }
+  ],
+  "tables": ["api"],
+  "static_files": ["index.html"]
+}

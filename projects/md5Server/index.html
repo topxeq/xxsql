@@ -1,0 +1,283 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>MD5 Hash Generator</title>
+    <style>
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            padding: 20px;
+        }
+        .container {
+            background: white;
+            border-radius: 16px;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+            padding: 40px;
+            width: 100%;
+            max-width: 500px;
+        }
+        h1 {
+            color: #333;
+            text-align: center;
+            margin-bottom: 10px;
+            font-size: 28px;
+        }
+        .subtitle {
+            color: #666;
+            text-align: center;
+            margin-bottom: 30px;
+            font-size: 14px;
+        }
+        .input-group {
+            margin-bottom: 20px;
+        }
+        label {
+            display: block;
+            color: #555;
+            margin-bottom: 8px;
+            font-weight: 500;
+        }
+        input[type="text"], textarea {
+            width: 100%;
+            padding: 14px 16px;
+            border: 2px solid #e1e1e1;
+            border-radius: 8px;
+            font-size: 16px;
+            transition: border-color 0.3s, box-shadow 0.3s;
+        }
+        input[type="text"]:focus, textarea:focus {
+            outline: none;
+            border-color: #667eea;
+            box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.2);
+        }
+        textarea {
+            resize: vertical;
+            min-height: 80px;
+        }
+        button {
+            width: 100%;
+            padding: 14px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            border-radius: 8px;
+            font-size: 16px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: transform 0.2s, box-shadow 0.2s;
+        }
+        button:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 6px 20px rgba(102, 126, 234, 0.4);
+        }
+        button:active {
+            transform: translateY(0);
+        }
+        .result-box {
+            margin-top: 24px;
+            padding: 20px;
+            background: #f8f9fa;
+            border-radius: 8px;
+            display: none;
+        }
+        .result-box.show {
+            display: block;
+        }
+        .result-label {
+            color: #666;
+            font-size: 12px;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            margin-bottom: 8px;
+        }
+        .result-value {
+            font-family: 'Consolas', 'Monaco', monospace;
+            font-size: 14px;
+            color: #333;
+            word-break: break-all;
+            background: white;
+            padding: 12px;
+            border-radius: 6px;
+            border: 1px solid #e1e1e1;
+        }
+        .copy-btn {
+            margin-top: 10px;
+            padding: 8px 16px;
+            background: #28a745;
+            font-size: 14px;
+        }
+        .copy-btn:hover {
+            background: #218838;
+        }
+        .error {
+            background: #fee;
+            border: 1px solid #fcc;
+            color: #c00;
+            padding: 12px;
+            border-radius: 6px;
+            margin-top: 16px;
+            display: none;
+        }
+        .error.show {
+            display: block;
+        }
+        .loading {
+            opacity: 0.7;
+            pointer-events: none;
+        }
+        .algo-select {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 20px;
+        }
+        .algo-btn {
+            flex: 1;
+            padding: 10px;
+            background: #f0f0f0;
+            color: #333;
+            border-radius: 6px;
+            font-size: 14px;
+        }
+        .algo-btn.active {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🔐 Hash Generator</h1>
+        <p class="subtitle">Generate MD5, SHA256, SHA512 hashes online</p>
+
+        <div class="algo-select">
+            <button class="algo-btn active" data-algo="md5">MD5</button>
+            <button class="algo-btn" data-algo="sha256">SHA256</button>
+            <button class="algo-btn" data-algo="sha512">SHA512</button>
+        </div>
+
+        <div class="input-group">
+            <label for="inputText">Enter text to hash:</label>
+            <textarea id="inputText" placeholder="Type or paste your text here..."></textarea>
+        </div>
+
+        <button id="generateBtn">Generate Hash</button>
+
+        <div class="error" id="errorMsg"></div>
+
+        <div class="result-box" id="resultBox">
+            <div class="result-label">Hash Result</div>
+            <div class="result-value" id="hashResult"></div>
+            <button class="copy-btn" id="copyBtn">📋 Copy to Clipboard</button>
+        </div>
+    </div>
+
+    <script>
+        let currentAlgo = 'md5';
+
+        // Algorithm selection
+        document.querySelectorAll('.algo-btn').forEach(btn => {
+            btn.addEventListener('click', function() {
+                document.querySelectorAll('.algo-btn').forEach(b => b.classList.remove('active'));
+                this.classList.add('active');
+                currentAlgo = this.dataset.algo;
+            });
+        });
+
+        // Generate hash
+        document.getElementById('generateBtn').addEventListener('click', async function() {
+            const input = document.getElementById('inputText').value.trim();
+            const resultBox = document.getElementById('resultBox');
+            const errorMsg = document.getElementById('errorMsg');
+            const hashResult = document.getElementById('hashResult');
+            const btn = this;
+
+            if (!input) {
+                errorMsg.textContent = 'Please enter some text to hash';
+                errorMsg.classList.add('show');
+                resultBox.classList.remove('show');
+                return;
+            }
+
+            errorMsg.classList.remove('show');
+            btn.classList.add('loading');
+            btn.textContent = 'Generating...';
+
+            try {
+                // Use XxSql SQL function to generate hash
+                const sql = `SELECT ${currentAlgo.toUpperCase()}("${input.replace(/"/g, '\\"')}")`;
+                const response = await fetch('/api/query', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    credentials: 'include',
+                    body: JSON.stringify({ sql: sql })
+                });
+
+                const data = await response.json();
+
+                if (data.error) {
+                    throw new Error(data.error);
+                }
+
+                if (data.rows && data.rows.length > 0) {
+                    hashResult.textContent = data.rows[0][0];
+                    resultBox.classList.add('show');
+                } else {
+                    throw new Error('No result returned');
+                }
+            } catch (err) {
+                errorMsg.textContent = 'Error: ' + err.message;
+                errorMsg.classList.add('show');
+                resultBox.classList.remove('show');
+            } finally {
+                btn.classList.remove('loading');
+                btn.textContent = 'Generate Hash';
+            }
+        });
+
+        // Copy to clipboard
+        document.getElementById('copyBtn').addEventListener('click', function() {
+            const hash = document.getElementById('hashResult').textContent;
+            navigator.clipboard.writeText(hash).then(() => {
+                const originalText = this.textContent;
+                this.textContent = '✓ Copied!';
+                setTimeout(() => {
+                    this.textContent = originalText;
+                }, 2000);
+            }).catch(err => {
+                // Fallback for older browsers
+                const textarea = document.createElement('textarea');
+                textarea.value = hash;
+                document.body.appendChild(textarea);
+                textarea.select();
+                document.execCommand('copy');
+                document.body.removeChild(textarea);
+                this.textContent = '✓ Copied!';
+                setTimeout(() => {
+                    this.textContent = '📋 Copy to Clipboard';
+                }, 2000);
+            });
+        });
+
+        // Allow Enter key to submit
+        document.getElementById('inputText').addEventListener('keypress', function(e) {
+            if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault();
+                document.getElementById('generateBtn').click();
+            }
+        });
+    </script>
+</body>
+</html>
