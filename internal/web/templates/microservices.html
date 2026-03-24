@@ -1,0 +1,479 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Microservices - XxSql</title>
+    <link rel="stylesheet" href="/static/style.css">
+    <script src="/static/xxscript-editor.js"></script>
+    <style>
+        .ms-card {
+            background: white;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            margin-bottom: 15px;
+            overflow: hidden;
+        }
+        .ms-card-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 15px 20px;
+            background: #f8f9fa;
+            border-bottom: 1px solid #eee;
+        }
+        .ms-card-header h4 {
+            margin: 0;
+            color: #2c3e50;
+            font-family: 'Courier New', monospace;
+        }
+        .ms-card-header .actions {
+            display: flex;
+            gap: 8px;
+        }
+        .ms-card-body {
+            padding: 15px 20px;
+        }
+        .ms-card-body .meta {
+            color: #7f8c8d;
+            font-size: 0.85rem;
+            margin-bottom: 10px;
+        }
+        .ms-card-body .script-preview {
+            background: #1a1a1a;
+            color: #00ff00;
+            padding: 10px;
+            border-radius: 4px;
+            font-family: 'Courier New', monospace;
+            font-size: 0.85rem;
+            white-space: pre-wrap;
+            max-height: 100px;
+            overflow: hidden;
+            position: relative;
+        }
+        .ms-card-body .script-preview::after {
+            content: '';
+            position: absolute;
+            bottom: 0;
+            left: 0;
+            right: 0;
+            height: 30px;
+            background: linear-gradient(transparent, #1a1a1a);
+        }
+        .modal {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0,0,0,0.5);
+            justify-content: center;
+            align-items: center;
+            z-index: 1000;
+        }
+        .modal.active {
+            display: flex;
+        }
+        .modal-content {
+            background: white;
+            padding: 25px;
+            border-radius: 8px;
+            width: 100%;
+            max-width: 800px;
+            max-height: 90vh;
+            overflow-y: auto;
+        }
+        .modal-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 20px;
+        }
+        .modal-header h3 {
+            margin: 0;
+        }
+        .modal-close {
+            background: none;
+            border: none;
+            font-size: 1.5rem;
+            cursor: pointer;
+            color: #7f8c8d;
+        }
+        .header-actions {
+            display: flex;
+            gap: 10px;
+        }
+        .script-editor-container {
+            position: relative;
+            margin-bottom: 15px;
+        }
+        .script-editor {
+            width: 100%;
+            min-height: 300px;
+            font-family: 'Courier New', monospace;
+            font-size: 14px;
+            padding: 15px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            resize: vertical;
+            line-height: 1.5;
+            tab-size: 4;
+        }
+        .test-panel {
+            background: #f8f9fa;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            padding: 15px;
+            margin-top: 15px;
+        }
+        .test-panel h4 {
+            margin: 0 0 10px 0;
+            color: #2c3e50;
+        }
+        .test-url {
+            font-family: 'Courier New', monospace;
+            background: white;
+            padding: 8px 12px;
+            border-radius: 4px;
+            margin-bottom: 10px;
+            word-break: break-all;
+        }
+        .test-result {
+            background: #1a1a1a;
+            color: #00ff00;
+            padding: 10px;
+            border-radius: 4px;
+            font-family: 'Courier New', monospace;
+            font-size: 0.85rem;
+            white-space: pre-wrap;
+            max-height: 200px;
+            overflow-y: auto;
+            margin-top: 10px;
+        }
+        .test-result.error {
+            color: #ff6b6b;
+        }
+    </style>
+</head>
+<body>
+    <div class="layout">
+        <aside class="sidebar">
+            <div class="logo"><h1>XxSql</h1><span>Web Management</span></div>
+            <nav>
+                <a href="/"><span class="icon">📊</span><span>Dashboard</span></a>
+                <a href="/query"><span class="icon">🔍</span><span>Query</span></a>
+                <a href="/tables"><span class="icon">📋</span><span>Tables</span></a>
+                <a href="/projects"><span class="icon">📁</span><span>Projects</span></a>
+                <a href="/microservices" class="active"><span class="icon">⚡</span><span>Microservices</span></a>
+                <a href="/users"><span class="icon">👥</span><span>Users</span></a>
+                <a href="/backup"><span class="icon">💾</span><span>Backup</span></a>
+                <a href="/logs"><span class="icon">📜</span><span>Logs</span></a>
+                <a href="/config"><span class="icon">⚙️</span><span>Config</span></a>
+            </nav>
+        </aside>
+
+        <main class="main">
+            <header class="header">
+                <h2>Microservices</h2>
+                <div class="header-actions">
+                    <button class="btn btn-primary" onclick="showCreateModal()">+ New Microservice</button>
+                    <div class="user-info"><span>{{.User}}</span><a href="/api/logout" onclick="logout(event)">Logout</a></div>
+                </div>
+            </header>
+
+            <div id="ms-list">
+                <div class="card"><p style="color: #7f8c8d;">Loading microservices...</p></div>
+            </div>
+        </main>
+    </div>
+
+    <!-- Create/Edit Modal -->
+    <div class="modal" id="edit-modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3 id="modal-title">New Microservice</h3>
+                <button class="modal-close" onclick="hideEditModal()">&times;</button>
+            </div>
+            <form id="edit-form" onsubmit="saveMicroservice(event)">
+                <div class="form-group">
+                    <label>Service Key (URL path)</label>
+                    <input type="text" id="ms-skey" required placeholder="myService" pattern="[a-zA-Z0-9_/-]+">
+                    <small style="color: #7f8c8d;">Access via: /ms/{skey}</small>
+                </div>
+                <div class="form-group">
+                    <label>Description</label>
+                    <input type="text" id="ms-description" placeholder="What does this service do?">
+                </div>
+                <div class="form-group">
+                    <label>XxScript Code</label>
+                    <div class="script-editor-container">
+                        <textarea class="script-editor" id="ms-script" required placeholder="// Example: Return a greeting
+var name = request.query.name || 'World';
+response.json({message: 'Hello, ' + name + '!'});"></textarea>
+                    </div>
+                </div>
+                <div style="display: flex; gap: 10px; justify-content: flex-end;">
+                    <button type="button" class="btn btn-secondary" onclick="hideEditModal()">Cancel</button>
+                    <button type="submit" class="btn btn-primary">Save</button>
+                </div>
+            </form>
+
+            <!-- Test Panel -->
+            <div class="test-panel" id="test-panel" style="display: none;">
+                <h4>Test Endpoint</h4>
+                <div class="test-url" id="test-url"></div>
+                <div style="display: flex; gap: 10px; margin-bottom: 10px;">
+                    <select id="test-method">
+                        <option value="GET">GET</option>
+                        <option value="POST">POST</option>
+                    </select>
+                    <input type="text" id="test-query" placeholder="Query params: key1=val1&key2=val2" style="flex: 1;">
+                </div>
+                <div class="form-group" style="margin-bottom: 10px;">
+                    <textarea id="test-body" placeholder="Request body (JSON)" style="width: 100%; height: 80px; font-family: monospace;"></textarea>
+                </div>
+                <button class="btn btn-secondary" onclick="testMicroservice()">Test</button>
+                <div class="test-result" id="test-result" style="display: none;"></div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Delete Confirmation Modal -->
+    <div class="modal" id="delete-modal">
+        <div class="modal-content">
+            <div class="modal-header">
+                <h3>Delete Microservice</h3>
+                <button class="modal-close" onclick="hideDeleteModal()">&times;</button>
+            </div>
+            <p>Are you sure you want to delete microservice "<span id="delete-ms-skey"></span>"?</p>
+            <div style="display: flex; gap: 10px; justify-content: flex-end; margin-top: 20px;">
+                <button class="btn btn-secondary" onclick="hideDeleteModal()">Cancel</button>
+                <button class="btn btn-danger" onclick="confirmDelete()">Delete</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let microservices = [];
+        let editingSkey = '';
+        let deleteSkey = '';
+
+        async function loadMicroservices() {
+            const resp = await fetch('/api/microservices');
+            const data = await resp.json();
+            microservices = data.microservices || [];
+            renderMicroservices();
+        }
+
+        function renderMicroservices() {
+            const container = document.getElementById('ms-list');
+
+            if (microservices.length === 0) {
+                container.innerHTML = `
+                    <div class="card">
+                        <p style="color: #7f8c8d;">No microservices found. Create a new microservice to get started.</p>
+                    </div>
+                `;
+                return;
+            }
+
+            container.innerHTML = microservices.map(ms => `
+                <div class="ms-card">
+                    <div class="ms-card-header">
+                        <h4>/ms/${escapeHtml(ms[0])}</h4>
+                        <div class="actions">
+                            <button class="btn btn-sm btn-secondary" onclick="editMicroservice('${escapeHtml(ms[0])}')">Edit</button>
+                            <button class="btn btn-sm btn-secondary" onclick="testEndpoint('${escapeHtml(ms[0])}')">Test</button>
+                            <button class="btn btn-sm btn-danger" onclick="showDeleteModal('${escapeHtml(ms[0])}')">Delete</button>
+                        </div>
+                    </div>
+                    <div class="ms-card-body">
+                        <div class="meta">
+                            ${escapeHtml(ms[2] || 'No description')} | Created: ${escapeHtml(ms[3] || '-')}
+                        </div>
+                        <div class="script-preview">${escapeHtml(ms[1] || '')}</div>
+                    </div>
+                </div>
+            `).join('');
+        }
+
+        function escapeHtml(str) {
+            if (str == null) return '';
+            return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+        }
+
+        function showCreateModal() {
+            editingSkey = '';
+            document.getElementById('modal-title').textContent = 'New Microservice';
+            document.getElementById('ms-skey').value = '';
+            document.getElementById('ms-skey').readOnly = false;
+            document.getElementById('ms-description').value = '';
+            document.getElementById('ms-script').value = '';
+            document.getElementById('test-panel').style.display = 'none';
+            document.getElementById('edit-modal').classList.add('active');
+            document.getElementById('ms-skey').focus();
+        }
+
+        function hideEditModal() {
+            document.getElementById('edit-modal').classList.remove('active');
+            editingSkey = '';
+        }
+
+        async function editMicroservice(skey) {
+            editingSkey = skey;
+            document.getElementById('modal-title').textContent = 'Edit Microservice';
+
+            const resp = await fetch('/api/microservices/' + encodeURIComponent(skey));
+            const data = await resp.json();
+
+            if (resp.ok && data.microservice) {
+                const ms = data.microservice;
+                document.getElementById('ms-skey').value = ms[0];
+                document.getElementById('ms-skey').readOnly = true;
+                document.getElementById('ms-description').value = ms[2] || '';
+                document.getElementById('ms-script').value = ms[1] || '';
+                document.getElementById('edit-modal').classList.add('active');
+
+                // Show test panel
+                document.getElementById('test-url').textContent = window.location.origin + '/ms/' + skey;
+                document.getElementById('test-panel').style.display = 'block';
+            } else {
+                alert('Error loading microservice: ' + (data.error || 'Unknown error'));
+            }
+        }
+
+        async function saveMicroservice(e) {
+            e.preventDefault();
+
+            const skey = document.getElementById('ms-skey').value.trim();
+            const description = document.getElementById('ms-description').value.trim();
+            const script = document.getElementById('ms-script').value;
+
+            if (!skey || !script) {
+                alert('Service key and script are required');
+                return;
+            }
+
+            try {
+                let resp;
+                if (editingSkey) {
+                    // Update existing
+                    resp = await fetch('/api/microservices/' + encodeURIComponent(editingSkey), {
+                        method: 'PUT',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ script, description })
+                    });
+                } else {
+                    // Create new
+                    resp = await fetch('/api/microservices', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ skey, script, description })
+                    });
+                }
+
+                const data = await resp.json();
+
+                if (resp.ok) {
+                    hideEditModal();
+                    loadMicroservices();
+                } else {
+                    alert('Error: ' + (data.error || 'Failed to save microservice'));
+                }
+            } catch (err) {
+                alert('Error: ' + err.message);
+            }
+        }
+
+        function showDeleteModal(skey) {
+            deleteSkey = skey;
+            document.getElementById('delete-ms-skey').textContent = skey;
+            document.getElementById('delete-modal').classList.add('active');
+        }
+
+        function hideDeleteModal() {
+            document.getElementById('delete-modal').classList.remove('active');
+            deleteSkey = '';
+        }
+
+        async function confirmDelete() {
+            if (!deleteSkey) return;
+
+            try {
+                const resp = await fetch('/api/microservices/' + encodeURIComponent(deleteSkey), {
+                    method: 'DELETE'
+                });
+                const data = await resp.json();
+
+                if (resp.ok) {
+                    hideDeleteModal();
+                    loadMicroservices();
+                } else {
+                    alert('Error: ' + (data.error || 'Failed to delete microservice'));
+                }
+            } catch (err) {
+                alert('Error: ' + err.message);
+            }
+        }
+
+        function testEndpoint(skey) {
+            window.open('/ms/' + skey, '_blank');
+        }
+
+        async function testMicroservice() {
+            if (!editingSkey) return;
+
+            const method = document.getElementById('test-method').value;
+            const query = document.getElementById('test-query').value;
+            const body = document.getElementById('test-body').value;
+
+            let url = '/ms/' + editingSkey;
+            if (query) {
+                url += '?' + query;
+            }
+
+            const resultDiv = document.getElementById('test-result');
+            resultDiv.style.display = 'block';
+            resultDiv.textContent = 'Testing...';
+            resultDiv.classList.remove('error');
+
+            try {
+                const options = {
+                    method: method,
+                    headers: {}
+                };
+
+                if (method === 'POST' && body) {
+                    options.headers['Content-Type'] = 'application/json';
+                    options.body = body;
+                }
+
+                const resp = await fetch(url, options);
+                const text = await resp.text();
+
+                try {
+                    const json = JSON.parse(text);
+                    resultDiv.textContent = 'Status: ' + resp.status + '\n\n' + JSON.stringify(json, null, 2);
+                } catch {
+                    resultDiv.textContent = 'Status: ' + resp.status + '\n\n' + text;
+                }
+
+                if (!resp.ok) {
+                    resultDiv.classList.add('error');
+                }
+            } catch (err) {
+                resultDiv.textContent = 'Error: ' + err.message;
+                resultDiv.classList.add('error');
+            }
+        }
+
+        function logout(e) {
+            e.preventDefault();
+            fetch('/api/logout', { method: 'POST' }).then(() => window.location.href = '/login');
+        }
+
+        loadMicroservices();
+    </script>
+</body>
+</html>

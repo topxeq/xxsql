@@ -101,6 +101,8 @@ func (s *Server) Start() error {
 	mux.HandleFunc("/logs", s.handlePage("logs"))
 	mux.HandleFunc("/config", s.handlePage("config"))
 	mux.HandleFunc("/login", s.handleLoginPage)
+	mux.HandleFunc("/projects", s.handlePage("projects"))
+	mux.HandleFunc("/microservices", s.handlePage("microservices"))
 
 	// API routes
 	mux.HandleFunc("/api/status", s.handleAPIStatus)
@@ -120,6 +122,14 @@ func (s *Server) Start() error {
 	mux.HandleFunc("/api/keys", s.handleAPIKeys)
 	mux.HandleFunc("/api/keys/", s.handleAPIKeyDetail)
 	mux.HandleFunc("/api/admin/reset", s.handleAPIAdminReset)
+
+	// Project API routes
+	mux.HandleFunc("/api/projects", s.handleAPIProjects)
+	mux.HandleFunc("/api/projects/", s.handleAPIProjectDetail)
+
+	// Microservice API routes
+	mux.HandleFunc("/api/microservices", s.handleAPIMicroservices)
+	mux.HandleFunc("/api/microservices/", s.handleAPIMicroserviceDetail)
 
 	// Microservice routes (XxScript)
 	mux.HandleFunc("/ms/", s.handleMicroservice)

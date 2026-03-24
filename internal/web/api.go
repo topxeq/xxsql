@@ -953,3 +953,494 @@ func (s *Server) handleAPIAdminReset(w http.ResponseWriter, r *http.Request) {
 
 	writeJSON(w, http.StatusOK, result)
 }
+
+// ============================================================================
+// Projects API
+// ============================================================================
+
+// handleAPIProjects handles GET/POST /api/projects
+func (s *Server) handleAPIProjects(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case http.MethodGet:
+		s.listProjects(w, r)
+	case http.MethodPost:
+		s.createProject(w, r)
+	default:
+		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+	}
+}
+
+// handleAPIProjectDetail handles DELETE /api/projects/{name}
+func (s *Server) handleAPIProjectDetail(w http.ResponseWriter, r *http.Request) {
+	name := strings.TrimPrefix(r.URL.Path, "/api/projects/")
+	if name == "" {
+		writeError(w, http.StatusBadRequest, "project name required")
+		return
+	}
+
+	switch r.Method {
+	case http.MethodDelete:
+		s.deleteProject(w, r, name)
+	default:
+		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+	}
+}
+
+func (s *Server) listProjects(w http.ResponseWriter, r *http.Request) {
+	exec := executor.NewExecutor(s.engine)
+	result, err := exec.Execute("SELECT name, version, installed_at, tables FROM _sys_projects")
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"projects": result.Rows,
+		"columns":  result.Columns,
+	})
+}
+
+func (s *Server) createProject(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Name    string `json:"name"`
+		Version string `json:"version"`
+	}
+	if err := readJSON(r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request")
+		return
+	}
+
+	if req.Name == "" {
+		writeError(w, http.StatusBadRequest, "project name required")
+		return
+	}
+
+	if req.Version == "" {
+		req.Version = "1.0.0"
+	}
+
+	// Create project directory
+	projectDir := filepath.Join(s.config.Server.DataDir, "projects", req.Name)
+	if err := os.MkdirAll(projectDir, 0755); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to create project directory")
+		return
+	}
+
+	// Register project
+	exec := executor.NewExecutor(s.engine)
+	sql := fmt.Sprintf("INSERT INTO _sys_projects (name, version, installed_at) VALUES ('%s', '%s', datetime('now'))",
+		req.Name, req.Version)
+	_, err := exec.Execute(sql)
+	if err != nil {
+		// Clean up directory if insert fails
+		os.RemoveAll(projectDir)
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"success": true,
+		"message": "Project created successfully",
+		"name":    req.Name,
+	})
+}
+
+func (s *Server) deleteProject(w http.ResponseWriter, r *http.Request, name string) {
+	// Get tables to drop
+	exec := executor.NewExecutor(s.engine)
+	result, err := exec.Execute(fmt.Sprintf("SELECT tables FROM _sys_projects WHERE name = '%s'", name))
+	if err == nil && len(result.Rows) > 0 && len(result.Rows[0]) > 0 {
+		if tables, ok := result.Rows[0][0].(string); ok && tables != "" {
+			for _, tbl := range strings.Split(tables, ",") {
+				tbl = strings.TrimSpace(tbl)
+				if tbl != "" {
+					exec.Execute(fmt.Sprintf("DROP TABLE IF EXISTS %s", tbl))
+				}
+			}
+		}
+	}
+
+	// Delete project files
+	projectDir := filepath.Join(s.config.Server.DataDir, "projects", name)
+	os.RemoveAll(projectDir)
+
+	// Unregister from database
+	exec.Execute(fmt.Sprintf("DELETE FROM _sys_projects WHERE name = '%s'", name))
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"success": true,
+		"message": "Project deleted successfully",
+	})
+}
+
+// ============================================================================
+// Project Files API
+// ============================================================================
+
+// handleAPIProjectFiles handles GET/POST /api/projects/{name}/files
+func (s *Server) handleAPIProjectFiles(w http.ResponseWriter, r *http.Request) {
+	// Extract project name
+	path := strings.TrimPrefix(r.URL.Path, "/api/projects/")
+	parts := strings.SplitN(path, "/", 2)
+	if len(parts) < 1 || parts[0] == "" {
+		writeError(w, http.StatusBadRequest, "project name required")
+		return
+	}
+	projectName := parts[0]
+
+	switch r.Method {
+	case http.MethodGet:
+		s.listProjectFiles(w, r, projectName)
+	case http.MethodPost:
+		s.createProjectFile(w, r, projectName)
+	default:
+		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+	}
+}
+
+// handleAPIProjectFileDetail handles GET/PUT/DELETE /api/projects/{name}/files/{path}
+func (s *Server) handleAPIProjectFileDetail(w http.ResponseWriter, r *http.Request) {
+	// Extract project name and file path
+	path := strings.TrimPrefix(r.URL.Path, "/api/projects/")
+	parts := strings.SplitN(path, "/", 2)
+	if len(parts) < 1 || parts[0] == "" {
+		writeError(w, http.StatusBadRequest, "project name required")
+		return
+	}
+	projectName := parts[0]
+
+	// Find "/files/" in the remaining path
+	remaining := ""
+	if len(parts) > 1 {
+		remaining = parts[1]
+	}
+
+	if !strings.HasPrefix(remaining, "files/") {
+		writeError(w, http.StatusBadRequest, "invalid path format")
+		return
+	}
+	filePath := strings.TrimPrefix(remaining, "files/")
+	if filePath == "" {
+		// Redirect to list
+		s.listProjectFiles(w, r, projectName)
+		return
+	}
+
+	switch r.Method {
+	case http.MethodGet:
+		s.getProjectFile(w, r, projectName, filePath)
+	case http.MethodPut:
+		s.updateProjectFile(w, r, projectName, filePath)
+	case http.MethodDelete:
+		s.deleteProjectFile(w, r, projectName, filePath)
+	default:
+		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+	}
+}
+
+func (s *Server) listProjectFiles(w http.ResponseWriter, r *http.Request, projectName string) {
+	projectDir := filepath.Join(s.config.Server.DataDir, "projects", projectName)
+
+	// Check if project exists
+	if _, err := os.Stat(projectDir); os.IsNotExist(err) {
+		writeError(w, http.StatusNotFound, "project not found")
+		return
+	}
+
+	// List files recursively
+	type FileInfo struct {
+		Name  string `json:"name"`
+		Path  string `json:"path"`
+		IsDir bool   `json:"isDir"`
+		Size  int64  `json:"size"`
+	}
+
+	var files []FileInfo
+	filepath.Walk(projectDir, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return nil
+		}
+		relPath, _ := filepath.Rel(projectDir, path)
+		if relPath == "." {
+			return nil
+		}
+		files = append(files, FileInfo{
+			Name:  info.Name(),
+			Path:  filepath.ToSlash(relPath),
+			IsDir: info.IsDir(),
+			Size:  info.Size(),
+		})
+		return nil
+	})
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"project": projectName,
+		"files":   files,
+	})
+}
+
+func (s *Server) createProjectFile(w http.ResponseWriter, r *http.Request, projectName string) {
+	var req struct {
+		Path    string `json:"path"`
+		Content string `json:"content"`
+		IsDir   bool   `json:"isDir"`
+	}
+	if err := readJSON(r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request")
+		return
+	}
+
+	if req.Path == "" {
+		writeError(w, http.StatusBadRequest, "path required")
+		return
+	}
+
+	// Security check
+	if strings.Contains(req.Path, "..") {
+		writeError(w, http.StatusBadRequest, "invalid path")
+		return
+	}
+
+	projectDir := filepath.Join(s.config.Server.DataDir, "projects", projectName)
+	fullPath := filepath.Join(projectDir, req.Path)
+
+	if req.IsDir {
+		if err := os.MkdirAll(fullPath, 0755); err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to create directory")
+			return
+		}
+	} else {
+		// Ensure parent directory exists
+		os.MkdirAll(filepath.Dir(fullPath), 0755)
+		if err := os.WriteFile(fullPath, []byte(req.Content), 0644); err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to create file")
+			return
+		}
+	}
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"success": true,
+		"message": "created successfully",
+		"path":    req.Path,
+	})
+}
+
+func (s *Server) getProjectFile(w http.ResponseWriter, r *http.Request, projectName, filePath string) {
+	projectDir := filepath.Join(s.config.Server.DataDir, "projects", projectName)
+	fullPath := filepath.Join(projectDir, filePath)
+
+	// Security check
+	if strings.Contains(filePath, "..") {
+		writeError(w, http.StatusBadRequest, "invalid path")
+		return
+	}
+
+	content, err := os.ReadFile(fullPath)
+	if err != nil {
+		writeError(w, http.StatusNotFound, "file not found")
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"project": projectName,
+		"path":    filePath,
+		"content": string(content),
+	})
+}
+
+func (s *Server) updateProjectFile(w http.ResponseWriter, r *http.Request, projectName, filePath string) {
+	var req struct {
+		Content string `json:"content"`
+	}
+	if err := readJSON(r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request")
+		return
+	}
+
+	// Security check
+	if strings.Contains(filePath, "..") {
+		writeError(w, http.StatusBadRequest, "invalid path")
+		return
+	}
+
+	projectDir := filepath.Join(s.config.Server.DataDir, "projects", projectName)
+	fullPath := filepath.Join(projectDir, filePath)
+
+	if err := os.WriteFile(fullPath, []byte(req.Content), 0644); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to update file")
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"success": true,
+		"message": "file updated",
+	})
+}
+
+func (s *Server) deleteProjectFile(w http.ResponseWriter, r *http.Request, projectName, filePath string) {
+	// Security check
+	if strings.Contains(filePath, "..") {
+		writeError(w, http.StatusBadRequest, "invalid path")
+		return
+	}
+
+	projectDir := filepath.Join(s.config.Server.DataDir, "projects", projectName)
+	fullPath := filepath.Join(projectDir, filePath)
+
+	if err := os.RemoveAll(fullPath); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to delete")
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"success": true,
+		"message": "deleted successfully",
+	})
+}
+
+// ============================================================================
+// Microservices API
+// ============================================================================
+
+// handleAPIMicroservices handles GET/POST /api/microservices
+func (s *Server) handleAPIMicroservices(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case http.MethodGet:
+		s.listMicroservices(w, r)
+	case http.MethodPost:
+		s.createMicroservice(w, r)
+	default:
+		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+	}
+}
+
+// handleAPIMicroserviceDetail handles GET/PUT/DELETE /api/microservices/{skey}
+func (s *Server) handleAPIMicroserviceDetail(w http.ResponseWriter, r *http.Request) {
+	skey := strings.TrimPrefix(r.URL.Path, "/api/microservices/")
+	if skey == "" {
+		writeError(w, http.StatusBadRequest, "service key required")
+		return
+	}
+
+	switch r.Method {
+	case http.MethodGet:
+		s.getMicroservice(w, r, skey)
+	case http.MethodPut:
+		s.updateMicroservice(w, r, skey)
+	case http.MethodDelete:
+		s.deleteMicroservice(w, r, skey)
+	default:
+		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+	}
+}
+
+func (s *Server) listMicroservices(w http.ResponseWriter, r *http.Request) {
+	exec := executor.NewExecutor(s.engine)
+	result, err := exec.Execute("SELECT SKEY, SCRIPT, description, created_at FROM _sys_ms ORDER BY SKEY")
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"microservices": result.Rows,
+		"columns":       result.Columns,
+	})
+}
+
+func (s *Server) getMicroservice(w http.ResponseWriter, r *http.Request, skey string) {
+	exec := executor.NewExecutor(s.engine)
+	result, err := exec.Execute(fmt.Sprintf("SELECT SKEY, SCRIPT, description, created_at FROM _sys_ms WHERE SKEY = '%s'", skey))
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	if len(result.Rows) == 0 {
+		writeError(w, http.StatusNotFound, "microservice not found")
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"microservice": result.Rows[0],
+		"columns":      result.Columns,
+	})
+}
+
+func (s *Server) createMicroservice(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		SKEY        string `json:"skey"`
+		SCRIPT      string `json:"script"`
+		Description string `json:"description"`
+	}
+	if err := readJSON(r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request")
+		return
+	}
+
+	if req.SKEY == "" {
+		writeError(w, http.StatusBadRequest, "service key required")
+		return
+	}
+
+	if req.SCRIPT == "" {
+		writeError(w, http.StatusBadRequest, "script required")
+		return
+	}
+
+	exec := executor.NewExecutor(s.engine)
+	desc := strings.ReplaceAll(req.Description, "'", "''")
+	sql := fmt.Sprintf("INSERT INTO _sys_ms (SKEY, SCRIPT, description, created_at) VALUES ('%s', '%s', '%s', datetime('now'))",
+		req.SKEY, strings.ReplaceAll(req.SCRIPT, "'", "''"), desc)
+	_, err := exec.Execute(sql)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"success": true,
+		"message": "microservice created",
+		"skey":    req.SKEY,
+	})
+}
+
+func (s *Server) updateMicroservice(w http.ResponseWriter, r *http.Request, skey string) {
+	var req struct {
+		SCRIPT      string `json:"script"`
+		Description string `json:"description"`
+	}
+	if err := readJSON(r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request")
+		return
+	}
+
+	exec := executor.NewExecutor(s.engine)
+	desc := strings.ReplaceAll(req.Description, "'", "''")
+	sql := fmt.Sprintf("UPDATE _sys_ms SET SCRIPT = '%s', description = '%s' WHERE SKEY = '%s'",
+		strings.ReplaceAll(req.SCRIPT, "'", "''"), desc, skey)
+	_, err := exec.Execute(sql)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"success": true,
+		"message": "microservice updated",
+	})
+}
+
+func (s *Server) deleteMicroservice(w http.ResponseWriter, r *http.Request, skey string) {
+	exec := executor.NewExecutor(s.engine)
+	_, err := exec.Execute(fmt.Sprintf("DELETE FROM _sys_ms WHERE SKEY = '%s'", skey))
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"success": true,
+		"message": "microservice deleted",
+	})
+}
