@@ -1212,6 +1212,52 @@ func (i *Interpreter) callBuiltin(name string, args []Value) (Value, bool) {
 		return i.builtinDirDelete(args), true
 	case "fileServe":
 		return i.builtinFileServe(args), true
+	// Path operations
+	case "pathJoin":
+		return i.builtinPathJoin(args), true
+	case "pathBase":
+		return i.builtinPathBase(args), true
+	case "pathDir":
+		return i.builtinPathDir(args), true
+	case "pathExt":
+		return i.builtinPathExt(args), true
+	case "pathAbs":
+		return i.builtinPathAbs(args), true
+	case "pathClean":
+		return i.builtinPathClean(args), true
+	case "pathSplit":
+		return i.builtinPathSplit(args), true
+	case "pathIsAbs":
+		return i.builtinPathIsAbs(args), true
+	// Extended file operations
+	case "fileInfo":
+		return i.builtinFileInfo(args), true
+	case "fileCopy":
+		return i.builtinFileCopy(args), true
+	case "fileMove":
+		return i.builtinFileMove(args), true
+	case "fileRename":
+		return i.builtinFileMove(args), true // alias
+	case "fileSize":
+		return i.builtinFileSize(args), true
+	case "fileModTime":
+		return i.builtinFileModTime(args), true
+	case "fileIsDir":
+		return i.builtinFileIsDir(args), true
+	case "fileWalk":
+		return i.builtinFileWalk(args), true
+	case "fileAppend":
+		return i.builtinFileAppend(args), true
+	case "fileGlob":
+		return i.builtinFileGlob(args), true
+	case "fileTouch":
+		return i.builtinFileTouch(args), true
+	case "dirExists":
+		return i.builtinDirExists(args), true
+	case "dirCopy":
+		return i.builtinDirCopy(args), true
+	case "dirWalk":
+		return i.builtinFileWalk(args), true // alias
 	default:
 		return nil, false
 	}
@@ -3339,6 +3385,529 @@ func (i *Interpreter) builtinFileServe(args []Value) Value {
 	i.ctx.HTTPWriter.Write(data)
 
 	return map[string]Value{"success": true}
+}
+
+// ============================================================================
+// Path Operations
+// ============================================================================
+
+// builtinPathJoin joins path components
+func (i *Interpreter) builtinPathJoin(args []Value) Value {
+	if len(args) == 0 {
+		return ""
+	}
+	parts := make([]string, 0, len(args))
+	for _, arg := range args {
+		if s, ok := arg.(string); ok {
+			parts = append(parts, s)
+		}
+	}
+	result := filepath.Join(parts...)
+	// Make relative to BaseDir if not absolute
+	if i.ctx.BaseDir != "" && !filepath.IsAbs(result) {
+		result = filepath.Join(i.ctx.BaseDir, result)
+	}
+	return result
+}
+
+// builtinPathBase returns the last element of the path
+func (i *Interpreter) builtinPathBase(args []Value) Value {
+	if len(args) == 0 {
+		return ""
+	}
+	path, ok := args[0].(string)
+	if !ok {
+		return ""
+	}
+	return filepath.Base(path)
+}
+
+// builtinPathDir returns the directory part of the path
+func (i *Interpreter) builtinPathDir(args []Value) Value {
+	if len(args) == 0 {
+		return ""
+	}
+	path, ok := args[0].(string)
+	if !ok {
+		return ""
+	}
+	return filepath.Dir(path)
+}
+
+// builtinPathExt returns the file extension
+func (i *Interpreter) builtinPathExt(args []Value) Value {
+	if len(args) == 0 {
+		return ""
+	}
+	path, ok := args[0].(string)
+	if !ok {
+		return ""
+	}
+	return filepath.Ext(path)
+}
+
+// builtinPathAbs returns the absolute path
+func (i *Interpreter) builtinPathAbs(args []Value) Value {
+	if len(args) == 0 {
+		return ""
+	}
+	path, ok := args[0].(string)
+	if !ok {
+		return ""
+	}
+	// Resolve relative to BaseDir if not absolute
+	if i.ctx.BaseDir != "" && !filepath.IsAbs(path) {
+		path = filepath.Join(i.ctx.BaseDir, path)
+	}
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return path
+	}
+	return abs
+}
+
+// builtinPathClean cleans the path (removes . and ..)
+func (i *Interpreter) builtinPathClean(args []Value) Value {
+	if len(args) == 0 {
+		return ""
+	}
+	path, ok := args[0].(string)
+	if !ok {
+		return ""
+	}
+	return filepath.Clean(path)
+}
+
+// builtinPathSplit splits path into directory and file
+func (i *Interpreter) builtinPathSplit(args []Value) Value {
+	if len(args) == 0 {
+		return map[string]Value{"dir": "", "file": ""}
+	}
+	path, ok := args[0].(string)
+	if !ok {
+		return map[string]Value{"dir": "", "file": ""}
+	}
+	dir, file := filepath.Split(path)
+	return map[string]Value{"dir": dir, "file": file}
+}
+
+// builtinPathIsAbs checks if the path is absolute
+func (i *Interpreter) builtinPathIsAbs(args []Value) Value {
+	if len(args) == 0 {
+		return false
+	}
+	path, ok := args[0].(string)
+	if !ok {
+		return false
+	}
+	return filepath.IsAbs(path)
+}
+
+// ============================================================================
+// Extended File Operations
+// ============================================================================
+
+// builtinFileInfo returns detailed file information
+func (i *Interpreter) builtinFileInfo(args []Value) Value {
+	if len(args) == 0 {
+		return map[string]Value{"success": false, "error": "fileInfo requires 1 argument (path)"}
+	}
+
+	path, ok := args[0].(string)
+	if !ok {
+		return map[string]Value{"success": false, "error": "path must be a string"}
+	}
+
+	// Resolve path relative to BaseDir
+	if i.ctx.BaseDir != "" && !filepath.IsAbs(path) {
+		path = filepath.Join(i.ctx.BaseDir, path)
+	}
+
+	info, err := os.Stat(path)
+	if err != nil {
+		return map[string]Value{"success": false, "error": err.Error()}
+	}
+
+	return map[string]Value{
+		"success":  true,
+		"name":     info.Name(),
+		"size":     info.Size(),
+		"isDir":    info.IsDir(),
+		"modTime":  info.ModTime().Format(time.RFC3339),
+		"mode":     info.Mode().String(),
+	}
+}
+
+// builtinFileCopy copies a file
+func (i *Interpreter) builtinFileCopy(args []Value) Value {
+	if len(args) < 2 {
+		return map[string]Value{"success": false, "error": "fileCopy requires 2 arguments (src, dst)"}
+	}
+
+	src, ok1 := args[0].(string)
+	dst, ok2 := args[1].(string)
+	if !ok1 || !ok2 {
+		return map[string]Value{"success": false, "error": "paths must be strings"}
+	}
+
+	// Resolve paths relative to BaseDir
+	if i.ctx.BaseDir != "" {
+		if !filepath.IsAbs(src) {
+			src = filepath.Join(i.ctx.BaseDir, src)
+		}
+		if !filepath.IsAbs(dst) {
+			dst = filepath.Join(i.ctx.BaseDir, dst)
+		}
+	}
+
+	// Read source file
+	data, err := os.ReadFile(src)
+	if err != nil {
+		return map[string]Value{"success": false, "error": fmt.Sprintf("failed to read source: %v", err)}
+	}
+
+	// Ensure destination directory exists
+	if err := os.MkdirAll(filepath.Dir(dst), 0755); err != nil {
+		return map[string]Value{"success": false, "error": fmt.Sprintf("failed to create directory: %v", err)}
+	}
+
+	// Write destination file
+	if err := os.WriteFile(dst, data, 0644); err != nil {
+		return map[string]Value{"success": false, "error": fmt.Sprintf("failed to write destination: %v", err)}
+	}
+
+	return map[string]Value{"success": true, "src": src, "dst": dst}
+}
+
+// builtinFileMove moves/renames a file
+func (i *Interpreter) builtinFileMove(args []Value) Value {
+	if len(args) < 2 {
+		return map[string]Value{"success": false, "error": "fileMove requires 2 arguments (src, dst)"}
+	}
+
+	src, ok1 := args[0].(string)
+	dst, ok2 := args[1].(string)
+	if !ok1 || !ok2 {
+		return map[string]Value{"success": false, "error": "paths must be strings"}
+	}
+
+	// Resolve paths relative to BaseDir
+	if i.ctx.BaseDir != "" {
+		if !filepath.IsAbs(src) {
+			src = filepath.Join(i.ctx.BaseDir, src)
+		}
+		if !filepath.IsAbs(dst) {
+			dst = filepath.Join(i.ctx.BaseDir, dst)
+		}
+	}
+
+	// Ensure destination directory exists
+	if err := os.MkdirAll(filepath.Dir(dst), 0755); err != nil {
+		return map[string]Value{"success": false, "error": fmt.Sprintf("failed to create directory: %v", err)}
+	}
+
+	if err := os.Rename(src, dst); err != nil {
+		return map[string]Value{"success": false, "error": fmt.Sprintf("failed to move: %v", err)}
+	}
+
+	return map[string]Value{"success": true, "src": src, "dst": dst}
+}
+
+// builtinFileSize returns file size
+func (i *Interpreter) builtinFileSize(args []Value) Value {
+	if len(args) == 0 {
+		return int64(-1)
+	}
+
+	path, ok := args[0].(string)
+	if !ok {
+		return int64(-1)
+	}
+
+	// Resolve path relative to BaseDir
+	if i.ctx.BaseDir != "" && !filepath.IsAbs(path) {
+		path = filepath.Join(i.ctx.BaseDir, path)
+	}
+
+	info, err := os.Stat(path)
+	if err != nil {
+		return int64(-1)
+	}
+	return info.Size()
+}
+
+// builtinFileModTime returns file modification time
+func (i *Interpreter) builtinFileModTime(args []Value) Value {
+	if len(args) == 0 {
+		return ""
+	}
+
+	path, ok := args[0].(string)
+	if !ok {
+		return ""
+	}
+
+	// Resolve path relative to BaseDir
+	if i.ctx.BaseDir != "" && !filepath.IsAbs(path) {
+		path = filepath.Join(i.ctx.BaseDir, path)
+	}
+
+	info, err := os.Stat(path)
+	if err != nil {
+		return ""
+	}
+	return info.ModTime().Format(time.RFC3339)
+}
+
+// builtinFileIsDir checks if path is a directory
+func (i *Interpreter) builtinFileIsDir(args []Value) Value {
+	if len(args) == 0 {
+		return false
+	}
+
+	path, ok := args[0].(string)
+	if !ok {
+		return false
+	}
+
+	// Resolve path relative to BaseDir
+	if i.ctx.BaseDir != "" && !filepath.IsAbs(path) {
+		path = filepath.Join(i.ctx.BaseDir, path)
+	}
+
+	info, err := os.Stat(path)
+	if err != nil {
+		return false
+	}
+	return info.IsDir()
+}
+
+// builtinFileWalk walks directory tree recursively
+func (i *Interpreter) builtinFileWalk(args []Value) Value {
+	if len(args) == 0 {
+		return []Value{}
+	}
+
+	root, ok := args[0].(string)
+	if !ok {
+		return []Value{}
+	}
+
+	// Resolve path relative to BaseDir
+	if i.ctx.BaseDir != "" && !filepath.IsAbs(root) {
+		root = filepath.Join(i.ctx.BaseDir, root)
+	}
+
+	result := []Value{}
+
+	filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return nil
+		}
+		// Make path relative to root
+		relPath, _ := filepath.Rel(root, path)
+		result = append(result, map[string]Value{
+			"path":    path,
+			"relPath": relPath,
+			"name":    info.Name(),
+			"size":    info.Size(),
+			"isDir":   info.IsDir(),
+			"modTime": info.ModTime().Format(time.RFC3339),
+		})
+		return nil
+	})
+
+	return result
+}
+
+// builtinFileAppend appends content to a file
+func (i *Interpreter) builtinFileAppend(args []Value) Value {
+	if len(args) < 2 {
+		return map[string]Value{"success": false, "error": "fileAppend requires 2 arguments (path, content)"}
+	}
+
+	path, ok := args[0].(string)
+	if !ok {
+		return map[string]Value{"success": false, "error": "path must be a string"}
+	}
+
+	// Resolve path relative to BaseDir
+	if i.ctx.BaseDir != "" && !filepath.IsAbs(path) {
+		path = filepath.Join(i.ctx.BaseDir, path)
+	}
+
+	// Get content
+	var data []byte
+	switch v := args[1].(type) {
+	case string:
+		data = []byte(v)
+	case []byte:
+		data = v
+	default:
+		data = []byte(fmt.Sprintf("%v", v))
+	}
+
+	// Ensure parent directory exists
+	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+		return map[string]Value{"success": false, "error": fmt.Sprintf("failed to create directory: %v", err)}
+	}
+
+	// Open file in append mode
+	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	if err != nil {
+		return map[string]Value{"success": false, "error": fmt.Sprintf("failed to open file: %v", err)}
+	}
+	defer f.Close()
+
+	if _, err := f.Write(data); err != nil {
+		return map[string]Value{"success": false, "error": fmt.Sprintf("failed to append: %v", err)}
+	}
+
+	return map[string]Value{"success": true, "path": path}
+}
+
+// builtinFileGlob matches files by pattern
+func (i *Interpreter) builtinFileGlob(args []Value) Value {
+	if len(args) == 0 {
+		return []Value{}
+	}
+
+	pattern, ok := args[0].(string)
+	if !ok {
+		return []Value{}
+	}
+
+	// Resolve pattern relative to BaseDir
+	if i.ctx.BaseDir != "" && !filepath.IsAbs(pattern) {
+		pattern = filepath.Join(i.ctx.BaseDir, pattern)
+	}
+
+	matches, err := filepath.Glob(pattern)
+	if err != nil {
+		return []Value{}
+	}
+
+	result := make([]Value, len(matches))
+	for i, m := range matches {
+		result[i] = m
+	}
+	return result
+}
+
+// builtinFileTouch creates an empty file or updates modification time
+func (i *Interpreter) builtinFileTouch(args []Value) Value {
+	if len(args) == 0 {
+		return map[string]Value{"success": false, "error": "fileTouch requires 1 argument (path)"}
+	}
+
+	path, ok := args[0].(string)
+	if !ok {
+		return map[string]Value{"success": false, "error": "path must be a string"}
+	}
+
+	// Resolve path relative to BaseDir
+	if i.ctx.BaseDir != "" && !filepath.IsAbs(path) {
+		path = filepath.Join(i.ctx.BaseDir, path)
+	}
+
+	// Ensure parent directory exists
+	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+		return map[string]Value{"success": false, "error": fmt.Sprintf("failed to create directory: %v", err)}
+	}
+
+	// Create or touch file
+	f, err := os.OpenFile(path, os.O_RDONLY|os.O_CREATE, 0644)
+	if err != nil {
+		return map[string]Value{"success": false, "error": fmt.Sprintf("failed to touch file: %v", err)}
+	}
+	f.Close()
+
+	// Update modification time
+	now := time.Now()
+	if err := os.Chtimes(path, now, now); err != nil {
+		return map[string]Value{"success": false, "error": fmt.Sprintf("failed to update time: %v", err)}
+	}
+
+	return map[string]Value{"success": true, "path": path}
+}
+
+// builtinDirExists checks if a directory exists
+func (i *Interpreter) builtinDirExists(args []Value) Value {
+	if len(args) == 0 {
+		return false
+	}
+
+	path, ok := args[0].(string)
+	if !ok {
+		return false
+	}
+
+	// Resolve path relative to BaseDir
+	if i.ctx.BaseDir != "" && !filepath.IsAbs(path) {
+		path = filepath.Join(i.ctx.BaseDir, path)
+	}
+
+	info, err := os.Stat(path)
+	if err != nil {
+		return false
+	}
+	return info.IsDir()
+}
+
+// builtinDirCopy copies a directory recursively
+func (i *Interpreter) builtinDirCopy(args []Value) Value {
+	if len(args) < 2 {
+		return map[string]Value{"success": false, "error": "dirCopy requires 2 arguments (src, dst)"}
+	}
+
+	src, ok1 := args[0].(string)
+	dst, ok2 := args[1].(string)
+	if !ok1 || !ok2 {
+		return map[string]Value{"success": false, "error": "paths must be strings"}
+	}
+
+	// Resolve paths relative to BaseDir
+	if i.ctx.BaseDir != "" {
+		if !filepath.IsAbs(src) {
+			src = filepath.Join(i.ctx.BaseDir, src)
+		}
+		if !filepath.IsAbs(dst) {
+			dst = filepath.Join(i.ctx.BaseDir, dst)
+		}
+	}
+
+	// Walk and copy
+	copied := 0
+	err := filepath.Walk(src, func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return err
+		}
+
+		// Calculate destination path
+		relPath, _ := filepath.Rel(src, path)
+		dstPath := filepath.Join(dst, relPath)
+
+		if info.IsDir() {
+			return os.MkdirAll(dstPath, info.Mode())
+		}
+
+		// Copy file
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		if err := os.WriteFile(dstPath, data, info.Mode()); err != nil {
+			return err
+		}
+		copied++
+		return nil
+	})
+
+	if err != nil {
+		return map[string]Value{"success": false, "error": err.Error()}
+	}
+
+	return map[string]Value{"success": true, "src": src, "dst": dst, "filesCopied": copied}
 }
 
 // SetupBuiltins sets up built-in objects.
