@@ -11,13 +11,16 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"html"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"reflect"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/topxeq/xxsql/internal/storage"
 )
@@ -1092,6 +1095,63 @@ func (i *Interpreter) callBuiltin(name string, args []Value) (Value, bool) {
 		return i.builtinIndexOf(args), true
 	case "substr":
 		return i.builtinSubstr(args), true
+	// Extended string functions
+	case "repeat":
+		return i.builtinRepeat(args), true
+	case "reverse":
+		return i.builtinReverse(args), true
+	case "padLeft":
+		return i.builtinPadLeft(args), true
+	case "padRight":
+		return i.builtinPadRight(args), true
+	case "ltrim":
+		return i.builtinLTrim(args), true
+	case "rtrim":
+		return i.builtinRTrim(args), true
+	case "count":
+		return i.builtinCount(args), true
+	case "lastIndexOf":
+		return i.builtinLastIndexOf(args), true
+	case "capitalize":
+		return i.builtinCapitalize(args), true
+	case "title":
+		return i.builtinTitle(args), true
+	case "swapCase":
+		return i.builtinSwapCase(args), true
+	case "isAlpha":
+		return i.builtinIsAlpha(args), true
+	case "isNumeric":
+		return i.builtinIsNumeric(args), true
+	case "isAlphaNumeric":
+		return i.builtinIsAlphaNumeric(args), true
+	case "isEmpty":
+		return i.builtinIsEmpty(args), true
+	case "truncate":
+		return i.builtinTruncate(args), true
+	case "wordCount":
+		return i.builtinWordCount(args), true
+	case "escapeHTML":
+		return i.builtinEscapeHTML(args), true
+	case "unescapeHTML":
+		return i.builtinUnescapeHTML(args), true
+	case "escapeURL":
+		return i.builtinEscapeURL(args), true
+	case "unescapeURL":
+		return i.builtinUnescapeURL(args), true
+	case "left":
+		return i.builtinLeft(args), true
+	case "right":
+		return i.builtinRight(args), true
+	case "center":
+		return i.builtinCenter(args), true
+	case "lines":
+		return i.builtinLines(args), true
+	case "words":
+		return i.builtinWords(args), true
+	case "startsWith":
+		return i.builtinHasPrefix(args), true
+	case "endsWith":
+		return i.builtinHasSuffix(args), true
 	// Array functions
 	case "push":
 		return i.builtinPush(args), true
@@ -1637,6 +1697,432 @@ func (i *Interpreter) builtinSubstr(args []Value) Value {
 		return s[start:end]
 	}
 	return s[start:]
+}
+
+// Additional string manipulation functions
+
+func (i *Interpreter) builtinRepeat(args []Value) Value {
+	if len(args) < 2 {
+		return ""
+	}
+	s, ok := args[0].(string)
+	if !ok {
+		return ""
+	}
+	n := i.toInt(args[1])
+	if n <= 0 {
+		return ""
+	}
+	return strings.Repeat(s, n)
+}
+
+func (i *Interpreter) builtinReverse(args []Value) Value {
+	if len(args) == 0 {
+		return ""
+	}
+	s, ok := args[0].(string)
+	if !ok {
+		return ""
+	}
+	runes := []rune(s)
+	for i, j := 0, len(runes)-1; i < j; i, j = i+1, j-1 {
+		runes[i], runes[j] = runes[j], runes[i]
+	}
+	return string(runes)
+}
+
+func (i *Interpreter) builtinPadLeft(args []Value) Value {
+	if len(args) < 3 {
+		if len(args) == 0 {
+			return ""
+		}
+		s, _ := args[0].(string)
+		return s
+	}
+	s, ok := args[0].(string)
+	if !ok {
+		return ""
+	}
+	length := i.toInt(args[1])
+	pad, ok := args[2].(string)
+	if !ok || pad == "" {
+		pad = " "
+	}
+	if len(s) >= length {
+		return s
+	}
+	padLen := length - len(s)
+	return strings.Repeat(pad, (padLen+len(pad)-1)/len(pad))[:padLen] + s
+}
+
+func (i *Interpreter) builtinPadRight(args []Value) Value {
+	if len(args) < 3 {
+		if len(args) == 0 {
+			return ""
+		}
+		s, _ := args[0].(string)
+		return s
+	}
+	s, ok := args[0].(string)
+	if !ok {
+		return ""
+	}
+	length := i.toInt(args[1])
+	pad, ok := args[2].(string)
+	if !ok || pad == "" {
+		pad = " "
+	}
+	if len(s) >= length {
+		return s
+	}
+	padLen := length - len(s)
+	return s + strings.Repeat(pad, (padLen+len(pad)-1)/len(pad))[:padLen]
+}
+
+func (i *Interpreter) builtinLTrim(args []Value) Value {
+	if len(args) == 0 {
+		return ""
+	}
+	s, ok := args[0].(string)
+	if !ok {
+		return ""
+	}
+	cutset := " \t\n\r"
+	if len(args) > 1 {
+		cutset, _ = args[1].(string)
+	}
+	return strings.TrimLeft(s, cutset)
+}
+
+func (i *Interpreter) builtinRTrim(args []Value) Value {
+	if len(args) == 0 {
+		return ""
+	}
+	s, ok := args[0].(string)
+	if !ok {
+		return ""
+	}
+	cutset := " \t\n\r"
+	if len(args) > 1 {
+		cutset, _ = args[1].(string)
+	}
+	return strings.TrimRight(s, cutset)
+}
+
+func (i *Interpreter) builtinCount(args []Value) Value {
+	if len(args) < 2 {
+		return 0
+	}
+	s, ok := args[0].(string)
+	if !ok {
+		return 0
+	}
+	substr, ok := args[1].(string)
+	if !ok {
+		return 0
+	}
+	return strings.Count(s, substr)
+}
+
+func (i *Interpreter) builtinLastIndexOf(args []Value) Value {
+	if len(args) < 2 {
+		return -1
+	}
+	s, ok := args[0].(string)
+	if !ok {
+		return -1
+	}
+	substr, ok := args[1].(string)
+	if !ok {
+		return -1
+	}
+	return strings.LastIndex(s, substr)
+}
+
+func (i *Interpreter) builtinCapitalize(args []Value) Value {
+	if len(args) == 0 {
+		return ""
+	}
+	s, ok := args[0].(string)
+	if !ok || s == "" {
+		return ""
+	}
+	return strings.ToUpper(s[:1]) + strings.ToLower(s[1:])
+}
+
+func (i *Interpreter) builtinTitle(args []Value) Value {
+	if len(args) == 0 {
+		return ""
+	}
+	s, ok := args[0].(string)
+	if !ok {
+		return ""
+	}
+	return strings.Title(s)
+}
+
+func (i *Interpreter) builtinSwapCase(args []Value) Value {
+	if len(args) == 0 {
+		return ""
+	}
+	s, ok := args[0].(string)
+	if !ok {
+		return ""
+	}
+	var result strings.Builder
+	for _, r := range s {
+		if unicode.IsUpper(r) {
+			result.WriteRune(unicode.ToLower(r))
+		} else if unicode.IsLower(r) {
+			result.WriteRune(unicode.ToUpper(r))
+		} else {
+			result.WriteRune(r)
+		}
+	}
+	return result.String()
+}
+
+func (i *Interpreter) builtinIsAlpha(args []Value) Value {
+	if len(args) == 0 {
+		return false
+	}
+	s, ok := args[0].(string)
+	if !ok || s == "" {
+		return false
+	}
+	for _, r := range s {
+		if !unicode.IsLetter(r) {
+			return false
+		}
+	}
+	return true
+}
+
+func (i *Interpreter) builtinIsNumeric(args []Value) Value {
+	if len(args) == 0 {
+		return false
+	}
+	s, ok := args[0].(string)
+	if !ok || s == "" {
+		return false
+	}
+	for _, r := range s {
+		if !unicode.IsDigit(r) {
+			return false
+		}
+	}
+	return true
+}
+
+func (i *Interpreter) builtinIsAlphaNumeric(args []Value) Value {
+	if len(args) == 0 {
+		return false
+	}
+	s, ok := args[0].(string)
+	if !ok || s == "" {
+		return false
+	}
+	for _, r := range s {
+		if !unicode.IsLetter(r) && !unicode.IsDigit(r) {
+			return false
+		}
+	}
+	return true
+}
+
+func (i *Interpreter) builtinIsEmpty(args []Value) Value {
+	if len(args) == 0 {
+		return true
+	}
+	s, ok := args[0].(string)
+	if !ok {
+		return true
+	}
+	return strings.TrimSpace(s) == ""
+}
+
+func (i *Interpreter) builtinTruncate(args []Value) Value {
+	if len(args) == 0 {
+		return ""
+	}
+	s, ok := args[0].(string)
+	if !ok {
+		return ""
+	}
+	maxLen := 100
+	suffix := "..."
+	if len(args) > 1 {
+		maxLen = i.toInt(args[1])
+	}
+	if len(args) > 2 {
+		suffix, _ = args[2].(string)
+	}
+	if len(s) <= maxLen {
+		return s
+	}
+	return s[:maxLen] + suffix
+}
+
+func (i *Interpreter) builtinWordCount(args []Value) Value {
+	if len(args) == 0 {
+		return 0
+	}
+	s, ok := args[0].(string)
+	if !ok {
+		return 0
+	}
+	words := strings.Fields(s)
+	return len(words)
+}
+
+func (i *Interpreter) builtinEscapeHTML(args []Value) Value {
+	if len(args) == 0 {
+		return ""
+	}
+	s, ok := args[0].(string)
+	if !ok {
+		return ""
+	}
+	return html.EscapeString(s)
+}
+
+func (i *Interpreter) builtinUnescapeHTML(args []Value) Value {
+	if len(args) == 0 {
+		return ""
+	}
+	s, ok := args[0].(string)
+	if !ok {
+		return ""
+	}
+	return html.UnescapeString(s)
+}
+
+func (i *Interpreter) builtinEscapeURL(args []Value) Value {
+	if len(args) == 0 {
+		return ""
+	}
+	s, ok := args[0].(string)
+	if !ok {
+		return ""
+	}
+	return url.QueryEscape(s)
+}
+
+func (i *Interpreter) builtinUnescapeURL(args []Value) Value {
+	if len(args) == 0 {
+		return ""
+	}
+	s, ok := args[0].(string)
+	if !ok {
+		return ""
+	}
+	result, _ := url.QueryUnescape(s)
+	return result
+}
+
+func (i *Interpreter) builtinLeft(args []Value) Value {
+	if len(args) < 2 {
+		return ""
+	}
+	s, ok := args[0].(string)
+	if !ok {
+		return ""
+	}
+	n := i.toInt(args[1])
+	if n <= 0 {
+		return ""
+	}
+	if n >= len(s) {
+		return s
+	}
+	return s[:n]
+}
+
+func (i *Interpreter) builtinRight(args []Value) Value {
+	if len(args) < 2 {
+		return ""
+	}
+	s, ok := args[0].(string)
+	if !ok {
+		return ""
+	}
+	n := i.toInt(args[1])
+	if n <= 0 {
+		return ""
+	}
+	if n >= len(s) {
+		return s
+	}
+	return s[len(s)-n:]
+}
+
+func (i *Interpreter) builtinCenter(args []Value) Value {
+	if len(args) < 3 {
+		if len(args) == 0 {
+			return ""
+		}
+		s, _ := args[0].(string)
+		return s
+	}
+	s, ok := args[0].(string)
+	if !ok {
+		return ""
+	}
+	width := i.toInt(args[1])
+	pad, ok := args[2].(string)
+	if !ok || pad == "" {
+		pad = " "
+	}
+	if len(s) >= width {
+		return s
+	}
+	padLen := width - len(s)
+	leftPad := padLen / 2
+	rightPad := padLen - leftPad
+
+	leftStr := strings.Repeat(pad, (leftPad+len(pad)-1)/len(pad))[:leftPad]
+	rightStr := strings.Repeat(pad, (rightPad+len(pad)-1)/len(pad))[:rightPad]
+	return leftStr + s + rightStr
+}
+
+func (i *Interpreter) builtinLines(args []Value) Value {
+	if len(args) == 0 {
+		return []Value{}
+	}
+	s, ok := args[0].(string)
+	if !ok {
+		return []Value{}
+	}
+	lines := strings.Split(s, "\n")
+	result := make([]Value, len(lines))
+	for i, line := range lines {
+		result[i] = strings.TrimRight(line, "\r")
+	}
+	return result
+}
+
+func (i *Interpreter) builtinWords(args []Value) Value {
+	if len(args) == 0 {
+		return []Value{}
+	}
+	s, ok := args[0].(string)
+	if !ok {
+		return []Value{}
+	}
+	words := strings.Fields(s)
+	result := make([]Value, len(words))
+	for i, word := range words {
+		result[i] = word
+	}
+	return result
+}
+
+func (i *Interpreter) builtinStartsWith(args []Value) Value {
+	return i.builtinHasPrefix(args)
+}
+
+func (i *Interpreter) builtinEndsWith(args []Value) Value {
+	return i.builtinHasSuffix(args)
 }
 
 // Array functions
