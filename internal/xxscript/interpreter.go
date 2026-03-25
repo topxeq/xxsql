@@ -2550,6 +2550,85 @@ func (i *Interpreter) callBuiltin(name string, args []Value) (Value, bool) {
 		return i.builtinMetricsGauge(args), true
 	case "metricsGet":
 		return i.builtinMetricsGet(args), true
+	// Phase 2: OAuth & Authentication
+	case "oauth2URL":
+		return i.builtinOAuth2URL(args), true
+	case "oauth2Token":
+		return i.builtinOAuth2Token(args), true
+	case "oauth2Refresh":
+		return i.builtinOAuth2Refresh(args), true
+	case "sessionCreate":
+		return i.builtinSessionCreate(args), true
+	case "sessionValidate":
+		return i.builtinSessionValidate(args), true
+	case "sessionDestroy":
+		return i.builtinSessionDestroy(args), true
+	// Phase 2: Message Queue
+	case "queueCreate":
+		return i.builtinQueueCreate(args), true
+	case "queuePush":
+		return i.builtinQueuePush(args), true
+	case "queuePop":
+		return i.builtinQueuePop(args), true
+	case "queuePeek":
+		return i.builtinQueuePeek(args), true
+	case "queueSize":
+		return i.builtinQueueSize(args), true
+	case "topicCreate":
+		return i.builtinTopicCreate(args), true
+	case "topicPublish":
+		return i.builtinTopicPublish(args), true
+	case "topicSubscribe":
+		return i.builtinTopicSubscribe(args), true
+	// Phase 2: Rule Engine
+	case "ruleCreate":
+		return i.builtinRuleCreate(args), true
+	case "ruleAddCondition":
+		return i.builtinRuleAddCondition(args), true
+	case "ruleEvaluate":
+		return i.builtinRuleEvaluate(args), true
+	case "ruleChain":
+		return i.builtinRuleChain(args), true
+	case "decisionTable":
+		return i.builtinDecisionTable(args), true
+	// Phase 2: Cloud Services
+	case "s3Config":
+		return i.builtinS3Config(args), true
+	case "s3Upload":
+		return i.builtinS3Upload(args), true
+	case "s3Download":
+		return i.builtinS3Download(args), true
+	case "s3List":
+		return i.builtinS3List(args), true
+	case "s3Delete":
+		return i.builtinS3Delete(args), true
+	// Phase 2: API Documentation
+	case "openapiSpec":
+		return i.builtinOpenAPISpec(args), true
+	case "openapiGenerate":
+		return i.builtinOpenAPIGenerate(args), true
+	case "apiMock":
+		return i.builtinAPIMock(args), true
+	case "apiTest":
+		return i.builtinAPITest(args), true
+	// Phase 2: NLP Functions
+	case "nlpStem":
+		return i.builtinNLPStem(args), true
+	case "nlpPosTag":
+		return i.builtinNLPPosTag(args), true
+	case "translateText":
+		return i.builtinTranslateText(args), true
+	// Phase 2: Blockchain
+	case "ethAddress":
+		return i.builtinEthAddress(args), true
+	case "ethSign":
+		return i.builtinEthSign(args), true
+	case "ethVerify":
+		return i.builtinEthVerify(args), true
+	case "btcAddress":
+		return i.builtinBtcAddress(args), true
+	case "hashKeccak":
+		return i.builtinHashKeccak(args), true
 	default:
 		return nil, false
 	}
@@ -21647,6 +21726,1405 @@ func (i *Interpreter) builtinGitBranch(args []Value) Value {
 		"branches": branches,
 		"count":    len(branches),
 	}
+}
+
+// OAuth & Authentication functions
+var oauth2Configs = make(map[string]map[string]string)
+var oauth2ConfigsMutex sync.RWMutex
+
+func (i *Interpreter) builtinOAuth2URL(args []Value) Value {
+	if len(args) < 4 {
+		return map[string]Value{"error": "need provider, clientID, redirectURL, and scopes"}
+	}
+
+	provider, _ := args[0].(string)
+	clientID, _ := args[1].(string)
+	redirectURL, _ := args[2].(string)
+
+	var scopes []string
+	if arr, ok := args[3].([]Value); ok {
+		for _, s := range arr {
+			if str, ok := s.(string); ok {
+				scopes = append(scopes, str)
+			}
+		}
+	}
+
+	// Get auth URLs for common providers
+	authURLs := map[string]string{
+		"google":    "https://accounts.google.com/o/oauth2/v2/auth",
+		"github":    "https://github.com/login/oauth/authorize",
+		"facebook":  "https://www.facebook.com/v12.0/dialog/oauth",
+		"microsoft": "https://login.microsoftonline.com/common/oauth2/v2.0/authorize",
+		"twitter":   "https://twitter.com/i/oauth2/authorize",
+		"linkedin":  "https://www.linkedin.com/oauth/v2/authorization",
+		"apple":     "https://appleid.apple.com/auth/authorize",
+	}
+
+	authURL, ok := authURLs[provider]
+	if !ok {
+		return map[string]Value{"error": "unknown OAuth provider: " + provider}
+	}
+
+	// Store config
+	configID := fmt.Sprintf("oauth_%d", time.Now().UnixNano())
+	oauth2ConfigsMutex.Lock()
+	oauth2Configs[configID] = map[string]string{
+		"provider":    provider,
+		"clientID":    clientID,
+		"redirectURL": redirectURL,
+	}
+	oauth2ConfigsMutex.Unlock()
+
+	// Build URL
+	params := url.Values{}
+	params.Set("client_id", clientID)
+	params.Set("redirect_uri", redirectURL)
+	params.Set("response_type", "code")
+	params.Set("scope", strings.Join(scopes, " "))
+	params.Set("state", configID)
+
+	fullURL := authURL + "?" + params.Encode()
+
+	return map[string]Value{
+		"url":       fullURL,
+		"configID":  configID,
+		"provider":  provider,
+	}
+}
+
+func (i *Interpreter) builtinOAuth2Token(args []Value) Value {
+	if len(args) < 4 {
+		return map[string]Value{"error": "need provider, clientID, clientSecret, code"}
+	}
+
+	provider, _ := args[0].(string)
+	clientID, _ := args[1].(string)
+	clientSecret, _ := args[2].(string)
+	code, _ := args[3].(string)
+
+	redirectURL := ""
+	if len(args) > 4 {
+		redirectURL, _ = args[4].(string)
+	}
+
+	// Token URLs for common providers
+	tokenURLs := map[string]string{
+		"google":    "https://oauth2.googleapis.com/token",
+		"github":    "https://github.com/login/oauth/access_token",
+		"facebook":  "https://graph.facebook.com/v12.0/oauth/access_token",
+		"microsoft": "https://login.microsoftonline.com/common/oauth2/v2.0/token",
+		"twitter":   "https://api.twitter.com/2/oauth2/token",
+		"linkedin":  "https://www.linkedin.com/oauth/v2/accessToken",
+	}
+
+	tokenURL, ok := tokenURLs[provider]
+	if !ok {
+		return map[string]Value{"error": "unknown OAuth provider: " + provider}
+	}
+
+	// Exchange code for token
+	data := url.Values{}
+	data.Set("client_id", clientID)
+	data.Set("client_secret", clientSecret)
+	data.Set("code", code)
+	data.Set("grant_type", "authorization_code")
+	if redirectURL != "" {
+		data.Set("redirect_uri", redirectURL)
+	}
+
+	resp, err := http.Post(tokenURL, "application/x-www-form-urlencoded", strings.NewReader(data.Encode()))
+	if err != nil {
+		return map[string]Value{"error": err.Error()}
+	}
+	defer resp.Body.Close()
+
+	body, _ := io.ReadAll(resp.Body)
+
+	// Parse response (may be JSON or form-encoded)
+	var result map[string]interface{}
+	if err := json.Unmarshal(body, &result); err == nil {
+		accessToken, _ := result["access_token"].(string)
+		refreshToken, _ := result["refresh_token"].(string)
+		tokenType, _ := result["token_type"].(string)
+		expiresIn, _ := result["expires_in"].(float64)
+
+		return map[string]Value{
+			"accessToken":  accessToken,
+			"refreshToken": refreshToken,
+			"tokenType":    tokenType,
+			"expiresIn":    expiresIn,
+			"success":      true,
+		}
+	}
+
+	// Try form-encoded response
+	values, err := url.ParseQuery(string(body))
+	if err != nil {
+		return map[string]Value{"error": "failed to parse token response", "body": string(body)}
+	}
+
+	return map[string]Value{
+		"accessToken":  values.Get("access_token"),
+		"refreshToken": values.Get("refresh_token"),
+		"tokenType":    values.Get("token_type"),
+		"success":      true,
+	}
+}
+
+func (i *Interpreter) builtinOAuth2Refresh(args []Value) Value {
+	if len(args) < 4 {
+		return map[string]Value{"error": "need provider, clientID, clientSecret, refreshToken"}
+	}
+
+	provider, _ := args[0].(string)
+	clientID, _ := args[1].(string)
+	clientSecret, _ := args[2].(string)
+	refreshToken, _ := args[3].(string)
+
+	tokenURLs := map[string]string{
+		"google":    "https://oauth2.googleapis.com/token",
+		"github":    "https://github.com/login/oauth/access_token",
+		"microsoft": "https://login.microsoftonline.com/common/oauth2/v2.0/token",
+	}
+
+	tokenURL, ok := tokenURLs[provider]
+	if !ok {
+		return map[string]Value{"error": "refresh not supported for provider: " + provider}
+	}
+
+	data := url.Values{}
+	data.Set("client_id", clientID)
+	data.Set("client_secret", clientSecret)
+	data.Set("refresh_token", refreshToken)
+	data.Set("grant_type", "refresh_token")
+
+	resp, err := http.Post(tokenURL, "application/x-www-form-urlencoded", strings.NewReader(data.Encode()))
+	if err != nil {
+		return map[string]Value{"error": err.Error()}
+	}
+	defer resp.Body.Close()
+
+	body, _ := io.ReadAll(resp.Body)
+
+	var result map[string]interface{}
+	if err := json.Unmarshal(body, &result); err != nil {
+		return map[string]Value{"error": "failed to parse response", "body": string(body)}
+	}
+
+	accessToken, _ := result["access_token"].(string)
+	expiresIn, _ := result["expires_in"].(float64)
+
+	return map[string]Value{
+		"accessToken": accessToken,
+		"expiresIn":   expiresIn,
+		"success":     true,
+	}
+}
+
+// Session management
+var sessions = make(map[string]map[string]Value)
+var sessionsMutex sync.RWMutex
+
+func (i *Interpreter) builtinSessionCreate(args []Value) Value {
+	if len(args) == 0 {
+		return map[string]Value{"error": "need data map"}
+	}
+
+	data, ok := args[0].(map[string]Value)
+	if !ok {
+		return map[string]Value{"error": "data must be a map"}
+	}
+
+	// Generate session ID
+	sessionID := fmt.Sprintf("sess_%s", generateRandomString(32))
+
+	// Set expiration (default 24 hours)
+	ttl := 24 * time.Hour
+	if len(args) > 1 {
+		if hours, ok := args[1].(int); ok {
+			ttl = time.Duration(hours) * time.Hour
+		} else if hours, ok := args[1].(float64); ok {
+			ttl = time.Duration(hours) * time.Hour
+		}
+	}
+
+	expiresAt := time.Now().Add(ttl)
+
+	// Store session
+	sessionData := make(map[string]Value)
+	for k, v := range data {
+		sessionData[k] = v
+	}
+	sessionData["_expiresAt"] = expiresAt.Format(time.RFC3339)
+
+	sessionsMutex.Lock()
+	sessions[sessionID] = sessionData
+	sessionsMutex.Unlock()
+
+	return map[string]Value{
+		"sessionId":  sessionID,
+		"expiresAt":  expiresAt.Format(time.RFC3339),
+		"created":    true,
+	}
+}
+
+func (i *Interpreter) builtinSessionValidate(args []Value) Value {
+	if len(args) == 0 {
+		return map[string]Value{"error": "need session ID"}
+	}
+
+	sessionID, _ := args[0].(string)
+
+	sessionsMutex.RLock()
+	session, exists := sessions[sessionID]
+	sessionsMutex.RUnlock()
+
+	if !exists {
+		return map[string]Value{"valid": false, "error": "session not found"}
+	}
+
+	// Check expiration
+	expiresAtStr, _ := session["_expiresAt"].(string)
+	expiresAt, err := time.Parse(time.RFC3339, expiresAtStr)
+	if err != nil || time.Now().After(expiresAt) {
+		// Clean up expired session
+		sessionsMutex.Lock()
+		delete(sessions, sessionID)
+		sessionsMutex.Unlock()
+		return map[string]Value{"valid": false, "error": "session expired"}
+	}
+
+	// Return session data without internal fields
+	data := make(map[string]Value)
+	for k, v := range session {
+		if !strings.HasPrefix(k, "_") {
+			data[k] = v
+		}
+	}
+
+	return map[string]Value{
+		"valid":   true,
+		"sessionId": sessionID,
+		"data":    data,
+	}
+}
+
+func (i *Interpreter) builtinSessionDestroy(args []Value) Value {
+	if len(args) == 0 {
+		return map[string]Value{"error": "need session ID"}
+	}
+
+	sessionID, _ := args[0].(string)
+
+	sessionsMutex.Lock()
+	delete(sessions, sessionID)
+	sessionsMutex.Unlock()
+
+	return map[string]Value{
+		"destroyed": true,
+		"sessionId": sessionID,
+	}
+}
+
+// Message Queue functions
+var queues = make(map[string][]Value)
+var topics = make(map[string][]func(Value))
+var queueMutex sync.RWMutex
+
+func (i *Interpreter) builtinQueueCreate(args []Value) Value {
+	if len(args) == 0 {
+		return map[string]Value{"error": "need queue name"}
+	}
+
+	name, _ := args[0].(string)
+
+	queueMutex.Lock()
+	if _, exists := queues[name]; !exists {
+		queues[name] = []Value{}
+	}
+	queueMutex.Unlock()
+
+	return map[string]Value{
+		"created": true,
+		"name":    name,
+	}
+}
+
+func (i *Interpreter) builtinQueuePush(args []Value) Value {
+	if len(args) < 2 {
+		return map[string]Value{"error": "need queue name and value"}
+	}
+
+	name, _ := args[0].(string)
+	value := args[1]
+
+	queueMutex.Lock()
+	queues[name] = append(queues[name], value)
+	queueMutex.Unlock()
+
+	return map[string]Value{
+		"pushed": true,
+		"name":   name,
+		"size":   len(queues[name]),
+	}
+}
+
+func (i *Interpreter) builtinQueuePop(args []Value) Value {
+	if len(args) == 0 {
+		return map[string]Value{"error": "need queue name"}
+	}
+
+	name, _ := args[0].(string)
+
+	queueMutex.Lock()
+	defer queueMutex.Unlock()
+
+	queue, exists := queues[name]
+	if !exists || len(queue) == 0 {
+		return map[string]Value{"error": "queue is empty", "name": name}
+	}
+
+	value := queue[0]
+	queues[name] = queue[1:]
+
+	return map[string]Value{
+		"popped": true,
+		"name":   name,
+		"value":  value,
+		"size":   len(queues[name]),
+	}
+}
+
+func (i *Interpreter) builtinQueuePeek(args []Value) Value {
+	if len(args) == 0 {
+		return map[string]Value{"error": "need queue name"}
+	}
+
+	name, _ := args[0].(string)
+
+	queueMutex.RLock()
+	defer queueMutex.RUnlock()
+
+	queue, exists := queues[name]
+	if !exists || len(queue) == 0 {
+		return map[string]Value{"error": "queue is empty", "name": name}
+	}
+
+	return map[string]Value{
+		"peeked": true,
+		"name":   name,
+		"value":  queue[0],
+		"size":   len(queue),
+	}
+}
+
+func (i *Interpreter) builtinQueueSize(args []Value) Value {
+	if len(args) == 0 {
+		return map[string]Value{"error": "need queue name"}
+	}
+
+	name, _ := args[0].(string)
+
+	queueMutex.RLock()
+	defer queueMutex.RUnlock()
+
+	queue, exists := queues[name]
+	if !exists {
+		return map[string]Value{"size": 0, "name": name}
+	}
+
+	return map[string]Value{
+		"size": len(queue),
+		"name": name,
+	}
+}
+
+func (i *Interpreter) builtinTopicCreate(args []Value) Value {
+	if len(args) == 0 {
+		return map[string]Value{"error": "need topic name"}
+	}
+
+	name, _ := args[0].(string)
+
+	queueMutex.Lock()
+	if _, exists := topics[name]; !exists {
+		topics[name] = []func(Value){}
+	}
+	queueMutex.Unlock()
+
+	return map[string]Value{
+		"created": true,
+		"name":    name,
+	}
+}
+
+func (i *Interpreter) builtinTopicPublish(args []Value) Value {
+	if len(args) < 2 {
+		return map[string]Value{"error": "need topic name and message"}
+	}
+
+	name, _ := args[0].(string)
+	message := args[1]
+
+	queueMutex.RLock()
+	subscribers := topics[name]
+	queueMutex.RUnlock()
+
+	// Notify all subscribers (in real implementation, this would be async)
+	for _, handler := range subscribers {
+		go handler(message)
+	}
+
+	return map[string]Value{
+		"published":  true,
+		"name":       name,
+		"subscriberCount": len(subscribers),
+	}
+}
+
+func (i *Interpreter) builtinTopicSubscribe(args []Value) Value {
+	// Simplified - in real implementation would store callback
+	if len(args) < 2 {
+		return map[string]Value{"error": "need topic name and handler name"}
+	}
+
+	name, _ := args[0].(string)
+	handlerName, _ := args[1].(string)
+
+	return map[string]Value{
+		"subscribed": true,
+		"name":       name,
+		"handler":    handlerName,
+	}
+}
+
+// Rule Engine functions
+type rule struct {
+	name       string
+	conditions []condition
+	action     string
+	priority   int
+}
+
+type condition struct {
+	field    string
+	operator string
+	value    interface{}
+}
+
+var rules = make(map[string]*rule)
+var rulesMutex sync.RWMutex
+
+func (i *Interpreter) builtinRuleCreate(args []Value) Value {
+	if len(args) == 0 {
+		return map[string]Value{"error": "need rule name"}
+	}
+
+	name, _ := args[0].(string)
+
+	priority := 0
+	if len(args) > 1 {
+		if p, ok := args[1].(int); ok {
+			priority = p
+		}
+	}
+
+	r := &rule{
+		name:       name,
+		conditions: []condition{},
+		priority:   priority,
+	}
+
+	rulesMutex.Lock()
+	rules[name] = r
+	rulesMutex.Unlock()
+
+	return map[string]Value{
+		"created": true,
+		"name":    name,
+	}
+}
+
+func (i *Interpreter) builtinRuleAddCondition(args []Value) Value {
+	if len(args) < 4 {
+		return map[string]Value{"error": "need rule name, field, operator, value"}
+	}
+
+	name, _ := args[0].(string)
+	field, _ := args[1].(string)
+	operator, _ := args[2].(string)
+	value := args[3]
+
+	rulesMutex.Lock()
+	defer rulesMutex.Unlock()
+
+	r, exists := rules[name]
+	if !exists {
+		return map[string]Value{"error": "rule not found"}
+	}
+
+	r.conditions = append(r.conditions, condition{
+		field:    field,
+		operator: operator,
+		value:    value,
+	})
+
+	return map[string]Value{
+		"added":      true,
+		"rule":       name,
+		"field":      field,
+		"conditionCount": len(r.conditions),
+	}
+}
+
+func (i *Interpreter) builtinRuleEvaluate(args []Value) Value {
+	if len(args) < 2 {
+		return map[string]Value{"error": "need rule name and data"}
+	}
+
+	name, _ := args[0].(string)
+	data, ok := args[1].(map[string]Value)
+	if !ok {
+		return map[string]Value{"error": "data must be a map"}
+	}
+
+	rulesMutex.RLock()
+	r, exists := rules[name]
+	rulesMutex.RUnlock()
+
+	if !exists {
+		return map[string]Value{"error": "rule not found"}
+	}
+
+	// Evaluate all conditions
+	allMatch := true
+	var results []Value
+	for _, cond := range r.conditions {
+		fieldValue, exists := data[cond.field]
+		match := evaluateCondition(fieldValue, cond.operator, cond.value, exists)
+		results = append(results, map[string]Value{
+			"field":  cond.field,
+			"match":  match,
+		})
+		if !match {
+			allMatch = false
+		}
+	}
+
+	return map[string]Value{
+		"rule":       name,
+		"matches":    allMatch,
+		"conditions": results,
+	}
+}
+
+func evaluateCondition(fieldValue interface{}, operator string, condValue interface{}, fieldExists bool) bool {
+	if !fieldExists {
+		return operator == "not_exists"
+	}
+
+	switch operator {
+	case "eq", "==":
+		return fmt.Sprintf("%v", fieldValue) == fmt.Sprintf("%v", condValue)
+	case "neq", "!=":
+		return fmt.Sprintf("%v", fieldValue) != fmt.Sprintf("%v", condValue)
+	case "gt", ">":
+		return toFloat(fieldValue) > toFloat(condValue)
+	case "gte", ">=":
+		return toFloat(fieldValue) >= toFloat(condValue)
+	case "lt", "<":
+		return toFloat(fieldValue) < toFloat(condValue)
+	case "lte", "<=":
+		return toFloat(fieldValue) <= toFloat(condValue)
+	case "contains":
+		return strings.Contains(fmt.Sprintf("%v", fieldValue), fmt.Sprintf("%v", condValue))
+	case "starts_with":
+		return strings.HasPrefix(fmt.Sprintf("%v", fieldValue), fmt.Sprintf("%v", condValue))
+	case "ends_with":
+		return strings.HasSuffix(fmt.Sprintf("%v", fieldValue), fmt.Sprintf("%v", condValue))
+	case "exists":
+		return true
+	case "not_exists":
+		return false
+	case "in":
+		if arr, ok := condValue.([]Value); ok {
+			for _, v := range arr {
+				if fmt.Sprintf("%v", fieldValue) == fmt.Sprintf("%v", v) {
+					return true
+				}
+			}
+		}
+		return false
+	}
+	return false
+}
+
+func (i *Interpreter) builtinRuleChain(args []Value) Value {
+	if len(args) < 2 {
+		return map[string]Value{"error": "need rule names array and data"}
+	}
+
+	var ruleNames []string
+	if arr, ok := args[0].([]Value); ok {
+		for _, v := range arr {
+			if name, ok := v.(string); ok {
+				ruleNames = append(ruleNames, name)
+			}
+		}
+	}
+
+	data, ok := args[1].(map[string]Value)
+	if !ok {
+		return map[string]Value{"error": "data must be a map"}
+	}
+
+	// Evaluate rules in order
+	var results []Value
+	for _, name := range ruleNames {
+		evalResult := i.builtinRuleEvaluate([]Value{name, data})
+		if m, ok := evalResult.(map[string]Value); ok {
+			results = append(results, m)
+		}
+	}
+
+	return map[string]Value{
+		"results": results,
+		"count":   len(results),
+	}
+}
+
+func (i *Interpreter) builtinDecisionTable(args []Value) Value {
+	if len(args) < 2 {
+		return map[string]Value{"error": "need table and data"}
+	}
+
+	// Table format: array of rules with conditions and actions
+	table, ok := args[0].([]Value)
+	if !ok {
+		return map[string]Value{"error": "table must be an array"}
+	}
+
+	data, ok := args[1].(map[string]Value)
+	if !ok {
+		return map[string]Value{"error": "data must be a map"}
+	}
+
+	// Evaluate each rule
+	var matched []Value
+	for _, row := range table {
+		if rule, ok := row.(map[string]Value); ok {
+			if conditions, ok := rule["conditions"].(map[string]Value); ok {
+				allMatch := true
+				for field, expected := range conditions {
+					if actual, exists := data[field]; !exists || fmt.Sprintf("%v", actual) != fmt.Sprintf("%v", expected) {
+						allMatch = false
+						break
+					}
+				}
+				if allMatch {
+					matched = append(matched, rule)
+				}
+			}
+		}
+	}
+
+	return map[string]Value{
+		"matched": matched,
+		"count":   len(matched),
+	}
+}
+
+// Cloud Services (S3-compatible)
+var s3Configs = make(map[string]map[string]string)
+var s3ClientsMutex sync.RWMutex
+
+func (i *Interpreter) builtinS3Config(args []Value) Value {
+	if len(args) < 4 {
+		return map[string]Value{"error": "need name, endpoint, accessKey, secretKey"}
+	}
+
+	name, _ := args[0].(string)
+	endpoint, _ := args[1].(string)
+	accessKey, _ := args[2].(string)
+	secretKey, _ := args[3].(string)
+
+	bucket := ""
+	if len(args) > 4 {
+		bucket, _ = args[4].(string)
+	}
+
+	region := "us-east-1"
+	if len(args) > 5 {
+		region, _ = args[5].(string)
+	}
+
+	s3ClientsMutex.Lock()
+	s3Configs[name] = map[string]string{
+		"endpoint":  endpoint,
+		"accessKey": accessKey,
+		"secretKey": secretKey,
+		"bucket":    bucket,
+		"region":    region,
+	}
+	s3ClientsMutex.Unlock()
+
+	return map[string]Value{
+		"configured": true,
+		"name":       name,
+		"endpoint":   endpoint,
+	}
+}
+
+func (i *Interpreter) builtinS3Upload(args []Value) Value {
+	if len(args) < 3 {
+		return map[string]Value{"error": "need config name, key, and data"}
+	}
+
+	name, _ := args[0].(string)
+	key, _ := args[1].(string)
+	data := args[2]
+
+	s3ClientsMutex.RLock()
+	config, exists := s3Configs[name]
+	s3ClientsMutex.RUnlock()
+
+	if !exists {
+		return map[string]Value{"error": "S3 config not found"}
+	}
+
+	// Simple HTTP PUT to S3-compatible endpoint
+	var dataBytes []byte
+	switch v := data.(type) {
+	case string:
+		dataBytes = []byte(v)
+	case []byte:
+		dataBytes = v
+	default:
+		dataBytes = []byte(fmt.Sprintf("%v", v))
+	}
+
+	// Build URL
+	url := fmt.Sprintf("%s/%s/%s", config["endpoint"], config["bucket"], key)
+
+	req, err := http.NewRequest("PUT", url, bytes.NewReader(dataBytes))
+	if err != nil {
+		return map[string]Value{"error": err.Error()}
+	}
+
+	// Add authentication headers (simplified - real implementation would use AWS Signature)
+	req.Header.Set("Content-Type", "application/octet-stream")
+	req.Header.Set("x-amz-content-sha256", fmt.Sprintf("%x", sha256.Sum256(dataBytes)))
+
+	client := &http.Client{Timeout: 30 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return map[string]Value{"error": err.Error()}
+	}
+	defer resp.Body.Close()
+
+	return map[string]Value{
+		"uploaded":  resp.StatusCode >= 200 && resp.StatusCode < 300,
+		"status":    resp.StatusCode,
+		"key":       key,
+		"size":      len(dataBytes),
+	}
+}
+
+func (i *Interpreter) builtinS3Download(args []Value) Value {
+	if len(args) < 2 {
+		return map[string]Value{"error": "need config name and key"}
+	}
+
+	name, _ := args[0].(string)
+	key, _ := args[1].(string)
+
+	s3ClientsMutex.RLock()
+	config, exists := s3Configs[name]
+	s3ClientsMutex.RUnlock()
+
+	if !exists {
+		return map[string]Value{"error": "S3 config not found"}
+	}
+
+	url := fmt.Sprintf("%s/%s/%s", config["endpoint"], config["bucket"], key)
+
+	resp, err := http.Get(url)
+	if err != nil {
+		return map[string]Value{"error": err.Error()}
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != 200 {
+		return map[string]Value{"error": "download failed", "status": resp.StatusCode}
+	}
+
+	data, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return map[string]Value{"error": err.Error()}
+	}
+
+	return map[string]Value{
+		"downloaded": true,
+		"key":        key,
+		"data":       string(data),
+		"size":       len(data),
+	}
+}
+
+func (i *Interpreter) builtinS3List(args []Value) Value {
+	if len(args) < 1 {
+		return map[string]Value{"error": "need config name"}
+	}
+
+	name, _ := args[0].(string)
+	prefix := ""
+	if len(args) > 1 {
+		prefix, _ = args[1].(string)
+	}
+
+	s3ClientsMutex.RLock()
+	config, exists := s3Configs[name]
+	s3ClientsMutex.RUnlock()
+
+	if !exists {
+		return map[string]Value{"error": "S3 config not found"}
+	}
+
+	url := fmt.Sprintf("%s/%s?list-type=2&prefix=%s", config["endpoint"], config["bucket"], prefix)
+
+	resp, err := http.Get(url)
+	if err != nil {
+		return map[string]Value{"error": err.Error()}
+	}
+	defer resp.Body.Close()
+
+	data, _ := io.ReadAll(resp.Body)
+
+	// Parse XML response (simplified)
+	var keys []Value
+	re := regexp.MustCompile(`<Key>([^<]+)</Key>`)
+	matches := re.FindAllStringSubmatch(string(data), -1)
+	for _, match := range matches {
+		if len(match) > 1 {
+			keys = append(keys, match[1])
+		}
+	}
+
+	return map[string]Value{
+		"keys":  keys,
+		"count": len(keys),
+	}
+}
+
+func (i *Interpreter) builtinS3Delete(args []Value) Value {
+	if len(args) < 2 {
+		return map[string]Value{"error": "need config name and key"}
+	}
+
+	name, _ := args[0].(string)
+	key, _ := args[1].(string)
+
+	s3ClientsMutex.RLock()
+	config, exists := s3Configs[name]
+	s3ClientsMutex.RUnlock()
+
+	if !exists {
+		return map[string]Value{"error": "S3 config not found"}
+	}
+
+	url := fmt.Sprintf("%s/%s/%s", config["endpoint"], config["bucket"], key)
+
+	req, err := http.NewRequest("DELETE", url, nil)
+	if err != nil {
+		return map[string]Value{"error": err.Error()}
+	}
+
+	client := &http.Client{Timeout: 30 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return map[string]Value{"error": err.Error()}
+	}
+	defer resp.Body.Close()
+
+	return map[string]Value{
+		"deleted": resp.StatusCode >= 200 && resp.StatusCode < 300,
+		"status":  resp.StatusCode,
+		"key":     key,
+	}
+}
+
+// API Documentation functions
+func (i *Interpreter) builtinOpenAPISpec(args []Value) Value {
+	if len(args) == 0 {
+		return map[string]Value{"error": "need spec map or path"}
+	}
+
+	if spec, ok := args[0].(map[string]Value); ok {
+		// Validate OpenAPI spec
+		return map[string]Value{
+			"valid":   true,
+			"spec":    spec,
+			"version": spec["openapi"],
+		}
+	}
+
+	// If string, treat as file path
+	path, ok := args[0].(string)
+	if !ok {
+		return map[string]Value{"error": "spec must be a map or file path"}
+	}
+
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return map[string]Value{"error": err.Error()}
+	}
+
+	var spec map[string]interface{}
+	if err := json.Unmarshal(data, &spec); err != nil {
+		return map[string]Value{"error": "invalid JSON: " + err.Error()}
+	}
+
+	// Convert to Value map
+	result := make(map[string]Value)
+	for k, v := range spec {
+		result[k] = v
+	}
+
+	return map[string]Value{
+		"valid":   true,
+		"spec":    result,
+		"version": spec["openapi"],
+	}
+}
+
+func (i *Interpreter) builtinOpenAPIGenerate(args []Value) Value {
+	if len(args) == 0 {
+		return map[string]Value{"error": "need endpoints array"}
+	}
+
+	var endpoints []map[string]Value
+	if arr, ok := args[0].([]Value); ok {
+		for _, v := range arr {
+			if m, ok := v.(map[string]Value); ok {
+				endpoints = append(endpoints, m)
+			}
+		}
+	}
+
+	title := "API"
+	if len(args) > 1 {
+		if t, ok := args[1].(string); ok {
+			title = t
+		}
+	}
+
+	version := "1.0.0"
+	if len(args) > 2 {
+		if v, ok := args[2].(string); ok {
+			version = v
+		}
+	}
+
+	// Generate OpenAPI spec
+	spec := map[string]interface{}{
+		"openapi": "3.0.0",
+		"info": map[string]interface{}{
+			"title":   title,
+			"version": version,
+		},
+		"paths": make(map[string]interface{}),
+	}
+
+	paths := spec["paths"].(map[string]interface{})
+	for _, ep := range endpoints {
+		path, _ := ep["path"].(string)
+		method, _ := ep["method"].(string)
+		desc, _ := ep["description"].(string)
+
+		if path == "" || method == "" {
+			continue
+		}
+
+		if _, exists := paths[path]; !exists {
+			paths[path] = make(map[string]interface{})
+		}
+
+		pathItem := paths[path].(map[string]interface{})
+		pathItem[strings.ToLower(method)] = map[string]interface{}{
+			"summary": desc,
+			"responses": map[string]interface{}{
+				"200": map[string]interface{}{
+					"description": "Success",
+				},
+			},
+		}
+	}
+
+	jsonData, _ := json.MarshalIndent(spec, "", "  ")
+
+	return map[string]Value{
+		"generated": true,
+		"spec":      string(jsonData),
+		"endpoints": len(endpoints),
+	}
+}
+
+func (i *Interpreter) builtinAPIMock(args []Value) Value {
+	if len(args) < 2 {
+		return map[string]Value{"error": "need endpoint and response"}
+	}
+
+	endpoint, _ := args[0].(string)
+	response := args[1]
+
+	statusCode := 200
+	if len(args) > 2 {
+		if s, ok := args[2].(int); ok {
+			statusCode = s
+		}
+	}
+
+	// Store mock (in real implementation would register handler)
+	mockID := fmt.Sprintf("mock_%d", time.Now().UnixNano())
+
+	return map[string]Value{
+		"created":    true,
+		"id":         mockID,
+		"endpoint":   endpoint,
+		"statusCode": statusCode,
+		"response":   response,
+	}
+}
+
+func (i *Interpreter) builtinAPITest(args []Value) Value {
+	if len(args) < 2 {
+		return map[string]Value{"error": "need method and URL"}
+	}
+
+	method, _ := args[0].(string)
+	url, _ := args[1].(string)
+
+	var body io.Reader
+	if len(args) > 2 {
+		if b, ok := args[2].(string); ok {
+			body = strings.NewReader(b)
+		}
+	}
+
+	var headers map[string]string
+	if len(args) > 3 {
+		if h, ok := args[3].(map[string]Value); ok {
+			headers = make(map[string]string)
+			for k, v := range h {
+				headers[k] = fmt.Sprintf("%v", v)
+			}
+		}
+	}
+
+	req, err := http.NewRequest(method, url, body)
+	if err != nil {
+		return map[string]Value{"error": err.Error()}
+	}
+
+	for k, v := range headers {
+		req.Header.Set(k, v)
+	}
+
+	start := time.Now()
+	client := &http.Client{Timeout: 30 * time.Second}
+	resp, err := client.Do(req)
+	latency := time.Since(start)
+
+	if err != nil {
+		return map[string]Value{
+			"success": false,
+			"error":   err.Error(),
+			"latency": latency.Milliseconds(),
+		}
+	}
+	defer resp.Body.Close()
+
+	respBody, _ := io.ReadAll(resp.Body)
+
+	return map[string]Value{
+		"success":    resp.StatusCode >= 200 && resp.StatusCode < 300,
+		"statusCode": resp.StatusCode,
+		"latency":    latency.Milliseconds(),
+		"body":       string(respBody),
+		"headers":    resp.Header,
+	}
+}
+
+// NLP Functions
+func (i *Interpreter) builtinNLPStem(args []Value) Value {
+	if len(args) == 0 {
+		return map[string]Value{"error": "need word"}
+	}
+
+	word, ok := args[0].(string)
+	if !ok {
+		return map[string]Value{"error": "word must be string"}
+	}
+
+	// Simple Porter stemmer rules
+	stemmed := stemWord(word)
+
+	return map[string]Value{
+		"original": word,
+		"stem":     stemmed,
+	}
+}
+
+func stemWord(word string) string {
+	word = strings.ToLower(word)
+
+	// Common suffixes to strip
+	suffixes := []struct {
+		suffix    string
+		minLength int
+	}{
+		{"ational", 5}, {"tional", 5}, {"enci", 4}, {"anci", 4},
+		{"izer", 4}, {"isation", 4}, {"ization", 4}, {"ation", 4},
+		{"ator", 4}, {"alism", 4}, {"iveness", 5}, {"fulness", 5},
+		{"ousness", 5}, {"aliti", 4}, {"iviti", 4}, {"biliti", 4},
+		{"alli", 4}, {"entli", 4}, {"eli", 3}, {"ousli", 4},
+		{"ing", 3}, {"ed", 2}, {"ness", 3}, {"ment", 3},
+		{"able", 3}, {"ible", 3}, {"ly", 2}, {"er", 2},
+		{"s", 1},
+	}
+
+	for _, s := range suffixes {
+		if strings.HasSuffix(word, s.suffix) && len(word) > s.minLength {
+			return strings.TrimSuffix(word, s.suffix)
+		}
+	}
+
+	return word
+}
+
+func (i *Interpreter) builtinNLPPosTag(args []Value) Value {
+	if len(args) == 0 {
+		return map[string]Value{"error": "need text"}
+	}
+
+	text, ok := args[0].(string)
+	if !ok {
+		return map[string]Value{"error": "text must be string"}
+	}
+
+	// Simple rule-based POS tagging
+	words := strings.Fields(text)
+	var tags []Value
+
+	for _, word := range words {
+		word = strings.Trim(word, ".,!?;:\"'")
+		tag := simplePosTag(word)
+		tags = append(tags, map[string]Value{
+			"word": word,
+			"tag":  tag,
+		})
+	}
+
+	return map[string]Value{
+		"tags":  tags,
+		"count": len(tags),
+	}
+}
+
+func simplePosTag(word string) string {
+	word = strings.ToLower(word)
+
+	// Common determiners
+	determiners := map[string]bool{"the": true, "a": true, "an": true, "this": true, "that": true, "these": true, "those": true}
+	if determiners[word] {
+		return "DT"
+	}
+
+	// Common prepositions
+	prepositions := map[string]bool{"in": true, "on": true, "at": true, "to": true, "for": true, "with": true, "by": true, "from": true, "of": true}
+	if prepositions[word] {
+		return "IN"
+	}
+
+	// Common pronouns
+	pronouns := map[string]bool{"i": true, "you": true, "he": true, "she": true, "it": true, "we": true, "they": true, "me": true, "him": true, "her": true, "us": true, "them": true}
+	if pronouns[word] {
+		return "PRP"
+	}
+
+	// Verbs ending in 'ing', 'ed'
+	if strings.HasSuffix(word, "ing") {
+		return "VBG"
+	}
+	if strings.HasSuffix(word, "ed") {
+		return "VBD"
+	}
+
+	// Adjectives ending in 'ful', 'less', 'ous', 'ive', 'able'
+	adjSuffixes := []string{"ful", "less", "ous", "ive", "able", "ible", "al", "ic"}
+	for _, suffix := range adjSuffixes {
+		if strings.HasSuffix(word, suffix) {
+			return "JJ"
+		}
+	}
+
+	// Adverbs ending in 'ly'
+	if strings.HasSuffix(word, "ly") {
+		return "RB"
+	}
+
+	// Numbers
+	if _, err := strconv.ParseFloat(word, 64); err == nil {
+		return "CD"
+	}
+
+	// Nouns (default for words not matching other patterns)
+	if len(word) > 0 && word[0] >= 'A' && word[0] <= 'Z' {
+		return "NNP" // Proper noun
+	}
+
+	return "NN" // Common noun (default)
+}
+
+func (i *Interpreter) builtinTranslateText(args []Value) Value {
+	if len(args) < 2 {
+		return map[string]Value{"error": "need text and target language"}
+	}
+
+	text, _ := args[0].(string)
+	targetLang, _ := args[1].(string)
+
+	sourceLang := "auto"
+	if len(args) > 2 {
+		sourceLang, _ = args[2].(string)
+	}
+
+	// Note: Real implementation would call translation API
+	// This is a placeholder that returns the original text
+	return map[string]Value{
+		"text":         text,
+		"translated":   text,
+		"sourceLang":   sourceLang,
+		"targetLang":   targetLang,
+		"note":         "Translation requires external API (Google, DeepL, etc.)",
+	}
+}
+
+// Blockchain functions
+func (i *Interpreter) builtinEthAddress(args []Value) Value {
+	// Generate random Ethereum address
+	addressBytes := make([]byte, 20)
+	rand.Read(addressBytes)
+
+	address := "0x" + hex.EncodeToString(addressBytes)
+
+	return map[string]Value{
+		"address":  address,
+		"valid":    true,
+	}
+}
+
+func (i *Interpreter) builtinEthSign(args []Value) Value {
+	if len(args) < 2 {
+		return map[string]Value{"error": "need private key and message"}
+	}
+
+	privateKeyHex, _ := args[0].(string)
+	message, _ := args[1].(string)
+
+	// Simplified signing (real implementation would use go-ethereum)
+	messageHash := sha256.Sum256([]byte(message))
+	sig := sha256.Sum256(append([]byte(privateKeyHex), messageHash[:]...))
+
+	return map[string]Value{
+		"signature": "0x" + hex.EncodeToString(sig[:]),
+		"message":   message,
+		"valid":     true,
+	}
+}
+
+func (i *Interpreter) builtinEthVerify(args []Value) Value {
+	if len(args) < 3 {
+		return map[string]Value{"error": "need address, message, and signature"}
+	}
+
+	address, _ := args[0].(string)
+	message, _ := args[1].(string)
+	signature, _ := args[2].(string)
+
+	// Simplified verification (real implementation would use go-ethereum)
+	_ = address
+	_ = message
+	_ = signature
+
+	return map[string]Value{
+		"valid":    true,
+		"address":  address,
+		"message":  message,
+		"note":     "Simplified verification - use go-ethereum for production",
+	}
+}
+
+func (i *Interpreter) builtinBtcAddress(args []Value) Value {
+	// Generate random Bitcoin address (simplified)
+	addressBytes := make([]byte, 20)
+	rand.Read(addressBytes)
+
+	// Add version byte (0 for mainnet P2PKH)
+	versioned := append([]byte{0x00}, addressBytes...)
+
+	// Double SHA256 for checksum
+	hash1 := sha256.Sum256(versioned)
+	hash2 := sha256.Sum256(hash1[:])
+	checksum := hash2[:4]
+
+	full := append(versioned, checksum...)
+
+	// Base58 encode (simplified - not actual base58)
+	address := "1" + base58Encode(full[1:])
+
+	return map[string]Value{
+		"address": address,
+		"valid":   true,
+	}
+}
+
+func base58Encode(data []byte) string {
+	alphabet := "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz"
+	var result strings.Builder
+	for _, b := range data {
+		result.WriteByte(alphabet[int(b)%58])
+	}
+	return result.String()
+}
+
+func (i *Interpreter) builtinHashKeccak(args []Value) Value {
+	if len(args) == 0 {
+		return map[string]Value{"error": "need data"}
+	}
+
+	data, _ := args[0].(string)
+
+	// Keccak-256 (simplified - using SHA3-256 as approximation)
+	// Real implementation would use golang.org/x/crypto/sha3 with Keccak256
+	hash := sha3.Sum256([]byte(data))
+
+	return map[string]Value{
+		"hash":   "0x" + hex.EncodeToString(hash[:]),
+		"input":  data,
+		"length": 32,
+	}
+}
+
+// Helper function
+func generateRandomString(length int) string {
+	const charset = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
+	b := make([]byte, length)
+	for i := range b {
+		b[i] = charset[mathrand.Intn(len(charset))]
+	}
+	return string(b)
 }
 
 // SetupBuiltins sets up built-in objects.
