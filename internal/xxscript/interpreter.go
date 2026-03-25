@@ -1253,6 +1253,134 @@ func (i *Interpreter) callBuiltin(name string, args []Value) (Value, bool) {
 		return i.builtinRegexValid(args), true
 	case "regexEscape":
 		return i.builtinRegexQuote(args), true // alias
+	// Advanced String Functions
+	// Case Conversion
+	case "camelCase":
+		return i.builtinCamelCase(args), true
+	case "snakeCase":
+		return i.builtinSnakeCase(args), true
+	case "kebabCase":
+		return i.builtinKebabCase(args), true
+	case "pascalCase":
+		return i.builtinPascalCase(args), true
+	case "sentenceCase":
+		return i.builtinSentenceCase(args), true
+	case "constantCase":
+		return i.builtinConstantCase(args), true
+	case "dotCase":
+		return i.builtinDotCase(args), true
+	case "pathCase":
+		return i.builtinPathCase(args), true
+	// Character Operations
+	case "charAt":
+		return i.builtinCharAt(args), true
+	case "charCodeAt":
+		return i.builtinCharCodeAt(args), true
+	case "fromCharCode":
+		return i.builtinFromCharCode(args), true
+	case "isLower":
+		return i.builtinIsLowerStr(args), true
+	case "isUpper":
+		return i.builtinIsUpperStr(args), true
+	case "isSpace":
+		return i.builtinIsSpaceStr(args), true
+	case "isPrintable":
+		return i.builtinIsPrintable(args), true
+	case "isASCII":
+		return i.builtinIsASCII(args), true
+	// String Manipulation
+	case "insert":
+		return i.builtinInsertStr(args), true
+	case "deleteStr":
+		return i.builtinDeleteStr(args), true
+	case "overwrite":
+		return i.builtinOverwrite(args), true
+	case "surround":
+		return i.builtinSurround(args), true
+	case "quote":
+		return i.builtinQuote(args), true
+	case "unquote":
+		return i.builtinUnquote(args), true
+	case "stripTags":
+		return i.builtinStripTags(args), true
+	case "stripPunctuation":
+		return i.builtinStripPunctuation(args), true
+	case "normalizeSpace":
+		return i.builtinNormalizeSpace(args), true
+	case "normalizeNewlines":
+		return i.builtinNormalizeNewlines(args), true
+	// Advanced Search/Replace
+	case "replaceAll":
+		return i.builtinReplaceAll(args), true
+	case "replaceFirst":
+		return i.builtinReplaceFirst(args), true
+	case "replaceN":
+		return i.builtinReplaceN(args), true
+	case "replaceIgnoreCase":
+		return i.builtinReplaceIgnoreCase(args), true
+	// String Analysis
+	case "levenshtein":
+		return i.builtinLevenshtein(args), true
+	case "commonPrefix":
+		return i.builtinCommonPrefix(args), true
+	case "commonSuffix":
+		return i.builtinCommonSuffix(args), true
+	case "isPalindrome":
+		return i.builtinIsPalindrome(args), true
+	case "isAnagram":
+		return i.builtinIsAnagram(args), true
+	case "charCount":
+		return i.builtinCharCount(args), true
+	case "byteCount":
+		return i.builtinByteCount(args), true
+	// String Splitting
+	case "splitN":
+		return i.builtinSplitN(args), true
+	case "rsplit":
+		return i.builtinRsplit(args), true
+	case "strPartition":
+		return i.builtinPartitionStr(args), true
+	case "rpartition":
+		return i.builtinRpartition(args), true
+	// Unicode Support
+	case "slugify":
+		return i.builtinSlugify(args), true
+	case "truncateWords":
+		return i.builtinTruncateWords(args), true
+	case "wordWrap":
+		return i.builtinWordWrap(args), true
+	case "dedent":
+		return i.builtinDedent(args), true
+	// Validation
+	case "isEmail":
+		return i.builtinIsEmail(args), true
+	case "isURL":
+		return i.builtinIsURL(args), true
+	case "isUUID":
+		return i.builtinIsUUID(args), true
+	case "isIP":
+		return i.builtinIsIP(args), true
+	case "isCreditCard":
+		return i.builtinIsCreditCard(args), true
+	case "isHexColor":
+		return i.builtinIsHexColor(args), true
+	case "isJSON":
+		return i.builtinIsJSONStr(args), true
+	// String Utilities
+	case "format":
+		return i.builtinFormat(args), true
+	case "template":
+		return i.builtinTemplate(args), true
+	case "repeatUntil":
+		return i.builtinRepeatUntil(args), true
+	case "padBetween":
+		return i.builtinPadBetween(args), true
+	case "unwrap":
+		return i.builtinUnwrap(args), true
+	case "toSize":
+		return i.builtinToSize(args), true
+	case "fromSize":
+		return i.builtinFromSize(args), true
 	// Array functions
 	case "push":
 		return i.builtinPush(args), true
@@ -3669,6 +3797,1454 @@ func (i *Interpreter) builtinStartsWith(args []Value) Value {
 
 func (i *Interpreter) builtinEndsWith(args []Value) Value {
 	return i.builtinHasSuffix(args)
+}
+
+// ============================================================================
+// Advanced String Processing Functions
+// ============================================================================
+
+// Case Conversion Functions
+
+func (i *Interpreter) builtinCamelCase(args []Value) Value {
+	if len(args) == 0 {
+		return ""
+	}
+	s, ok := args[0].(string)
+	if !ok {
+		return ""
+	}
+
+	// Split by spaces, underscores, hyphens, dots
+	words := strings.FieldsFunc(s, func(r rune) bool {
+		return r == ' ' || r == '_' || r == '-' || r == '.'
+	})
+
+	if len(words) == 0 {
+		return ""
+	}
+
+	var result strings.Builder
+	for idx, word := range words {
+		if idx == 0 {
+			result.WriteString(strings.ToLower(word))
+		} else {
+			if len(word) > 0 {
+				result.WriteString(strings.ToUpper(word[:1]))
+				if len(word) > 1 {
+					result.WriteString(strings.ToLower(word[1:]))
+				}
+			}
+		}
+	}
+	return result.String()
+}
+
+func (i *Interpreter) builtinSnakeCase(args []Value) Value {
+	if len(args) == 0 {
+		return ""
+	}
+	s, ok := args[0].(string)
+	if !ok {
+		return ""
+	}
+
+	var result strings.Builder
+	for idx, r := range s {
+		if unicode.IsUpper(r) {
+			if idx > 0 {
+				result.WriteRune('_')
+			}
+			result.WriteRune(unicode.ToLower(r))
+		} else if r == ' ' || r == '-' || r == '.' {
+			result.WriteRune('_')
+		} else {
+			result.WriteRune(r)
+		}
+	}
+	return result.String()
+}
+
+func (i *Interpreter) builtinKebabCase(args []Value) Value {
+	if len(args) == 0 {
+		return ""
+	}
+	s, ok := args[0].(string)
+	if !ok {
+		return ""
+	}
+
+	var result strings.Builder
+	for idx, r := range s {
+		if unicode.IsUpper(r) {
+			if idx > 0 {
+				result.WriteRune('-')
+			}
+			result.WriteRune(unicode.ToLower(r))
+		} else if r == ' ' || r == '_' || r == '.' {
+			result.WriteRune('-')
+		} else {
+			result.WriteRune(r)
+		}
+	}
+	return result.String()
+}
+
+func (i *Interpreter) builtinPascalCase(args []Value) Value {
+	if len(args) == 0 {
+		return ""
+	}
+	s, ok := args[0].(string)
+	if !ok {
+		return ""
+	}
+
+	words := strings.FieldsFunc(s, func(r rune) bool {
+		return r == ' ' || r == '_' || r == '-' || r == '.'
+	})
+
+	var result strings.Builder
+	for _, word := range words {
+		if len(word) > 0 {
+			result.WriteString(strings.ToUpper(word[:1]))
+			if len(word) > 1 {
+				result.WriteString(strings.ToLower(word[1:]))
+			}
+		}
+	}
+	return result.String()
+}
+
+func (i *Interpreter) builtinSentenceCase(args []Value) Value {
+	if len(args) == 0 {
+		return ""
+	}
+	s, ok := args[0].(string)
+	if !ok || s == "" {
+		return ""
+	}
+
+	s = strings.ToLower(s)
+	runes := []rune(s)
+	if len(runes) > 0 {
+		runes[0] = unicode.ToUpper(runes[0])
+	}
+	return string(runes)
+}
+
+func (i *Interpreter) builtinConstantCase(args []Value) Value {
+	if len(args) == 0 {
+		return ""
+	}
+	s, ok := args[0].(string)
+	if !ok {
+		return ""
+	}
+
+	var result strings.Builder
+	for idx, r := range s {
+		if unicode.IsUpper(r) {
+			if idx > 0 {
+				result.WriteRune('_')
+			}
+			result.WriteRune(r)
+		} else if r == ' ' || r == '-' || r == '.' {
+			result.WriteRune('_')
+		} else {
+			result.WriteRune(unicode.ToUpper(r))
+		}
+	}
+	return result.String()
+}
+
+func (i *Interpreter) builtinDotCase(args []Value) Value {
+	if len(args) == 0 {
+		return ""
+	}
+	s, ok := args[0].(string)
+	if !ok {
+		return ""
+	}
+
+	var result strings.Builder
+	for idx, r := range s {
+		if unicode.IsUpper(r) {
+			if idx > 0 {
+				result.WriteRune('.')
+			}
+			result.WriteRune(unicode.ToLower(r))
+		} else if r == ' ' || r == '_' || r == '-' {
+			result.WriteRune('.')
+		} else {
+			result.WriteRune(r)
+		}
+	}
+	return result.String()
+}
+
+func (i *Interpreter) builtinPathCase(args []Value) Value {
+	if len(args) == 0 {
+		return ""
+	}
+	s, ok := args[0].(string)
+	if !ok {
+		return ""
+	}
+
+	var result strings.Builder
+	for idx, r := range s {
+		if unicode.IsUpper(r) {
+			if idx > 0 {
+				result.WriteRune('/')
+			}
+			result.WriteRune(unicode.ToLower(r))
+		} else if r == ' ' || r == '_' || r == '-' || r == '.' {
+			result.WriteRune('/')
+		} else {
+			result.WriteRune(r)
+		}
+	}
+	return result.String()
+}
+
+// Character Operations
+
+func (i *Interpreter) builtinCharAt(args []Value) Value {
+	if len(args) < 2 {
+		return ""
+	}
+	s, ok := args[0].(string)
+	if !ok {
+		return ""
+	}
+	idx := i.toInt(args[1])
+	runes := []rune(s)
+	if idx < 0 || idx >= len(runes) {
+		return ""
+	}
+	return string(runes[idx])
+}
+
+func (i *Interpreter) builtinCharCodeAt(args []Value) Value {
+	if len(args) < 2 {
+		return int64(-1)
+	}
+	s, ok := args[0].(string)
+	if !ok {
+		return int64(-1)
+	}
+	idx := i.toInt(args[1])
+	runes := []rune(s)
+	if idx < 0 || idx >= len(runes) {
+		return int64(-1)
+	}
+	return int64(runes[idx])
+}
+
+func (i *Interpreter) builtinFromCharCode(args []Value) Value {
+	var result strings.Builder
+	for _, arg := range args {
+		code := i.toInt(arg)
+		if code >= 0 && code <= 0x10FFFF {
+			result.WriteRune(rune(code))
+		}
+	}
+	return result.String()
+}
+
+func (i *Interpreter) builtinIsLowerStr(args []Value) Value {
+	if len(args) == 0 {
+		return false
+	}
+	s, ok := args[0].(string)
+	if !ok || s == "" {
+		return false
+	}
+	for _, r := range s {
+		if !unicode.IsLower(r) && unicode.IsLetter(r) {
+			return false
+		}
+	}
+	return true
+}
+
+func (i *Interpreter) builtinIsUpperStr(args []Value) Value {
+	if len(args) == 0 {
+		return false
+	}
+	s, ok := args[0].(string)
+	if !ok || s == "" {
+		return false
+	}
+	for _, r := range s {
+		if !unicode.IsUpper(r) && unicode.IsLetter(r) {
+			return false
+		}
+	}
+	return true
+}
+
+func (i *Interpreter) builtinIsSpaceStr(args []Value) Value {
+	if len(args) == 0 {
+		return false
+	}
+	s, ok := args[0].(string)
+	if !ok || s == "" {
+		return false
+	}
+	for _, r := range s {
+		if !unicode.IsSpace(r) {
+			return false
+		}
+	}
+	return true
+}
+
+func (i *Interpreter) builtinIsPrintable(args []Value) Value {
+	if len(args) == 0 {
+		return false
+	}
+	s, ok := args[0].(string)
+	if !ok || s == "" {
+		return false
+	}
+	for _, r := range s {
+		if !unicode.IsPrint(r) {
+			return false
+		}
+	}
+	return true
+}
+
+func (i *Interpreter) builtinIsASCII(args []Value) Value {
+	if len(args) == 0 {
+		return false
+	}
+	s, ok := args[0].(string)
+	if !ok {
+		return false
+	}
+	for i := 0; i < len(s); i++ {
+		if s[i] > 127 {
+			return false
+		}
+	}
+	return true
+}
+
+// String Manipulation Functions
+
+func (i *Interpreter) builtinInsertStr(args []Value) Value {
+	if len(args) < 3 {
+		if len(args) == 0 {
+			return ""
+		}
+		return args[0]
+	}
+	s, ok := args[0].(string)
+	if !ok {
+		return ""
+	}
+	idx := i.toInt(args[1])
+	toInsert, ok := args[2].(string)
+	if !ok {
+		return s
+	}
+
+	runes := []rune(s)
+	if idx < 0 {
+		idx = 0
+	}
+	if idx > len(runes) {
+		idx = len(runes)
+	}
+
+	return string(runes[:idx]) + toInsert + string(runes[idx:])
+}
+
+func (i *Interpreter) builtinDeleteStr(args []Value) Value {
+	if len(args) < 2 {
+		if len(args) == 0 {
+			return ""
+		}
+		return args[0]
+	}
+	s, ok := args[0].(string)
+	if !ok {
+		return ""
+	}
+	start := i.toInt(args[1])
+
+	runes := []rune(s)
+	if start < 0 {
+		start = 0
+	}
+	if start >= len(runes) {
+		return s
+	}
+
+	length := len(runes) - start
+	if len(args) > 2 {
+		length = i.toInt(args[2])
+	}
+	if length < 0 {
+		length = 0
+	}
+	end := start + length
+	if end > len(runes) {
+		end = len(runes)
+	}
+
+	return string(runes[:start]) + string(runes[end:])
+}
+
+func (i *Interpreter) builtinOverwrite(args []Value) Value {
+	if len(args) < 3 {
+		if len(args) == 0 {
+			return ""
+		}
+		return args[0]
+	}
+	s, ok := args[0].(string)
+	if !ok {
+		return ""
+	}
+	start := i.toInt(args[1])
+	newStr, ok := args[2].(string)
+	if !ok {
+		return s
+	}
+
+	runes := []rune(s)
+	newRunes := []rune(newStr)
+	if start < 0 {
+		start = 0
+	}
+	if start > len(runes) {
+		return s + newStr
+	}
+
+	for idx, r := range newRunes {
+		pos := start + idx
+		if pos >= len(runes) {
+			runes = append(runes, r)
+		} else {
+			runes[pos] = r
+		}
+	}
+	return string(runes)
+}
+
+func (i *Interpreter) builtinSurround(args []Value) Value {
+	if len(args) == 0 {
+		return ""
+	}
+	s, ok := args[0].(string)
+	if !ok {
+		return ""
+	}
+	wrapper := "\""
+	if len(args) > 1 {
+		wrapper, _ = args[1].(string)
+	}
+	return wrapper + s + wrapper
+}
+
+func (i *Interpreter) builtinQuote(args []Value) Value {
+	if len(args) == 0 {
+		return "\"\""
+	}
+	s, ok := args[0].(string)
+	if !ok {
+		return "\"\""
+	}
+	quoteChar := "\""
+	if len(args) > 1 {
+		quoteChar, _ = args[1].(string)
+		if len(quoteChar) == 0 {
+			quoteChar = "\""
+		} else {
+			quoteChar = string([]rune(quoteChar)[0])
+		}
+	}
+	// Escape the quote character if present
+	escaped := strings.ReplaceAll(s, quoteChar, "\\"+quoteChar)
+	return quoteChar + escaped + quoteChar
+}
+
+func (i *Interpreter) builtinUnquote(args []Value) Value {
+	if len(args) == 0 {
+		return ""
+	}
+	s, ok := args[0].(string)
+	if !ok || len(s) < 2 {
+		return s
+	}
+
+	// Detect quote character
+	quoteChar := s[0]
+	if s[len(s)-1] != quoteChar {
+		return s
+	}
+
+	// Valid quotes
+	if quoteChar != '"' && quoteChar != '\'' && quoteChar != '`' {
+		return s
+	}
+
+	inner := s[1 : len(s)-1]
+	// Unescape
+	result := strings.ReplaceAll(inner, string([]byte{'\\', quoteChar}), string([]byte{quoteChar}))
+	return result
+}
+
+func (i *Interpreter) builtinStripTags(args []Value) Value {
+	if len(args) == 0 {
+		return ""
+	}
+	s, ok := args[0].(string)
+	if !ok {
+		return ""
+	}
+
+	// Simple tag stripping using regex
+	re := regexp.MustCompile(`<[^>]*>`)
+	return re.ReplaceAllString(s, "")
+}
+
+func (i *Interpreter) builtinStripPunctuation(args []Value) Value {
+	if len(args) == 0 {
+		return ""
+	}
+	s, ok := args[0].(string)
+	if !ok {
+		return ""
+	}
+
+	var result strings.Builder
+	for _, r := range s {
+		if !unicode.IsPunct(r) {
+			result.WriteRune(r)
+		}
+	}
+	return result.String()
+}
+
+func (i *Interpreter) builtinNormalizeSpace(args []Value) Value {
+	if len(args) == 0 {
+		return ""
+	}
+	s, ok := args[0].(string)
+	if !ok {
+		return ""
+	}
+
+	// Replace multiple whitespace with single space
+	re := regexp.MustCompile(`\s+`)
+	return strings.TrimSpace(re.ReplaceAllString(s, " "))
+}
+
+func (i *Interpreter) builtinNormalizeNewlines(args []Value) Value {
+	if len(args) == 0 {
+		return ""
+	}
+	s, ok := args[0].(string)
+	if !ok {
+		return ""
+	}
+
+	// Normalize to \n
+	s = strings.ReplaceAll(s, "\r\n", "\n")
+	s = strings.ReplaceAll(s, "\r", "\n")
+	return s
+}
+
+// Advanced Search/Replace Functions
+
+func (i *Interpreter) builtinReplaceAll(args []Value) Value {
+	if len(args) < 3 {
+		if len(args) == 0 {
+			return ""
+		}
+		return args[0]
+	}
+	s, ok := args[0].(string)
+	if !ok {
+		return ""
+	}
+	old, ok1 := args[1].(string)
+	new, ok2 := args[2].(string)
+	if !ok1 || !ok2 {
+		return s
+	}
+	return strings.ReplaceAll(s, old, new)
+}
+
+func (i *Interpreter) builtinReplaceFirst(args []Value) Value {
+	if len(args) < 3 {
+		if len(args) == 0 {
+			return ""
+		}
+		return args[0]
+	}
+	s, ok := args[0].(string)
+	if !ok {
+		return ""
+	}
+	old, ok1 := args[1].(string)
+	new, ok2 := args[2].(string)
+	if !ok1 || !ok2 {
+		return s
+	}
+	return strings.Replace(s, old, new, 1)
+}
+
+func (i *Interpreter) builtinReplaceN(args []Value) Value {
+	if len(args) < 4 {
+		if len(args) == 0 {
+			return ""
+		}
+		return args[0]
+	}
+	s, ok := args[0].(string)
+	if !ok {
+		return ""
+	}
+	old, ok1 := args[1].(string)
+	new, ok2 := args[2].(string)
+	n := i.toInt(args[3])
+	if !ok1 || !ok2 {
+		return s
+	}
+	return strings.Replace(s, old, new, int(n))
+}
+
+func (i *Interpreter) builtinReplaceIgnoreCase(args []Value) Value {
+	if len(args) < 3 {
+		if len(args) == 0 {
+			return ""
+		}
+		return args[0]
+	}
+	s, ok := args[0].(string)
+	if !ok {
+		return ""
+	}
+	old, ok1 := args[1].(string)
+	new, ok2 := args[2].(string)
+	if !ok1 || !ok2 {
+		return s
+	}
+
+	if old == "" {
+		return s
+	}
+
+	// Case-insensitive replace
+	result := s
+	lowerS := strings.ToLower(s)
+	lowerOld := strings.ToLower(old)
+	start := 0
+
+	for {
+		idx := strings.Index(lowerS[start:], lowerOld)
+		if idx == -1 {
+			break
+		}
+		idx += start
+		result = result[:idx] + new + result[idx+len(old):]
+		lowerS = strings.ToLower(result)
+		start = idx + len(new)
+	}
+	return result
+}
+
+// String Analysis Functions
+
+func (i *Interpreter) builtinLevenshtein(args []Value) Value {
+	if len(args) < 2 {
+		return int64(0)
+	}
+	s1, ok1 := args[0].(string)
+	s2, ok2 := args[1].(string)
+	if !ok1 || !ok2 {
+		return int64(0)
+	}
+
+	r1 := []rune(s1)
+	r2 := []rune(s2)
+	len1 := len(r1)
+	len2 := len(r2)
+
+	if len1 == 0 {
+		return int64(len2)
+	}
+	if len2 == 0 {
+		return int64(len1)
+	}
+
+	// Create matrix
+	matrix := make([][]int, len1+1)
+	for idx := range matrix {
+		matrix[idx] = make([]int, len2+1)
+		matrix[idx][0] = idx
+	}
+	for j := 0; j <= len2; j++ {
+		matrix[0][j] = j
+	}
+
+	for idx := 1; idx <= len1; idx++ {
+		for j := 1; j <= len2; j++ {
+			cost := 1
+			if r1[idx-1] == r2[j-1] {
+				cost = 0
+			}
+			matrix[idx][j] = min(matrix[idx-1][j]+1, matrix[idx][j-1]+1, matrix[idx-1][j-1]+cost)
+		}
+	}
+
+	return int64(matrix[len1][len2])
+}
+
+func min(vals ...int) int {
+	m := vals[0]
+	for _, v := range vals[1:] {
+		if v < m {
+			m = v
+		}
+	}
+	return m
+}
+
+func (i *Interpreter) builtinCommonPrefix(args []Value) Value {
+	if len(args) < 2 {
+		if len(args) == 0 {
+			return ""
+		}
+		return args[0]
+	}
+
+	s1, ok1 := args[0].(string)
+	s2, ok2 := args[1].(string)
+	if !ok1 || !ok2 {
+		return ""
+	}
+
+	r1 := []rune(s1)
+	r2 := []rune(s2)
+
+	var result strings.Builder
+	for idx := 0; idx < len(r1) && idx < len(r2); idx++ {
+		if r1[idx] == r2[idx] {
+			result.WriteRune(r1[idx])
+		} else {
+			break
+		}
+	}
+	return result.String()
+}
+
+func (i *Interpreter) builtinCommonSuffix(args []Value) Value {
+	if len(args) < 2 {
+		if len(args) == 0 {
+			return ""
+		}
+		return args[0]
+	}
+
+	s1, ok1 := args[0].(string)
+	s2, ok2 := args[1].(string)
+	if !ok1 || !ok2 {
+		return ""
+	}
+
+	r1 := []rune(s1)
+	r2 := []rune(s2)
+
+	var result strings.Builder
+	i1, i2 := len(r1)-1, len(r2)-1
+	for i1 >= 0 && i2 >= 0 {
+		if r1[i1] == r2[i2] {
+			result.WriteRune(r1[i1])
+			i1--
+			i2--
+		} else {
+			break
+		}
+	}
+
+	// Reverse result
+	runes := []rune(result.String())
+	for idx, j := 0, len(runes)-1; idx < j; idx, j = idx+1, j-1 {
+		runes[idx], runes[j] = runes[j], runes[idx]
+	}
+	return string(runes)
+}
+
+func (i *Interpreter) builtinIsPalindrome(args []Value) Value {
+	if len(args) == 0 {
+		return false
+	}
+	s, ok := args[0].(string)
+	if !ok {
+		return false
+	}
+
+	// Remove non-alphanumeric and convert to lower
+	var cleaned strings.Builder
+	for _, r := range s {
+		if unicode.IsLetter(r) || unicode.IsDigit(r) {
+			cleaned.WriteRune(unicode.ToLower(r))
+		}
+	}
+
+	runes := []rune(cleaned.String())
+	for idx, j := 0, len(runes)-1; idx < j; idx, j = idx+1, j-1 {
+		if runes[idx] != runes[j] {
+			return false
+		}
+	}
+	return true
+}
+
+func (i *Interpreter) builtinIsAnagram(args []Value) Value {
+	if len(args) < 2 {
+		return false
+	}
+	s1, ok1 := args[0].(string)
+	s2, ok2 := args[1].(string)
+	if !ok1 || !ok2 {
+		return false
+	}
+
+	// Normalize and count characters
+	countChars := func(s string) map[rune]int {
+		counts := make(map[rune]int)
+		for _, r := range s {
+			if unicode.IsLetter(r) {
+				counts[unicode.ToLower(r)]++
+			}
+		}
+		return counts
+	}
+
+	c1 := countChars(s1)
+	c2 := countChars(s2)
+
+	if len(c1) != len(c2) {
+		return false
+	}
+	for r, c := range c1 {
+		if c2[r] != c {
+			return false
+		}
+	}
+	return true
+}
+
+func (i *Interpreter) builtinCharCount(args []Value) Value {
+	if len(args) == 0 {
+		return int64(0)
+	}
+	s, ok := args[0].(string)
+	if !ok {
+		return int64(0)
+	}
+	return int64(len([]rune(s)))
+}
+
+func (i *Interpreter) builtinByteCount(args []Value) Value {
+	if len(args) == 0 {
+		return int64(0)
+	}
+	s, ok := args[0].(string)
+	if !ok {
+		return int64(0)
+	}
+	return int64(len(s))
+}
+
+// String Splitting Functions
+
+func (i *Interpreter) builtinSplitN(args []Value) Value {
+	if len(args) < 3 {
+		return i.builtinSplit(args)
+	}
+	s, ok := args[0].(string)
+	if !ok {
+		return []Value{}
+	}
+	sep, ok := args[1].(string)
+	if !ok {
+		return []Value{s}
+	}
+	n := i.toInt(args[2])
+
+	parts := strings.SplitN(s, sep, int(n))
+	result := make([]Value, len(parts))
+	for idx, p := range parts {
+		result[idx] = p
+	}
+	return result
+}
+
+func (i *Interpreter) builtinRsplit(args []Value) Value {
+	if len(args) < 2 {
+		return []Value{}
+	}
+	s, ok := args[0].(string)
+	if !ok {
+		return []Value{}
+	}
+	sep, ok := args[1].(string)
+	if !ok || sep == "" {
+		return []Value{s}
+	}
+	n := -1
+	if len(args) > 2 {
+		n = int(i.toInt(args[2]))
+	}
+
+	// Split from right
+	parts := strings.Split(s, sep)
+	if n <= 0 || n >= len(parts) {
+		// Reverse the parts
+		result := make([]Value, len(parts))
+		for idx, p := range parts {
+			result[len(parts)-1-idx] = p
+		}
+		return result
+	}
+
+	// Keep first part intact
+	result := make([]Value, n)
+	result[0] = strings.Join(parts[:len(parts)-n+1], sep)
+	for idx := 1; idx < n; idx++ {
+		result[idx] = parts[len(parts)-n+idx]
+	}
+	return result
+}
+
+func (i *Interpreter) builtinPartitionStr(args []Value) Value {
+	if len(args) < 2 {
+		return []Value{"", "", ""}
+	}
+	s, ok := args[0].(string)
+	if !ok {
+		return []Value{"", "", ""}
+	}
+	sep, ok := args[1].(string)
+	if !ok {
+		return []Value{s, "", ""}
+	}
+
+	idx := strings.Index(s, sep)
+	if idx == -1 {
+		return []Value{s, "", ""}
+	}
+	return []Value{s[:idx], sep, s[idx+len(sep):]}
+}
+
+func (i *Interpreter) builtinRpartition(args []Value) Value {
+	if len(args) < 2 {
+		return []Value{"", "", ""}
+	}
+	s, ok := args[0].(string)
+	if !ok {
+		return []Value{"", "", ""}
+	}
+	sep, ok := args[1].(string)
+	if !ok {
+		return []Value{"", "", s}
+	}
+
+	idx := strings.LastIndex(s, sep)
+	if idx == -1 {
+		return []Value{"", "", s}
+	}
+	return []Value{s[:idx], sep, s[idx+len(sep):]}
+}
+
+// Unicode Support Functions
+
+func (i *Interpreter) builtinSlugify(args []Value) Value {
+	if len(args) == 0 {
+		return ""
+	}
+	s, ok := args[0].(string)
+	if !ok {
+		return ""
+	}
+
+	var result strings.Builder
+	lastWasDash := false
+
+	for _, r := range s {
+		if unicode.IsLetter(r) || unicode.IsDigit(r) {
+			result.WriteRune(unicode.ToLower(r))
+			lastWasDash = false
+		} else if r == ' ' || r == '-' || r == '_' {
+			if !lastWasDash {
+				result.WriteRune('-')
+				lastWasDash = true
+			}
+		}
+	}
+
+	slug := result.String()
+	slug = strings.Trim(slug, "-")
+	return slug
+}
+
+func (i *Interpreter) builtinTruncateWords(args []Value) Value {
+	if len(args) == 0 {
+		return ""
+	}
+	s, ok := args[0].(string)
+	if !ok {
+		return ""
+	}
+
+	numWords := 10
+	if len(args) > 1 {
+		numWords = int(i.toInt(args[1]))
+	}
+	suffix := "..."
+	if len(args) > 2 {
+		suffix, _ = args[2].(string)
+	}
+
+	words := strings.Fields(s)
+	if len(words) <= numWords {
+		return s
+	}
+
+	return strings.Join(words[:numWords], " ") + suffix
+}
+
+func (i *Interpreter) builtinWordWrap(args []Value) Value {
+	if len(args) == 0 {
+		return ""
+	}
+	s, ok := args[0].(string)
+	if !ok {
+		return ""
+	}
+
+	width := 80
+	if len(args) > 1 {
+		width = int(i.toInt(args[1]))
+	}
+	if width <= 0 {
+		return s
+	}
+
+	words := strings.Fields(s)
+	if len(words) == 0 {
+		return ""
+	}
+
+	var result strings.Builder
+	lineLen := 0
+
+	for _, word := range words {
+		wordLen := len(word)
+		if lineLen > 0 && lineLen+1+wordLen > width {
+			result.WriteString("\n")
+			result.WriteString(word)
+			lineLen = wordLen
+		} else {
+			if lineLen > 0 {
+				result.WriteString(" ")
+				lineLen++
+			}
+			result.WriteString(word)
+			lineLen += wordLen
+		}
+	}
+	return result.String()
+}
+
+func (i *Interpreter) builtinDedent(args []Value) Value {
+	if len(args) == 0 {
+		return ""
+	}
+	s, ok := args[0].(string)
+	if !ok {
+		return ""
+	}
+
+	lines := strings.Split(s, "\n")
+	if len(lines) == 0 {
+		return ""
+	}
+
+	// Find minimum indentation
+	minIndent := -1
+	for _, line := range lines {
+		trimmed := strings.TrimLeft(line, " \t")
+		if trimmed == "" {
+			continue
+		}
+		indent := len(line) - len(trimmed)
+		if minIndent == -1 || indent < minIndent {
+			minIndent = indent
+		}
+	}
+
+	if minIndent <= 0 {
+		return s
+	}
+
+	// Remove indentation
+	for idx, line := range lines {
+		if len(line) >= minIndent && strings.TrimLeft(line[:minIndent], " \t") == "" {
+			lines[idx] = line[minIndent:]
+		}
+	}
+	return strings.Join(lines, "\n")
+}
+
+// Validation Functions
+
+func (i *Interpreter) builtinIsEmail(args []Value) Value {
+	if len(args) == 0 {
+		return false
+	}
+	s, ok := args[0].(string)
+	if !ok {
+		return false
+	}
+
+	// Simple email validation
+	emailRegex := regexp.MustCompile(`^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$`)
+	return emailRegex.MatchString(s)
+}
+
+func (i *Interpreter) builtinIsURL(args []Value) Value {
+	if len(args) == 0 {
+		return false
+	}
+	s, ok := args[0].(string)
+	if !ok {
+		return false
+	}
+
+	urlRegex := regexp.MustCompile(`^(https?|ftp)://[^\s/$.?#].[^\s]*$`)
+	return urlRegex.MatchString(s)
+}
+
+func (i *Interpreter) builtinIsUUID(args []Value) Value {
+	if len(args) == 0 {
+		return false
+	}
+	s, ok := args[0].(string)
+	if !ok {
+		return false
+	}
+
+	uuidRegex := regexp.MustCompile(`^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$`)
+	return uuidRegex.MatchString(s)
+}
+
+func (i *Interpreter) builtinIsIP(args []Value) Value {
+	if len(args) == 0 {
+		return false
+	}
+	s, ok := args[0].(string)
+	if !ok {
+		return false
+	}
+
+	// IPv4
+	ipv4Regex := regexp.MustCompile(`^(\d{1,3}\.){3}\d{1,3}$`)
+	if ipv4Regex.MatchString(s) {
+		parts := strings.Split(s, ".")
+		for _, p := range parts {
+			n, err := strconv.Atoi(p)
+			if err != nil || n < 0 || n > 255 {
+				return false
+			}
+		}
+		return true
+	}
+
+	// Simple IPv6 check
+	ipv6Regex := regexp.MustCompile(`^([0-9a-fA-F]{1,4}:){7}[0-9a-fA-F]{1,4}$`)
+	if ipv6Regex.MatchString(s) {
+		return true
+	}
+
+	return false
+}
+
+func (i *Interpreter) builtinIsCreditCard(args []Value) Value {
+	if len(args) == 0 {
+		return false
+	}
+	s, ok := args[0].(string)
+	if !ok {
+		return false
+	}
+
+	// Remove spaces and dashes
+	s = strings.ReplaceAll(s, " ", "")
+	s = strings.ReplaceAll(s, "-", "")
+
+	// Check length and digits
+	if len(s) < 13 || len(s) > 19 {
+		return false
+	}
+
+	// Luhn algorithm
+	sum := 0
+	alt := false
+	for idx := len(s) - 1; idx >= 0; idx-- {
+		digit, err := strconv.Atoi(string(s[idx]))
+		if err != nil {
+			return false
+		}
+
+		if alt {
+			digit *= 2
+			if digit > 9 {
+				digit -= 9
+			}
+		}
+		sum += digit
+		alt = !alt
+	}
+
+	return sum%10 == 0
+}
+
+func (i *Interpreter) builtinIsHexColor(args []Value) Value {
+	if len(args) == 0 {
+		return false
+	}
+	s, ok := args[0].(string)
+	if !ok {
+		return false
+	}
+
+	hexRegex := regexp.MustCompile(`^#([0-9a-fA-F]{3}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$`)
+	return hexRegex.MatchString(s)
+}
+
+func (i *Interpreter) builtinIsJSONStr(args []Value) Value {
+	if len(args) == 0 {
+		return false
+	}
+	s, ok := args[0].(string)
+	if !ok {
+		return false
+	}
+
+	var js interface{}
+	return json.Unmarshal([]byte(s), &js) == nil
+}
+
+// String Utility Functions
+
+func (i *Interpreter) builtinFormat(args []Value) Value {
+	if len(args) == 0 {
+		return ""
+	}
+	format, ok := args[0].(string)
+	if !ok {
+		return ""
+	}
+
+	if len(args) == 1 {
+		return format
+	}
+
+	// Convert args to interface slice
+	formatArgs := make([]interface{}, len(args)-1)
+	for idx, arg := range args[1:] {
+		formatArgs[idx] = arg
+	}
+
+	return fmt.Sprintf(format, formatArgs...)
+}
+
+func (i *Interpreter) builtinTemplate(args []Value) Value {
+	if len(args) == 0 {
+		return ""
+	}
+	tmpl, ok := args[0].(string)
+	if !ok {
+		return ""
+	}
+
+	if len(args) < 2 {
+		return tmpl
+	}
+
+	// Template with map or object
+	data, ok := args[1].(map[string]Value)
+	if !ok {
+		return tmpl
+	}
+
+	// Simple template replacement: {{key}}
+	re := regexp.MustCompile(`\{\{(\w+)\}\}`)
+	result := re.ReplaceAllStringFunc(tmpl, func(match string) string {
+		key := match[2 : len(match)-2]
+		if val, exists := data[key]; exists {
+			return fmt.Sprintf("%v", val)
+		}
+		return match
+	})
+
+	return result
+}
+
+func (i *Interpreter) builtinRepeatUntil(args []Value) Value {
+	if len(args) < 2 {
+		return ""
+	}
+	s, ok := args[0].(string)
+	if !ok {
+		return ""
+	}
+	targetLen := i.toInt(args[1])
+	if targetLen <= 0 {
+		return ""
+	}
+
+	if len(s) == 0 {
+		return ""
+	}
+
+	for len(s) < int(targetLen) {
+		s += s
+	}
+	return s[:targetLen]
+}
+
+func (i *Interpreter) builtinPadBetween(args []Value) Value {
+	if len(args) < 3 {
+		if len(args) == 0 {
+			return ""
+		}
+		return args[0]
+	}
+	left, ok := args[0].(string)
+	if !ok {
+		return ""
+	}
+	right, ok := args[1].(string)
+	if !ok {
+		return left
+	}
+	pad, ok := args[2].(string)
+	if !ok || pad == "" {
+		pad = " "
+	}
+
+	return left + pad + right
+}
+
+func (i *Interpreter) builtinUnwrap(args []Value) Value {
+	if len(args) == 0 {
+		return ""
+	}
+	s, ok := args[0].(string)
+	if !ok || len(s) < 2 {
+		return s
+	}
+
+	wrapper := "\"\""
+	if len(args) > 1 {
+		wrapper, _ = args[1].(string)
+	}
+	if len(wrapper) < 2 {
+		return s
+	}
+
+	runes := []rune(wrapper)
+	left := runes[0]
+	right := runes[len(runes)-1]
+
+	sRunes := []rune(s)
+	if sRunes[0] == left && sRunes[len(sRunes)-1] == right {
+		return string(sRunes[1 : len(sRunes)-1])
+	}
+	return s
+}
+
+func (i *Interpreter) builtinToSize(args []Value) Value {
+	if len(args) == 0 {
+		return ""
+	}
+
+	var bytes int64
+	switch v := args[0].(type) {
+	case int64:
+		bytes = v
+	case int:
+		bytes = int64(v)
+	case float64:
+		bytes = int64(v)
+	default:
+		return ""
+	}
+
+	const (
+		KB = 1024
+		MB = KB * 1024
+		GB = MB * 1024
+		TB = GB * 1024
+	)
+
+	switch {
+	case bytes >= TB:
+		return fmt.Sprintf("%.2f TB", float64(bytes)/float64(TB))
+	case bytes >= GB:
+		return fmt.Sprintf("%.2f GB", float64(bytes)/float64(GB))
+	case bytes >= MB:
+		return fmt.Sprintf("%.2f MB", float64(bytes)/float64(MB))
+	case bytes >= KB:
+		return fmt.Sprintf("%.2f KB", float64(bytes)/float64(KB))
+	default:
+		return fmt.Sprintf("%d B", bytes)
+	}
+}
+
+func (i *Interpreter) builtinFromSize(args []Value) Value {
+	if len(args) == 0 {
+		return int64(0)
+	}
+	s, ok := args[0].(string)
+	if !ok {
+		return int64(0)
+	}
+
+	s = strings.TrimSpace(s)
+	re := regexp.MustCompile(`(?i)^([\d.]+)\s*(B|KB|MB|GB|TB)?$`)
+	matches := re.FindStringSubmatch(s)
+	if matches == nil {
+		return int64(0)
+	}
+
+	value, err := strconv.ParseFloat(matches[1], 64)
+	if err != nil {
+		return int64(0)
+	}
+
+	unit := strings.ToUpper(matches[2])
+	switch unit {
+	case "TB":
+		value *= 1024 * 1024 * 1024 * 1024
+	case "GB":
+		value *= 1024 * 1024 * 1024
+	case "MB":
+		value *= 1024 * 1024
+	case "KB":
+		value *= 1024
+	}
+
+	return int64(value)
 }
 
 // ============================================================================
