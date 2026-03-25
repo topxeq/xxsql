@@ -2,6 +2,7 @@
 package xxscript
 
 import (
+	"bytes"
 	"crypto/md5"
 	"crypto/sha1"
 	"crypto/sha256"
@@ -15,6 +16,7 @@ import (
 	"io"
 	"math"
 	"math/rand"
+	"net"
 	"net/http"
 	"net/url"
 	"os"
@@ -1402,6 +1404,48 @@ func (i *Interpreter) callBuiltin(name string, args []Value) (Value, bool) {
 		return i.builtinDirCopy(args), true
 	case "dirWalk":
 		return i.builtinFileWalk(args), true // alias
+	// HTTP Client functions
+	case "httpGet":
+		return i.builtinHTTPGet(args), true
+	case "httpPost":
+		return i.builtinHTTPPost(args), true
+	case "httpPut":
+		return i.builtinHTTPPut(args), true
+	case "httpDelete":
+		return i.builtinHTTPDelete(args), true
+	case "httpRequest":
+		return i.builtinHTTPRequest(args), true
+	// URL functions
+	case "urlParse":
+		return i.builtinURLParse(args), true
+	case "urlEncode":
+		return i.builtinURLEncode(args), true
+	case "urlDecode":
+		return i.builtinURLDecode(args), true
+	case "urlJoin":
+		return i.builtinURLJoin(args), true
+	case "urlBuild":
+		return i.builtinURLBuild(args), true
+	// DNS and IP functions
+	case "dnsLookup":
+		return i.builtinDNSLookup(args), true
+	case "dnsLookupHost":
+		return i.builtinDNSLookupHost(args), true
+	case "dnsLookupAddr":
+		return i.builtinDNSLookupAddr(args), true
+	case "ipParse":
+		return i.builtinIPParse(args), true
+	case "isIPv4":
+		return i.builtinIsIPv4(args), true
+	case "isIPv6":
+		return i.builtinIsIPv6(args), true
+	// JSON functions
+	case "jsonEncode":
+		return i.builtinJSONEncode(args), true
+	case "jsonDecode":
+		return i.builtinJSONDecode(args), true
+	case "jsonPretty":
+		return i.builtinJSONPretty(args), true
 	default:
 		return nil, false
 	}
@@ -4154,6 +4198,752 @@ func (f *HTTPSetCookieFunc) Call(args []Value) (Value, error) {
 
 	http.SetCookie(f.ctx.HTTPWriter, cookie)
 	return nil, nil
+}
+
+// ============================================================================
+// HTTP Client Functions
+// ============================================================================
+
+// HTTPClient is a shared HTTP client
+var httpClient = &http.Client{Timeout: 30 * time.Second}
+
+// builtinHTTPGet performs an HTTP GET request
+func (i *Interpreter) builtinHTTPGet(args []Value) Value {
+	if len(args) == 0 {
+		return map[string]Value{"success": false, "error": "URL required"}
+	}
+
+	urlStr, ok := args[0].(string)
+	if !ok {
+		return map[string]Value{"success": false, "error": "URL must be a string"}
+	}
+
+	// Optional headers
+	headers := map[string]string{}
+	if len(args) > 1 {
+		if h, ok := args[1].(map[string]Value); ok {
+			for k, v := range h {
+				headers[k] = fmt.Sprintf("%v", v)
+			}
+		}
+	}
+
+	req, err := http.NewRequest("GET", urlStr, nil)
+	if err != nil {
+		return map[string]Value{"success": false, "error": err.Error()}
+	}
+
+	for k, v := range headers {
+		req.Header.Set(k, v)
+	}
+	req.Header.Set("User-Agent", "XxScript/1.0")
+
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		return map[string]Value{"success": false, "error": err.Error()}
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return map[string]Value{"success": false, "error": err.Error()}
+	}
+
+	return map[string]Value{
+		"success":     true,
+		"statusCode":  resp.StatusCode,
+		"status":      resp.Status,
+		"headers":     headersToMap(resp.Header),
+		"body":        string(body),
+		"contentType": resp.Header.Get("Content-Type"),
+	}
+}
+
+// builtinHTTPPost performs an HTTP POST request
+func (i *Interpreter) builtinHTTPPost(args []Value) Value {
+	if len(args) == 0 {
+		return map[string]Value{"success": false, "error": "URL required"}
+	}
+
+	urlStr, ok := args[0].(string)
+	if !ok {
+		return map[string]Value{"success": false, "error": "URL must be a string"}
+	}
+
+	// Body
+	var bodyReader io.Reader
+	contentType := "application/json"
+	if len(args) > 1 {
+		switch v := args[1].(type) {
+		case string:
+			bodyReader = strings.NewReader(v)
+		case map[string]Value:
+			data, _ := json.Marshal(v)
+			bodyReader = bytes.NewReader(data)
+		case []Value:
+			data, _ := json.Marshal(v)
+			bodyReader = bytes.NewReader(data)
+		}
+	}
+
+	// Optional headers
+	headers := map[string]string{}
+	if len(args) > 2 {
+		if h, ok := args[2].(map[string]Value); ok {
+			for k, v := range h {
+				headers[k] = fmt.Sprintf("%v", v)
+			}
+		}
+	}
+
+	req, err := http.NewRequest("POST", urlStr, bodyReader)
+	if err != nil {
+		return map[string]Value{"success": false, "error": err.Error()}
+	}
+
+	req.Header.Set("Content-Type", contentType)
+	req.Header.Set("User-Agent", "XxScript/1.0")
+	for k, v := range headers {
+		req.Header.Set(k, v)
+	}
+
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		return map[string]Value{"success": false, "error": err.Error()}
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return map[string]Value{"success": false, "error": err.Error()}
+	}
+
+	return map[string]Value{
+		"success":     true,
+		"statusCode":  resp.StatusCode,
+		"status":      resp.Status,
+		"headers":     headersToMap(resp.Header),
+		"body":        string(body),
+		"contentType": resp.Header.Get("Content-Type"),
+	}
+}
+
+// builtinHTTPPut performs an HTTP PUT request
+func (i *Interpreter) builtinHTTPPut(args []Value) Value {
+	if len(args) == 0 {
+		return map[string]Value{"success": false, "error": "URL required"}
+	}
+
+	urlStr, ok := args[0].(string)
+	if !ok {
+		return map[string]Value{"success": false, "error": "URL must be a string"}
+	}
+
+	var bodyReader io.Reader
+	if len(args) > 1 {
+		switch v := args[1].(type) {
+		case string:
+			bodyReader = strings.NewReader(v)
+		case map[string]Value:
+			data, _ := json.Marshal(v)
+			bodyReader = bytes.NewReader(data)
+		}
+	}
+
+	headers := map[string]string{}
+	if len(args) > 2 {
+		if h, ok := args[2].(map[string]Value); ok {
+			for k, v := range h {
+				headers[k] = fmt.Sprintf("%v", v)
+			}
+		}
+	}
+
+	req, err := http.NewRequest("PUT", urlStr, bodyReader)
+	if err != nil {
+		return map[string]Value{"success": false, "error": err.Error()}
+	}
+
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("User-Agent", "XxScript/1.0")
+	for k, v := range headers {
+		req.Header.Set(k, v)
+	}
+
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		return map[string]Value{"success": false, "error": err.Error()}
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return map[string]Value{"success": false, "error": err.Error()}
+	}
+
+	return map[string]Value{
+		"success":     true,
+		"statusCode":  resp.StatusCode,
+		"status":      resp.Status,
+		"headers":     headersToMap(resp.Header),
+		"body":        string(body),
+	}
+}
+
+// builtinHTTPDelete performs an HTTP DELETE request
+func (i *Interpreter) builtinHTTPDelete(args []Value) Value {
+	if len(args) == 0 {
+		return map[string]Value{"success": false, "error": "URL required"}
+	}
+
+	urlStr, ok := args[0].(string)
+	if !ok {
+		return map[string]Value{"success": false, "error": "URL must be a string"}
+	}
+
+	headers := map[string]string{}
+	if len(args) > 1 {
+		if h, ok := args[1].(map[string]Value); ok {
+			for k, v := range h {
+				headers[k] = fmt.Sprintf("%v", v)
+			}
+		}
+	}
+
+	req, err := http.NewRequest("DELETE", urlStr, nil)
+	if err != nil {
+		return map[string]Value{"success": false, "error": err.Error()}
+	}
+
+	req.Header.Set("User-Agent", "XxScript/1.0")
+	for k, v := range headers {
+		req.Header.Set(k, v)
+	}
+
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		return map[string]Value{"success": false, "error": err.Error()}
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return map[string]Value{"success": false, "error": err.Error()}
+	}
+
+	return map[string]Value{
+		"success":    true,
+		"statusCode": resp.StatusCode,
+		"status":     resp.Status,
+		"headers":    headersToMap(resp.Header),
+		"body":       string(body),
+	}
+}
+
+// builtinHTTPRequest performs a custom HTTP request
+func (i *Interpreter) builtinHTTPRequest(args []Value) Value {
+	if len(args) == 0 {
+		return map[string]Value{"success": false, "error": "options required"}
+	}
+
+	opts, ok := args[0].(map[string]Value)
+	if !ok {
+		return map[string]Value{"success": false, "error": "options must be a map"}
+	}
+
+	// Get URL
+	urlStr := ""
+	if u, ok := opts["url"].(string); ok {
+		urlStr = u
+	}
+	if urlStr == "" {
+		return map[string]Value{"success": false, "error": "url is required"}
+	}
+
+	// Get method
+	method := "GET"
+	if m, ok := opts["method"].(string); ok {
+		method = m
+	}
+
+	// Get body
+	var bodyReader io.Reader
+	if b, ok := opts["body"]; ok {
+		switch v := b.(type) {
+		case string:
+			bodyReader = strings.NewReader(v)
+		case map[string]Value:
+			data, _ := json.Marshal(v)
+			bodyReader = bytes.NewReader(data)
+		}
+	}
+
+	// Create request
+	req, err := http.NewRequest(method, urlStr, bodyReader)
+	if err != nil {
+		return map[string]Value{"success": false, "error": err.Error()}
+	}
+
+	// Set headers
+	if h, ok := opts["headers"].(map[string]Value); ok {
+		for k, v := range h {
+			req.Header.Set(k, fmt.Sprintf("%v", v))
+		}
+	}
+	req.Header.Set("User-Agent", "XxScript/1.0")
+
+	// Set Content-Type if body exists
+	if bodyReader != nil && req.Header.Get("Content-Type") == "" {
+		req.Header.Set("Content-Type", "application/json")
+	}
+
+	// Timeout
+	timeout := 30 * time.Second
+	if t, ok := opts["timeout"].(float64); ok {
+		timeout = time.Duration(t) * time.Second
+	}
+
+	client := &http.Client{Timeout: timeout}
+	resp, err := client.Do(req)
+	if err != nil {
+		return map[string]Value{"success": false, "error": err.Error()}
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return map[string]Value{"success": false, "error": err.Error()}
+	}
+
+	return map[string]Value{
+		"success":    true,
+		"statusCode": resp.StatusCode,
+		"status":     resp.Status,
+		"headers":    headersToMap(resp.Header),
+		"body":       string(body),
+	}
+}
+
+func headersToMap(h http.Header) map[string]Value {
+	result := make(map[string]Value)
+	for k, v := range h {
+		if len(v) == 1 {
+			result[k] = v[0]
+		} else {
+			arr := make([]Value, len(v))
+			for i, s := range v {
+				arr[i] = s
+			}
+			result[k] = arr
+		}
+	}
+	return result
+}
+
+// ============================================================================
+// URL Functions
+// ============================================================================
+
+// builtinURLParse parses a URL into its components
+func (i *Interpreter) builtinURLParse(args []Value) Value {
+	if len(args) == 0 {
+		return map[string]Value{"success": false, "error": "URL required"}
+	}
+
+	urlStr, ok := args[0].(string)
+	if !ok {
+		return map[string]Value{"success": false, "error": "URL must be a string"}
+	}
+
+	u, err := url.Parse(urlStr)
+	if err != nil {
+		return map[string]Value{"success": false, "error": err.Error()}
+	}
+
+	result := map[string]Value{
+		"success":    true,
+		"scheme":     u.Scheme,
+		"host":       u.Host,
+		"path":       u.Path,
+		"rawQuery":   u.RawQuery,
+		"fragment":   u.Fragment,
+		"rawPath":    u.RawPath,
+		"opaque":     u.Opaque,
+		"requestURI": u.RequestURI(),
+	}
+
+	// Parse query params
+	query := make(map[string]Value)
+	for k, v := range u.Query() {
+		if len(v) == 1 {
+			query[k] = v[0]
+		} else {
+			arr := make([]Value, len(v))
+			for i, s := range v {
+				arr[i] = s
+			}
+			query[k] = arr
+		}
+	}
+	result["query"] = query
+
+	// User info
+	if u.User != nil {
+		result["user"] = u.User.Username()
+		if pass, ok := u.User.Password(); ok {
+			result["password"] = pass
+		}
+	}
+
+	return result
+}
+
+// builtinURLEncode encodes a string for use in a URL
+func (i *Interpreter) builtinURLEncode(args []Value) Value {
+	if len(args) == 0 {
+		return ""
+	}
+	return url.QueryEscape(fmt.Sprintf("%v", args[0]))
+}
+
+// builtinURLDecode decodes a URL-encoded string
+func (i *Interpreter) builtinURLDecode(args []Value) Value {
+	if len(args) == 0 {
+		return ""
+	}
+	s, err := url.QueryUnescape(fmt.Sprintf("%v", args[0]))
+	if err != nil {
+		return ""
+	}
+	return s
+}
+
+// builtinURLJoin joins a base URL with a path
+func (i *Interpreter) builtinURLJoin(args []Value) Value {
+	if len(args) < 2 {
+		return ""
+	}
+
+	base, ok1 := args[0].(string)
+	path, ok2 := args[1].(string)
+	if !ok1 || !ok2 {
+		return ""
+	}
+
+	baseURL, err := url.Parse(base)
+	if err != nil {
+		return ""
+	}
+
+	pathURL, err := url.Parse(path)
+	if err != nil {
+		return ""
+	}
+
+	return baseURL.ResolveReference(pathURL).String()
+}
+
+// builtinURLBuild builds a URL from components
+func (i *Interpreter) builtinURLBuild(args []Value) Value {
+	if len(args) == 0 {
+		return ""
+	}
+
+	opts, ok := args[0].(map[string]Value)
+	if !ok {
+		return ""
+	}
+
+	u := &url.URL{}
+
+	if scheme, ok := opts["scheme"].(string); ok {
+		u.Scheme = scheme
+	}
+	if host, ok := opts["host"].(string); ok {
+		u.Host = host
+	}
+	if path, ok := opts["path"].(string); ok {
+		u.Path = path
+	}
+	if fragment, ok := opts["fragment"].(string); ok {
+		u.Fragment = fragment
+	}
+
+	// Build query string
+	if query, ok := opts["query"].(map[string]Value); ok {
+		q := u.Query()
+		for k, v := range query {
+			q.Set(k, fmt.Sprintf("%v", v))
+		}
+		u.RawQuery = q.Encode()
+	}
+
+	// User info
+	if user, ok := opts["user"].(string); ok {
+		if pass, ok := opts["password"].(string); ok {
+			u.User = url.UserPassword(user, pass)
+		} else {
+			u.User = url.User(user)
+		}
+	}
+
+	return u.String()
+}
+
+// ============================================================================
+// DNS and IP Functions
+// ============================================================================
+
+// builtinDNSLookup looks up hostnames for a domain
+func (i *Interpreter) builtinDNSLookup(args []Value) Value {
+	if len(args) == 0 {
+		return map[string]Value{"success": false, "error": "hostname required"}
+	}
+
+	hostname, ok := args[0].(string)
+	if !ok {
+		return map[string]Value{"success": false, "error": "hostname must be a string"}
+	}
+
+	addrs, err := net.LookupHost(hostname)
+	if err != nil {
+		return map[string]Value{"success": false, "error": err.Error()}
+	}
+
+	result := make([]Value, len(addrs))
+	for i, addr := range addrs {
+		result[i] = addr
+	}
+
+	return map[string]Value{
+		"success":  true,
+		"hostname": hostname,
+		"addrs":    result,
+	}
+}
+
+// builtinDNSLookupHost looks up hostnames (alias with more info)
+func (i *Interpreter) builtinDNSLookupHost(args []Value) Value {
+	if len(args) == 0 {
+		return map[string]Value{"success": false, "error": "hostname required"}
+	}
+
+	hostname, ok := args[0].(string)
+	if !ok {
+		return map[string]Value{"success": false, "error": "hostname must be a string"}
+	}
+
+	// LookupHost returns both IPv4 and IPv6
+	addrs, err := net.LookupHost(hostname)
+	if err != nil {
+		return map[string]Value{"success": false, "error": err.Error()}
+	}
+
+	// CNAME lookup
+	cname, _ := net.LookupCNAME(hostname)
+
+	// Separate IPv4 and IPv6
+	ipv4 := []Value{}
+	ipv6 := []Value{}
+	for _, addr := range addrs {
+		if strings.Contains(addr, ":") {
+			ipv6 = append(ipv6, addr)
+		} else {
+			ipv4 = append(ipv4, addr)
+		}
+	}
+
+	return map[string]Value{
+		"success":  true,
+		"hostname": hostname,
+		"cname":    cname,
+		"addrs":    addrs,
+		"ipv4":     ipv4,
+		"ipv6":     ipv6,
+	}
+}
+
+// builtinDNSLookupAddr performs reverse DNS lookup
+func (i *Interpreter) builtinDNSLookupAddr(args []Value) Value {
+	if len(args) == 0 {
+		return map[string]Value{"success": false, "error": "IP address required"}
+	}
+
+	ipAddr, ok := args[0].(string)
+	if !ok {
+		return map[string]Value{"success": false, "error": "IP address must be a string"}
+	}
+
+	names, err := net.LookupAddr(ipAddr)
+	if err != nil {
+		return map[string]Value{"success": false, "error": err.Error()}
+	}
+
+	result := make([]Value, len(names))
+	for i, name := range names {
+		result[i] = name
+	}
+
+	return map[string]Value{
+		"success": true,
+		"ip":      ipAddr,
+		"names":   result,
+	}
+}
+
+// builtinIPParse parses an IP address
+func (i *Interpreter) builtinIPParse(args []Value) Value {
+	if len(args) == 0 {
+		return map[string]Value{"success": false, "error": "IP address required"}
+	}
+
+	ipStr, ok := args[0].(string)
+	if !ok {
+		return map[string]Value{"success": false, "error": "IP address must be a string"}
+	}
+
+	ip := net.ParseIP(ipStr)
+	if ip == nil {
+		return map[string]Value{"success": false, "error": "invalid IP address"}
+	}
+
+	return map[string]Value{
+		"success":  true,
+		"ip":       ip.String(),
+		"isIPv4":   ip.To4() != nil,
+		"isIPv6":   ip.To4() == nil,
+		"isLoopback": ip.IsLoopback(),
+		"isPrivate":  ip.IsPrivate(),
+		"isGlobalUnicast": ip.IsGlobalUnicast(),
+	}
+}
+
+// builtinIsIPv4 checks if a string is a valid IPv4 address
+func (i *Interpreter) builtinIsIPv4(args []Value) Value {
+	if len(args) == 0 {
+		return false
+	}
+
+	ipStr, ok := args[0].(string)
+	if !ok {
+		return false
+	}
+
+	ip := net.ParseIP(ipStr)
+	if ip == nil {
+		return false
+	}
+
+	return ip.To4() != nil
+}
+
+// builtinIsIPv6 checks if a string is a valid IPv6 address
+func (i *Interpreter) builtinIsIPv6(args []Value) Value {
+	if len(args) == 0 {
+		return false
+	}
+
+	ipStr, ok := args[0].(string)
+	if !ok {
+		return false
+	}
+
+	ip := net.ParseIP(ipStr)
+	if ip == nil {
+		return false
+	}
+
+	return ip.To4() == nil
+}
+
+// ============================================================================
+// JSON Functions
+// ============================================================================
+
+// builtinJSONEncode encodes a value to JSON string
+func (i *Interpreter) builtinJSONEncode(args []Value) Value {
+	if len(args) == 0 {
+		return ""
+	}
+
+	data, err := json.Marshal(args[0])
+	if err != nil {
+		return ""
+	}
+	return string(data)
+}
+
+// builtinJSONDecode decodes a JSON string to a value
+func (i *Interpreter) builtinJSONDecode(args []Value) Value {
+	if len(args) == 0 {
+		return nil
+	}
+
+	jsonStr, ok := args[0].(string)
+	if !ok {
+		return nil
+	}
+
+	var result interface{}
+	if err := json.Unmarshal([]byte(jsonStr), &result); err != nil {
+		return map[string]Value{"success": false, "error": err.Error()}
+	}
+
+	// Convert to XxScript values
+	return convertJSONValue(result)
+}
+
+// builtinJSONPretty pretty-prints JSON
+func (i *Interpreter) builtinJSONPretty(args []Value) Value {
+	if len(args) == 0 {
+		return ""
+	}
+
+	var data []byte
+	var err error
+
+	switch v := args[0].(type) {
+	case string:
+		var obj interface{}
+		if err := json.Unmarshal([]byte(v), &obj); err != nil {
+			return ""
+		}
+		data, err = json.MarshalIndent(obj, "", "  ")
+	default:
+		data, err = json.MarshalIndent(v, "", "  ")
+	}
+
+	if err != nil {
+		return ""
+	}
+	return string(data)
+}
+
+func convertJSONValue(v interface{}) Value {
+	switch val := v.(type) {
+	case nil:
+		return nil
+	case bool:
+		return val
+	case float64:
+		return val
+	case string:
+		return val
+	case []interface{}:
+		arr := make([]Value, len(val))
+		for i, item := range val {
+			arr[i] = convertJSONValue(item)
+		}
+		return arr
+	case map[string]interface{}:
+		m := make(map[string]Value)
+		for k, v := range val {
+			m[k] = convertJSONValue(v)
+		}
+		return m
+	default:
+		return fmt.Sprintf("%v", val)
+	}
 }
 
 func iToInt(v Value) int64 {
