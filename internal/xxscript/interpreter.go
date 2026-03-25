@@ -1519,6 +1519,61 @@ func (i *Interpreter) callBuiltin(name string, args []Value) (Value, bool) {
 	// OS - Exit
 	case "exit":
 		return i.builtinExit(args), true
+	// Format - Number formatting
+	case "formatNumber":
+		return i.builtinFormatNumber(args), true
+	case "formatFloat":
+		return i.builtinFormatFloat(args), true
+	case "formatInt":
+		return i.builtinFormatInt(args), true
+	case "formatCurrency":
+		return i.builtinFormatCurrency(args), true
+	case "formatPercent":
+		return i.builtinFormatPercent(args), true
+	case "formatBytes":
+		return i.builtinFormatBytes(args), true
+	// Format - Date/Time
+	case "formatDate":
+		return i.builtinFormatDate(args), true
+	case "parseDate":
+		return i.builtinParseDate(args), true
+	case "formatDuration":
+		return i.builtinFormatDuration(args), true
+	case "parseDuration":
+		return i.builtinParseDuration(args), true
+	// Format - Text
+	case "indent":
+		return i.builtinIndent(args), true
+	case "wrap":
+		return i.builtinWrap(args), true
+	case "align":
+		return i.builtinAlign(args), true
+	case "alignLeft":
+		return i.builtinAlignLeft(args), true
+	case "alignRight":
+		return i.builtinAlignRight(args), true
+	case "alignCenter":
+		return i.builtinAlignCenter(args), true
+	// Format - Table/CSV
+	case "table":
+		return i.builtinTable(args), true
+	case "csv":
+		return i.builtinCSV(args), true
+	case "csvParse":
+		return i.builtinCSVParse(args), true
+	// Format - Other
+	case "printf":
+		return i.builtinPrintf(args), true
+	case "padNumber":
+		return i.builtinPadNumber(args), true
+	case "toRoman":
+		return i.builtinToRoman(args), true
+	case "fromRoman":
+		return i.builtinFromRoman(args), true
+	case "toWords":
+		return i.builtinToWords(args), true
+	case "toOrdinal":
+		return i.builtinToOrdinal(args), true
 	default:
 		return nil, false
 	}
@@ -5479,6 +5534,834 @@ func (i *Interpreter) builtinExit(args []Value) Value {
 	}
 	os.Exit(code)
 	return nil
+}
+
+// ============================================================================
+// Format Functions - Number Formatting
+// ============================================================================
+
+func (i *Interpreter) builtinFormatNumber(args []Value) Value {
+	if len(args) == 0 {
+		return ""
+	}
+
+	num := i.toFloat(args[0])
+	decimals := 2
+	if len(args) > 1 {
+		decimals = int(i.toInt(args[1]))
+	}
+
+	// Format with thousand separators
+	format := fmt.Sprintf("%%.%df", decimals)
+	str := fmt.Sprintf(format, num)
+
+	// Add thousand separators
+	parts := strings.Split(str, ".")
+	intPart := parts[0]
+	decPart := ""
+	if len(parts) > 1 {
+		decPart = "." + parts[1]
+	}
+
+	// Add commas for thousands
+	var result []rune
+	for j, c := range intPart {
+		if j > 0 && (len(intPart)-j)%3 == 0 && intPart[j-1] != '-' {
+			result = append(result, ',')
+		}
+		result = append(result, c)
+	}
+
+	return string(result) + decPart
+}
+
+func (i *Interpreter) builtinFormatFloat(args []Value) Value {
+	if len(args) == 0 {
+		return ""
+	}
+
+	num := i.toFloat(args[0])
+	decimals := 2
+	if len(args) > 1 {
+		decimals = int(i.toInt(args[1]))
+	}
+
+	format := fmt.Sprintf("%%.%df", decimals)
+	return fmt.Sprintf(format, num)
+}
+
+func (i *Interpreter) builtinFormatInt(args []Value) Value {
+	if len(args) == 0 {
+		return ""
+	}
+
+	num := i.toInt(args[0])
+
+	// Optional base
+	base := 10
+	if len(args) > 1 {
+		base = int(i.toInt(args[1]))
+		if base < 2 || base > 36 {
+			base = 10
+		}
+	}
+
+	// Format in specified base
+	if base == 10 {
+		return fmt.Sprintf("%d", num)
+	} else if base == 16 {
+		return fmt.Sprintf("%x", num)
+	} else if base == 8 {
+		return fmt.Sprintf("%o", num)
+	} else if base == 2 {
+		return fmt.Sprintf("%b", num)
+	}
+
+	// Custom base conversion
+	digits := "0123456789abcdefghijklmnopqrstuvwxyz"
+	if num < 0 {
+		num = -num
+	}
+	if num == 0 {
+		return "0"
+	}
+
+	var result []byte
+	num64 := int64(num)
+	for num64 > 0 {
+		result = append([]byte{digits[num64%int64(base)]}, result...)
+		num64 = num64 / int64(base)
+	}
+
+	return string(result)
+}
+
+func (i *Interpreter) builtinFormatCurrency(args []Value) Value {
+	if len(args) == 0 {
+		return ""
+	}
+
+	num := i.toFloat(args[0])
+	symbol := "$"
+	if len(args) > 1 {
+		if s, ok := args[1].(string); ok {
+			symbol = s
+		}
+	}
+
+	decimals := 2
+	if len(args) > 2 {
+		decimals = int(i.toInt(args[2]))
+	}
+
+	format := fmt.Sprintf("%%.%df", decimals)
+	formatted := fmt.Sprintf(format, num)
+
+	// Add thousand separators
+	parts := strings.Split(formatted, ".")
+	intPart := parts[0]
+	decPart := ""
+	if len(parts) > 1 {
+		decPart = "." + parts[1]
+	}
+
+	var result []rune
+	for j, c := range intPart {
+		if j > 0 && (len(intPart)-j)%3 == 0 && intPart[j-1] != '-' {
+			result = append(result, ',')
+		}
+		result = append(result, c)
+	}
+
+	if num < 0 {
+		return "-" + symbol + string(result[1:]) + decPart
+	}
+	return symbol + string(result) + decPart
+}
+
+func (i *Interpreter) builtinFormatPercent(args []Value) Value {
+	if len(args) == 0 {
+		return ""
+	}
+
+	num := i.toFloat(args[0])
+	decimals := 1
+	if len(args) > 1 {
+		decimals = int(i.toInt(args[1]))
+	}
+
+	format := fmt.Sprintf("%%.%df", decimals)
+	return fmt.Sprintf(format+"%%", num*100)
+}
+
+func (i *Interpreter) builtinFormatBytes(args []Value) Value {
+	if len(args) == 0 {
+		return "0 B"
+	}
+
+	bytes := i.toInt(args[0])
+	if bytes < 0 {
+		bytes = -bytes
+	}
+
+	units := []string{"B", "KB", "MB", "GB", "TB", "PB", "EB"}
+	unit := 0
+	value := float64(bytes)
+
+	for value >= 1024 && unit < len(units)-1 {
+		value /= 1024
+		unit++
+	}
+
+	if unit == 0 {
+		return fmt.Sprintf("%d %s", bytes, units[unit])
+	}
+	return fmt.Sprintf("%.2f %s", value, units[unit])
+}
+
+// ============================================================================
+// Format Functions - Date/Time
+// ============================================================================
+
+func (i *Interpreter) builtinFormatDate(args []Value) Value {
+	if len(args) == 0 {
+		return ""
+	}
+
+	var t time.Time
+	switch v := args[0].(type) {
+	case float64:
+		t = time.Unix(int64(v), 0)
+	case int64:
+		t = time.Unix(v, 0)
+	case int:
+		t = time.Unix(int64(v), 0)
+	case string:
+		// Try to parse as RFC3339 first
+		parsed, err := time.Parse(time.RFC3339, v)
+		if err == nil {
+			t = parsed
+		} else {
+			t = time.Now()
+		}
+	default:
+		t = time.Now()
+	}
+
+	layout := "2006-01-02 15:04:05"
+	if len(args) > 1 {
+		if l, ok := args[1].(string); ok {
+			layout = l
+		}
+	}
+
+	return t.Format(layout)
+}
+
+func (i *Interpreter) builtinParseDate(args []Value) Value {
+	if len(args) == 0 {
+		return nil
+	}
+
+	dateStr, ok := args[0].(string)
+	if !ok {
+		return nil
+	}
+
+	layout := "2006-01-02"
+	if len(args) > 1 {
+		if l, ok := args[1].(string); ok {
+			layout = l
+		}
+	}
+
+	t, err := time.Parse(layout, dateStr)
+	if err != nil {
+		return map[string]Value{"success": false, "error": err.Error()}
+	}
+
+	return map[string]Value{
+		"success": true,
+		"unix":    t.Unix(),
+		"year":    int64(t.Year()),
+		"month":   int64(t.Month()),
+		"day":     int64(t.Day()),
+		"hour":    int64(t.Hour()),
+		"minute":  int64(t.Minute()),
+		"second":  int64(t.Second()),
+	}
+}
+
+func (i *Interpreter) builtinFormatDuration(args []Value) Value {
+	if len(args) == 0 {
+		return "0s"
+	}
+
+	var d time.Duration
+	switch v := args[0].(type) {
+	case float64:
+		d = time.Duration(v * float64(time.Second))
+	case int64:
+		d = time.Duration(v) * time.Second
+	case int:
+		d = time.Duration(v) * time.Second
+	case string:
+		parsed, err := time.ParseDuration(v)
+		if err != nil {
+			return "0s"
+		}
+		d = parsed
+	default:
+		return "0s"
+	}
+
+	// Format as human readable
+	seconds := int(d.Seconds())
+	minutes := seconds / 60
+	hours := minutes / 60
+	days := hours / 24
+
+	seconds %= 60
+	minutes %= 60
+	hours %= 24
+
+	parts := []string{}
+	if days > 0 {
+		parts = append(parts, fmt.Sprintf("%dd", days))
+	}
+	if hours > 0 {
+		parts = append(parts, fmt.Sprintf("%dh", hours))
+	}
+	if minutes > 0 {
+		parts = append(parts, fmt.Sprintf("%dm", minutes))
+	}
+	if seconds > 0 || len(parts) == 0 {
+		parts = append(parts, fmt.Sprintf("%ds", seconds))
+	}
+
+	return strings.Join(parts, " ")
+}
+
+func (i *Interpreter) builtinParseDuration(args []Value) Value {
+	if len(args) == 0 {
+		return int64(0)
+	}
+
+	durStr, ok := args[0].(string)
+	if !ok {
+		return int64(0)
+	}
+
+	d, err := time.ParseDuration(durStr)
+	if err != nil {
+		return int64(0)
+	}
+
+	return int64(d.Seconds())
+}
+
+// ============================================================================
+// Format Functions - Text
+// ============================================================================
+
+func (i *Interpreter) builtinIndent(args []Value) Value {
+	if len(args) == 0 {
+		return ""
+	}
+
+	text, ok := args[0].(string)
+	if !ok {
+		text = fmt.Sprintf("%v", args[0])
+	}
+
+	indent := "  "
+	if len(args) > 1 {
+		if ind, ok := args[1].(string); ok {
+			indent = ind
+		}
+	}
+
+	lines := strings.Split(text, "\n")
+	for j, line := range lines {
+		if line != "" {
+			lines[j] = indent + line
+		}
+	}
+	return strings.Join(lines, "\n")
+}
+
+func (i *Interpreter) builtinWrap(args []Value) Value {
+	if len(args) == 0 {
+		return ""
+	}
+
+	text, ok := args[0].(string)
+	if !ok {
+		text = fmt.Sprintf("%v", args[0])
+	}
+
+	width := 80
+	if len(args) > 1 {
+		width = int(i.toInt(args[1]))
+	}
+
+	if width <= 0 {
+		return text
+	}
+
+	words := strings.Fields(text)
+	if len(words) == 0 {
+		return ""
+	}
+
+	var lines []string
+	currentLine := words[0]
+
+	for _, word := range words[1:] {
+		if len(currentLine)+1+len(word) <= width {
+			currentLine += " " + word
+		} else {
+			lines = append(lines, currentLine)
+			currentLine = word
+		}
+	}
+	lines = append(lines, currentLine)
+
+	return strings.Join(lines, "\n")
+}
+
+func (i *Interpreter) builtinAlign(args []Value) Value {
+	if len(args) < 2 {
+		return ""
+	}
+
+	text, ok := args[0].(string)
+	if !ok {
+		text = fmt.Sprintf("%v", args[0])
+	}
+
+	width := int(i.toInt(args[1]))
+	alignType := "left"
+	if len(args) > 2 {
+		if t, ok := args[2].(string); ok {
+			alignType = t
+		}
+	}
+
+	textLen := len(text)
+	if textLen >= width {
+		return text
+	}
+
+	padding := width - textLen
+
+	switch alignType {
+	case "right":
+		return strings.Repeat(" ", padding) + text
+	case "center":
+		leftPad := padding / 2
+		rightPad := padding - leftPad
+		return strings.Repeat(" ", leftPad) + text + strings.Repeat(" ", rightPad)
+	default: // left
+		return text + strings.Repeat(" ", padding)
+	}
+}
+
+func (i *Interpreter) builtinAlignLeft(args []Value) Value {
+	return i.builtinAlign(append(args, "left"))
+}
+
+func (i *Interpreter) builtinAlignRight(args []Value) Value {
+	return i.builtinAlign(append(args, "right"))
+}
+
+func (i *Interpreter) builtinAlignCenter(args []Value) Value {
+	return i.builtinAlign(append(args, "center"))
+}
+
+// ============================================================================
+// Format Functions - Table/CSV
+// ============================================================================
+
+func (i *Interpreter) builtinTable(args []Value) Value {
+	if len(args) == 0 {
+		return ""
+	}
+
+	var data [][]Value
+	switch v := args[0].(type) {
+	case []Value:
+		// Check if it's 2D array
+		if len(v) > 0 {
+			if inner, ok := v[0].([]Value); ok {
+				data = make([][]Value, len(v))
+				data[0] = inner
+				for j := 1; j < len(v); j++ {
+					if inner, ok := v[j].([]Value); ok {
+						data[j] = inner
+					}
+				}
+			} else {
+				// Single row
+				data = [][]Value{v}
+			}
+		}
+	case map[string]Value:
+		// Convert map to key-value table
+		data = [][]Value{}
+		for k, val := range v {
+			data = append(data, []Value{k, val})
+		}
+	default:
+		return ""
+	}
+
+	if len(data) == 0 {
+		return ""
+	}
+
+	// Calculate column widths
+	numCols := len(data[0])
+	colWidths := make([]int, numCols)
+	for _, row := range data {
+		for j, cell := range row {
+			cellStr := fmt.Sprintf("%v", cell)
+			if j < len(colWidths) && len(cellStr) > colWidths[j] {
+				colWidths[j] = len(cellStr)
+			}
+		}
+	}
+
+	// Build table
+	var lines []string
+
+	// Top border
+	var border strings.Builder
+	border.WriteString("+")
+	for _, w := range colWidths {
+		border.WriteString(strings.Repeat("-", w+2))
+		border.WriteString("+")
+	}
+	lines = append(lines, border.String())
+
+	// Rows
+	for _, row := range data {
+		var line strings.Builder
+		line.WriteString("|")
+		for j, cell := range row {
+			cellStr := fmt.Sprintf("%v", cell)
+			width := colWidths[j]
+			line.WriteString(" ")
+			line.WriteString(cellStr)
+			line.WriteString(strings.Repeat(" ", width-len(cellStr)+1))
+			line.WriteString("|")
+		}
+		lines = append(lines, line.String())
+		lines = append(lines, border.String())
+	}
+
+	return strings.Join(lines, "\n")
+}
+
+func (i *Interpreter) builtinCSV(args []Value) Value {
+	if len(args) == 0 {
+		return ""
+	}
+
+	var data [][]Value
+	switch v := args[0].(type) {
+	case []Value:
+		if len(v) > 0 {
+			if inner, ok := v[0].([]Value); ok {
+				data = make([][]Value, len(v))
+				data[0] = inner
+				for j := 1; j < len(v); j++ {
+					if inner, ok := v[j].([]Value); ok {
+						data[j] = inner
+					}
+				}
+			} else {
+				data = [][]Value{v}
+			}
+		}
+	case map[string]Value:
+		data = [][]Value{}
+		for k, val := range v {
+			data = append(data, []Value{k, val})
+		}
+	default:
+		return ""
+	}
+
+	separator := ","
+	if len(args) > 1 {
+		if s, ok := args[1].(string); ok && len(s) > 0 {
+			separator = s
+		}
+	}
+
+	var lines []string
+	for _, row := range data {
+		cells := make([]string, len(row))
+		for j, cell := range row {
+			cellStr := fmt.Sprintf("%v", cell)
+			// Quote if contains separator or newline
+			if strings.Contains(cellStr, separator) || strings.Contains(cellStr, "\n") || strings.Contains(cellStr, "\"") {
+				cellStr = "\"" + strings.ReplaceAll(cellStr, "\"", "\"\"") + "\""
+			}
+			cells[j] = cellStr
+		}
+		lines = append(lines, strings.Join(cells, separator))
+	}
+
+	return strings.Join(lines, "\n")
+}
+
+func (i *Interpreter) builtinCSVParse(args []Value) Value {
+	if len(args) == 0 {
+		return []Value{}
+	}
+
+	csvStr, ok := args[0].(string)
+	if !ok {
+		return []Value{}
+	}
+
+	separator := ","
+	if len(args) > 1 {
+		if s, ok := args[1].(string); ok && len(s) > 0 {
+			separator = s
+		}
+	}
+
+	var result []Value
+	var currentCell strings.Builder
+	var inQuotes bool
+	var row []Value
+
+	for j := 0; j < len(csvStr); j++ {
+		ch := csvStr[j]
+
+		if inQuotes {
+			if ch == '"' {
+				if j+1 < len(csvStr) && csvStr[j+1] == '"' {
+					currentCell.WriteByte('"')
+					j++
+				} else {
+					inQuotes = false
+				}
+			} else {
+				currentCell.WriteByte(ch)
+			}
+		} else {
+			if ch == '"' {
+				inQuotes = true
+			} else if string(ch) == separator {
+				row = append(row, currentCell.String())
+				currentCell.Reset()
+			} else if ch == '\n' {
+				row = append(row, currentCell.String())
+				result = append(result, row)
+				row = nil
+				currentCell.Reset()
+			} else if ch != '\r' {
+				currentCell.WriteByte(ch)
+			}
+		}
+	}
+
+	if currentCell.Len() > 0 || len(row) > 0 {
+		row = append(row, currentCell.String())
+		result = append(result, row)
+	}
+
+	return result
+}
+
+// ============================================================================
+// Format Functions - Other
+// ============================================================================
+
+func (i *Interpreter) builtinPrintf(args []Value) Value {
+	if len(args) == 0 {
+		return nil
+	}
+
+	format, ok := args[0].(string)
+	if !ok {
+		return nil
+	}
+
+	var formatArgs []interface{}
+	for _, arg := range args[1:] {
+		formatArgs = append(formatArgs, arg)
+	}
+
+	output := fmt.Sprintf(format, formatArgs...)
+
+	// Write to HTTP response if available, otherwise print
+	if i.ctx.HTTPWriter != nil {
+		i.ctx.HTTPWriter.Write([]byte(output))
+	}
+
+	return nil
+}
+
+func (i *Interpreter) builtinPadNumber(args []Value) Value {
+	if len(args) == 0 {
+		return ""
+	}
+
+	num := i.toInt(args[0])
+	width := 2
+	if len(args) > 1 {
+		width = int(i.toInt(args[1]))
+	}
+
+	padChar := "0"
+	if len(args) > 2 {
+		if p, ok := args[2].(string); ok && len(p) > 0 {
+			padChar = string(p[0])
+		}
+	}
+
+	str := fmt.Sprintf("%d", num)
+	for len(str) < width {
+		str = padChar + str
+	}
+	return str
+}
+
+func (i *Interpreter) builtinToRoman(args []Value) Value {
+	if len(args) == 0 {
+		return ""
+	}
+
+	num := i.toInt(args[0])
+	if num < 1 || num > 3999 {
+		return ""
+	}
+
+	vals := []int{1000, 900, 500, 400, 100, 90, 50, 40, 10, 9, 5, 4, 1}
+	romans := []string{"M", "CM", "D", "CD", "C", "XC", "L", "XL", "X", "IX", "V", "IV", "I"}
+
+	var result strings.Builder
+	for j, val := range vals {
+		for num >= val {
+			result.WriteString(romans[j])
+			num -= val
+		}
+	}
+
+	return result.String()
+}
+
+func (i *Interpreter) builtinFromRoman(args []Value) Value {
+	if len(args) == 0 {
+		return int64(0)
+	}
+
+	roman, ok := args[0].(string)
+	if !ok {
+		return int64(0)
+	}
+
+	roman = strings.ToUpper(roman)
+	values := map[byte]int{'I': 1, 'V': 5, 'X': 10, 'L': 50, 'C': 100, 'D': 500, 'M': 1000}
+
+	result := 0
+	for j := 0; j < len(roman); j++ {
+		val := values[roman[j]]
+		if j+1 < len(roman) && values[roman[j+1]] > val {
+			result -= val
+		} else {
+			result += val
+		}
+	}
+
+	return int64(result)
+}
+
+func (i *Interpreter) builtinToWords(args []Value) Value {
+	if len(args) == 0 {
+		return ""
+	}
+
+	num := i.toInt(args[0])
+	if num < 0 {
+		return "negative " + i.builtinToWords([]Value{-num}).(string)
+	}
+	if num == 0 {
+		return "zero"
+	}
+
+	ones := []string{"", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten",
+		"eleven", "twelve", "thirteen", "fourteen", "fifteen", "sixteen", "seventeen", "eighteen", "nineteen"}
+	tens := []string{"", "", "twenty", "thirty", "forty", "fifty", "sixty", "seventy", "eighty", "ninety"}
+
+	var parts []string
+
+	if num >= 1000000000000 {
+		parts = append(parts, i.builtinToWords([]Value{num/1000000000000}).(string), "trillion")
+		num %= 1000000000000
+	}
+	if num >= 1000000000 {
+		parts = append(parts, i.builtinToWords([]Value{num/1000000000}).(string), "billion")
+		num %= 1000000000
+	}
+	if num >= 1000000 {
+		parts = append(parts, i.builtinToWords([]Value{num/1000000}).(string), "million")
+		num %= 1000000
+	}
+	if num >= 1000 {
+		parts = append(parts, i.builtinToWords([]Value{num/1000}).(string), "thousand")
+		num %= 1000
+	}
+	if num >= 100 {
+		parts = append(parts, ones[num/100], "hundred")
+		num %= 100
+	}
+	if num >= 20 {
+		parts = append(parts, tens[num/10])
+		if num%10 > 0 {
+			parts[len(parts)-1] += "-" + ones[num%10]
+		}
+	} else if num > 0 {
+		parts = append(parts, ones[num])
+	}
+
+	return strings.Join(parts, " ")
+}
+
+func (i *Interpreter) builtinToOrdinal(args []Value) Value {
+	if len(args) == 0 {
+		return ""
+	}
+
+	num := i.toInt(args[0])
+	words := i.builtinToWords(args)
+
+	// Add ordinal suffix
+	lastDigit := int(num % 10)
+	lastTwoDigits := int(num % 100)
+
+	var suffix string
+	if lastTwoDigits >= 11 && lastTwoDigits <= 13 {
+		suffix = "th"
+	} else {
+		switch lastDigit {
+		case 1:
+			suffix = "st"
+		case 2:
+			suffix = "nd"
+		case 3:
+			suffix = "rd"
+		default:
+			suffix = "th"
+		}
+	}
+
+	return words.(string) + suffix
 }
 
 func iToInt(v Value) int64 {
