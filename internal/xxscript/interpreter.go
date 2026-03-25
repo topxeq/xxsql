@@ -1286,6 +1286,34 @@ func (i *Interpreter) callBuiltin(name string, args []Value) (Value, bool) {
 		return i.builtinSort(args), true
 	case "sortDesc":
 		return i.builtinSortDesc(args), true
+	case "sortBy":
+		return i.builtinSortBy(args), true
+	case "sortByDesc":
+		return i.builtinSortByDesc(args), true
+	case "sortStrings":
+		return i.builtinSortStrings(args), true
+	case "sortStringsDesc":
+		return i.builtinSortStringsDesc(args), true
+	case "sortNatural":
+		return i.builtinSortNatural(args), true
+	case "sortNaturalDesc":
+		return i.builtinSortNaturalDesc(args), true
+	case "sortMulti":
+		return i.builtinSortMulti(args), true
+	case "rank":
+		return i.builtinRank(args), true
+	case "rankBy":
+		return i.builtinRankBy(args), true
+	case "denseRank":
+		return i.builtinDenseRank(args), true
+	case "topN":
+		return i.builtinTopN(args), true
+	case "bottomN":
+		return i.builtinBottomN(args), true
+	case "partition":
+		return i.builtinPartition(args), true
+	case "groupBySorted":
+		return i.builtinGroupBySorted(args), true
 	case "arrayReverse":
 		return i.builtinArrayReverse(args), true
 	case "unique":
@@ -3223,6 +3251,547 @@ func (i *Interpreter) builtinSortDesc(args []Value) Value {
 		arr[j], arr[k] = arr[k], arr[j]
 	}
 	return arr
+}
+
+// ============================================================================
+// Advanced Sorting Functions
+// ============================================================================
+
+// sortBy sorts an array of objects by a specified key
+func (i *Interpreter) builtinSortBy(args []Value) Value {
+	if len(args) < 2 {
+		return []Value{}
+	}
+
+	arr, ok := args[0].([]Value)
+	if !ok {
+		return []Value{}
+	}
+
+	key, ok := args[1].(string)
+	if !ok {
+		return []Value{}
+	}
+
+	// Copy array to avoid modifying original
+	result := make([]Value, len(arr))
+	copy(result, arr)
+
+	// Sort by key
+	sort.Slice(result, func(a, b int) bool {
+		valA := getMapValue(result[a], key)
+		valB := getMapValue(result[b], key)
+		return compareValues(valA, valB) < 0
+	})
+
+	return result
+}
+
+// sortByDesc sorts an array of objects by a specified key in descending order
+func (i *Interpreter) builtinSortByDesc(args []Value) Value {
+	if len(args) < 2 {
+		return []Value{}
+	}
+
+	arr, ok := args[0].([]Value)
+	if !ok {
+		return []Value{}
+	}
+
+	key, ok := args[1].(string)
+	if !ok {
+		return []Value{}
+	}
+
+	result := make([]Value, len(arr))
+	copy(result, arr)
+
+	sort.Slice(result, func(a, b int) bool {
+		valA := getMapValue(result[a], key)
+		valB := getMapValue(result[b], key)
+		return compareValues(valA, valB) > 0
+	})
+
+	return result
+}
+
+// sortStrings sorts an array of strings alphabetically
+func (i *Interpreter) builtinSortStrings(args []Value) Value {
+	if len(args) == 0 {
+		return []Value{}
+	}
+
+	arr, ok := args[0].([]Value)
+	if !ok {
+		return []Value{}
+	}
+
+	// Extract strings
+	strs := make([]string, 0, len(arr))
+	for _, v := range arr {
+		if s, ok := v.(string); ok {
+			strs = append(strs, s)
+		} else {
+			strs = append(strs, fmt.Sprintf("%v", v))
+		}
+	}
+
+	sort.Strings(strs)
+
+	result := make([]Value, len(strs))
+	for j, s := range strs {
+		result[j] = s
+	}
+	return result
+}
+
+// sortStringsDesc sorts an array of strings in descending alphabetical order
+func (i *Interpreter) builtinSortStringsDesc(args []Value) Value {
+	result := i.builtinSortStrings(args)
+	arr := result.([]Value)
+	for j, k := 0, len(arr)-1; j < k; j, k = j+1, k-1 {
+		arr[j], arr[k] = arr[k], arr[j]
+	}
+	return arr
+}
+
+// sortNatural sorts strings naturally (file1, file2, file10 instead of file1, file10, file2)
+func (i *Interpreter) builtinSortNatural(args []Value) Value {
+	if len(args) == 0 {
+		return []Value{}
+	}
+
+	arr, ok := args[0].([]Value)
+	if !ok {
+		return []Value{}
+	}
+
+	result := make([]Value, len(arr))
+	copy(result, arr)
+
+	sort.Slice(result, func(a, b int) bool {
+		strA := fmt.Sprintf("%v", result[a])
+		strB := fmt.Sprintf("%v", result[b])
+		return naturalLess(strA, strB)
+	})
+
+	return result
+}
+
+// sortNaturalDesc sorts strings naturally in descending order
+func (i *Interpreter) builtinSortNaturalDesc(args []Value) Value {
+	result := i.builtinSortNatural(args)
+	arr := result.([]Value)
+	for j, k := 0, len(arr)-1; j < k; j, k = j+1, k-1 {
+		arr[j], arr[k] = arr[k], arr[j]
+	}
+	return arr
+}
+
+// sortMulti sorts by multiple keys
+func (i *Interpreter) builtinSortMulti(args []Value) Value {
+	if len(args) < 2 {
+		return []Value{}
+	}
+
+	arr, ok := args[0].([]Value)
+	if !ok {
+		return []Value{}
+	}
+
+	keys, ok := args[1].([]Value)
+	if !ok {
+		return arr
+	}
+
+	result := make([]Value, len(arr))
+	copy(result, arr)
+
+	sort.Slice(result, func(a, b int) bool {
+		for _, k := range keys {
+			key, ok := k.(string)
+			if !ok {
+				continue
+			}
+			valA := getMapValue(result[a], key)
+			valB := getMapValue(result[b], key)
+			cmp := compareValues(valA, valB)
+			if cmp != 0 {
+				return cmp < 0
+			}
+		}
+		return false
+	})
+
+	return result
+}
+
+// rank returns the ranking of elements (1-based, with ties)
+func (i *Interpreter) builtinRank(args []Value) Value {
+	if len(args) == 0 {
+		return []Value{}
+	}
+
+	arr, ok := args[0].([]Value)
+	if !ok {
+		return []Value{}
+	}
+
+	// Create indexed pairs for sorting
+	type indexed struct {
+		val   Value
+		index int
+	}
+	indexedArr := make([]indexed, len(arr))
+	for j, v := range arr {
+		indexedArr[j] = indexed{val: v, index: j}
+	}
+
+	// Sort by value
+	sort.Slice(indexedArr, func(a, b int) bool {
+		return compareValues(indexedArr[a].val, indexedArr[b].val) < 0
+	})
+
+	// Assign ranks
+	ranks := make([]Value, len(arr))
+	for j := 0; j < len(indexedArr); j++ {
+		rank := j + 1
+		// Check for ties
+		if j > 0 && compareValues(indexedArr[j].val, indexedArr[j-1].val) == 0 {
+			// Same rank as previous
+			ranks[indexedArr[j].index] = ranks[indexedArr[j-1].index]
+		} else {
+			ranks[indexedArr[j].index] = int64(rank)
+		}
+	}
+
+	return ranks
+}
+
+// rankBy returns the ranking of objects by a key
+func (i *Interpreter) builtinRankBy(args []Value) Value {
+	if len(args) < 2 {
+		return []Value{}
+	}
+
+	arr, ok := args[0].([]Value)
+	if !ok {
+		return []Value{}
+	}
+
+	key, ok := args[1].(string)
+	if !ok {
+		return []Value{}
+	}
+
+	// Create indexed pairs
+	type indexed struct {
+		val   Value
+		index int
+	}
+	indexedArr := make([]indexed, len(arr))
+	for j, v := range arr {
+		indexedArr[j] = indexed{val: getMapValue(v, key), index: j}
+	}
+
+	// Sort by value
+	sort.Slice(indexedArr, func(a, b int) bool {
+		return compareValues(indexedArr[a].val, indexedArr[b].val) < 0
+	})
+
+	// Assign ranks
+	ranks := make([]Value, len(arr))
+	for j := 0; j < len(indexedArr); j++ {
+		rank := j + 1
+		if j > 0 && compareValues(indexedArr[j].val, indexedArr[j-1].val) == 0 {
+			ranks[indexedArr[j].index] = ranks[indexedArr[j-1].index]
+		} else {
+			ranks[indexedArr[j].index] = int64(rank)
+		}
+	}
+
+	return ranks
+}
+
+// denseRank returns dense ranking (no gaps for ties)
+func (i *Interpreter) builtinDenseRank(args []Value) Value {
+	if len(args) == 0 {
+		return []Value{}
+	}
+
+	arr, ok := args[0].([]Value)
+	if !ok {
+		return []Value{}
+	}
+
+	// Sort first
+	sorted := i.builtinSort(args).([]Value)
+
+	// Build value-to-rank map
+	rankMap := make(map[string]int64)
+	denseRank := int64(0)
+	for _, v := range sorted {
+		key := fmt.Sprintf("%v", v)
+		if _, exists := rankMap[key]; !exists {
+			denseRank++
+			rankMap[key] = denseRank
+		}
+	}
+
+	// Assign ranks
+	ranks := make([]Value, len(arr))
+	for j, v := range arr {
+		key := fmt.Sprintf("%v", v)
+		ranks[j] = rankMap[key]
+	}
+
+	return ranks
+}
+
+// topN returns the top N elements
+func (i *Interpreter) builtinTopN(args []Value) Value {
+	if len(args) < 2 {
+		return []Value{}
+	}
+
+	arr, ok := args[0].([]Value)
+	if !ok {
+		return []Value{}
+	}
+
+	n := int(i.toInt(args[1]))
+	if n <= 0 {
+		return []Value{}
+	}
+	if n > len(arr) {
+		n = len(arr)
+	}
+
+	// Sort and take top N
+	sorted := i.builtinSortDesc([]Value{arr}).([]Value)
+	return sorted[:n]
+}
+
+// bottomN returns the bottom N elements
+func (i *Interpreter) builtinBottomN(args []Value) Value {
+	if len(args) < 2 {
+		return []Value{}
+	}
+
+	arr, ok := args[0].([]Value)
+	if !ok {
+		return []Value{}
+	}
+
+	n := int(i.toInt(args[1]))
+	if n <= 0 {
+		return []Value{}
+	}
+	if n > len(arr) {
+		n = len(arr)
+	}
+
+	sorted := i.builtinSort([]Value{arr}).([]Value)
+	return sorted[:n]
+}
+
+// partition splits array into two groups based on predicate
+func (i *Interpreter) builtinPartition(args []Value) Value {
+	if len(args) < 2 {
+		return []Value{[]Value{}, []Value{}}
+	}
+
+	arr, ok := args[0].([]Value)
+	if !ok {
+		return []Value{[]Value{}, []Value{}}
+	}
+
+	predicate, ok := args[1].(string)
+	if !ok {
+		return []Value{[]Value{}, []Value{}}
+	}
+
+	trueGroup := []Value{}
+	falseGroup := []Value{}
+
+	for _, v := range arr {
+		if evaluatePredicate(v, predicate) {
+			trueGroup = append(trueGroup, v)
+		} else {
+			falseGroup = append(falseGroup, v)
+		}
+	}
+
+	return []Value{trueGroup, falseGroup}
+}
+
+// groupBySorted groups consecutive elements by key after sorting
+func (i *Interpreter) builtinGroupBySorted(args []Value) Value {
+	if len(args) < 2 {
+		return map[string]Value{}
+	}
+
+	arr, ok := args[0].([]Value)
+	if !ok {
+		return map[string]Value{}
+	}
+
+	key, ok := args[1].(string)
+	if !ok {
+		return map[string]Value{}
+	}
+
+	// Sort by key first
+	sorted := i.builtinSortBy([]Value{arr, key}).([]Value)
+
+	result := map[string]Value{}
+	for _, v := range sorted {
+		keyVal := fmt.Sprintf("%v", getMapValue(v, key))
+		if group, ok := result[keyVal]; ok {
+			result[keyVal] = append(group.([]Value), v)
+		} else {
+			result[keyVal] = []Value{v}
+		}
+	}
+
+	return result
+}
+
+// Helper functions for sorting
+
+func getMapValue(v Value, key string) Value {
+	if m, ok := v.(map[string]Value); ok {
+		return m[key]
+	}
+	return nil
+}
+
+func compareValues(a, b Value) int {
+	// Handle nil
+	if a == nil && b == nil {
+		return 0
+	}
+	if a == nil {
+		return -1
+	}
+	if b == nil {
+		return 1
+	}
+
+	// Try numeric comparison first
+	aFloat, aIsNum := toFloatValue(a)
+	bFloat, bIsNum := toFloatValue(b)
+	if aIsNum && bIsNum {
+		if aFloat < bFloat {
+			return -1
+		} else if aFloat > bFloat {
+			return 1
+		}
+		return 0
+	}
+
+	// String comparison
+	aStr := fmt.Sprintf("%v", a)
+	bStr := fmt.Sprintf("%v", b)
+	if aStr < bStr {
+		return -1
+	} else if aStr > bStr {
+		return 1
+	}
+	return 0
+}
+
+func toFloatValue(v Value) (float64, bool) {
+	switch val := v.(type) {
+	case float64:
+		return val, true
+	case int:
+		return float64(val), true
+	case int64:
+		return float64(val), true
+	default:
+		return 0, false
+	}
+}
+
+func naturalLess(a, b string) bool {
+	i, j := 0, 0
+	for i < len(a) && j < len(b) {
+		ca, cb := a[i], b[j]
+
+		// Both digits - compare numbers
+		if ca >= '0' && ca <= '9' && cb >= '0' && cb <= '9' {
+			// Extract numbers
+			na, ia := extractNumber(a, i)
+			nb, ib := extractNumber(b, j)
+			if na != nb {
+				return na < nb
+			}
+			i, j = ia, ib
+			continue
+		}
+
+		// Compare characters
+		if ca != cb {
+			return ca < cb
+		}
+		i++
+		j++
+	}
+
+	// Shorter string comes first
+	return len(a) < len(b)
+}
+
+func extractNumber(s string, start int) (int, int) {
+	num := 0
+	i := start
+	for i < len(s) && s[i] >= '0' && s[i] <= '9' {
+		num = num*10 + int(s[i]-'0')
+		i++
+	}
+	return num, i
+}
+
+func evaluatePredicate(v Value, predicate string) bool {
+	switch predicate {
+	case "positive":
+		if f, ok := toFloatValue(v); ok {
+			return f > 0
+		}
+	case "negative":
+		if f, ok := toFloatValue(v); ok {
+			return f < 0
+		}
+	case "zero":
+		if f, ok := toFloatValue(v); ok {
+			return f == 0
+		}
+	case "even":
+		if n, ok := v.(int); ok {
+			return n%2 == 0
+		}
+		if n, ok := v.(int64); ok {
+			return n%2 == 0
+		}
+	case "odd":
+		if n, ok := v.(int); ok {
+			return n%2 != 0
+		}
+		if n, ok := v.(int64); ok {
+			return n%2 != 0
+		}
+	case "null", "nil":
+		return v == nil
+	case "empty":
+		if s, ok := v.(string); ok {
+			return s == ""
+		}
+		if arr, ok := v.([]Value); ok {
+			return len(arr) == 0
+		}
+	}
+	return false
 }
 
 func (i *Interpreter) builtinArrayReverse(args []Value) Value {
