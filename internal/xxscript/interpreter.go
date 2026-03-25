@@ -3,12 +3,15 @@ package xxscript
 
 import (
 	"bytes"
+	"compress/gzip"
+	"compress/zlib"
 	"crypto/hmac"
 	"crypto/md5"
 	"crypto/rand"
 	"crypto/sha1"
 	"crypto/sha256"
 	"crypto/sha512"
+	"encoding/base32"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
@@ -20,6 +23,7 @@ import (
 	"io"
 	"math"
 	mathrand "math/rand"
+	"mime/quotedprintable"
 	"net"
 	"net/http"
 	"net/url"
@@ -40,6 +44,7 @@ import (
 	"golang.org/x/crypto/blake2b"
 	"golang.org/x/crypto/pbkdf2"
 	"golang.org/x/crypto/sha3"
+	"golang.org/x/net/idna"
 
 	"github.com/topxeq/xxsql/internal/storage"
 )
@@ -1210,6 +1215,101 @@ func (i *Interpreter) callBuiltin(name string, args []Value) (Value, bool) {
 		return i.builtinEscapeURL(args), true
 	case "unescapeURL":
 		return i.builtinUnescapeURL(args), true
+	// Encoding/Decoding Functions
+	case "base64Encode":
+		return i.builtinBase64Encode(args), true
+	case "base64Decode":
+		return i.builtinBase64Decode(args), true
+	case "base64URLEncode":
+		return i.builtinBase64URLEncode(args), true
+	case "base64URLDecode":
+		return i.builtinBase64URLDecode(args), true
+	case "base32Encode":
+		return i.builtinBase32Encode(args), true
+	case "base32Decode":
+		return i.builtinBase32Decode(args), true
+	case "hexEncode":
+		return i.builtinHexEncode(args), true
+	case "hexDecode":
+		return i.builtinHexDecode(args), true
+	case "rot13":
+		return i.builtinRot13(args), true
+	case "rotN":
+		return i.builtinRotN(args), true
+	case "caesarEncode":
+		return i.builtinCaesarEncode(args), true
+	case "caesarDecode":
+		return i.builtinCaesarDecode(args), true
+	case "atob":
+		return i.builtinBase64Decode(args), true // alias
+	case "btoa":
+		return i.builtinBase64Encode(args), true // alias
+	case "quotedPrintableEncode":
+		return i.builtinQuotedPrintableEncode(args), true
+	case "quotedPrintableDecode":
+		return i.builtinQuotedPrintableDecode(args), true
+	case "uuencode":
+		return i.builtinUUEncode(args), true
+	case "uudecode":
+		return i.builtinUUDecode(args), true
+	case "htmlEntityEncode":
+		return i.builtinHTMLEntityEncode(args), true
+	case "htmlEntityDecode":
+		return i.builtinHTMLEntityDecode(args), true
+	case "unicodeEncode":
+		return i.builtinUnicodeEncode(args), true
+	case "unicodeDecode":
+		return i.builtinUnicodeDecode(args), true
+	case "utf8Encode":
+		return i.builtinUTF8Encode(args), true
+	case "utf8Decode":
+		return i.builtinUTF8Decode(args), true
+	case "punycodeEncode":
+		return i.builtinPunycodeEncode(args), true
+	case "punycodeDecode":
+		return i.builtinPunycodeDecode(args), true
+	case "jsEscape":
+		return i.builtinJSEscape(args), true
+	case "jsUnescape":
+		return i.builtinJSUnescape(args), true
+	case "cEscape":
+		return i.builtinCEscape(args), true
+	case "cUnescape":
+		return i.builtinCUnescape(args), true
+	case "toBinary":
+		return i.builtinToBinary(args), true
+	case "fromBinary":
+		return i.builtinFromBinary(args), true
+	case "toOctal":
+		return i.builtinToOctal(args), true
+	case "fromOctal":
+		return i.builtinFromOctal(args), true
+	case "morseEncode":
+		return i.builtinMorseEncode(args), true
+	case "morseDecode":
+		return i.builtinMorseDecode(args), true
+	case "asciiToHex":
+		return i.builtinASCIItoHex(args), true
+	case "hexToAscii":
+		return i.builtinHexToASCII(args), true
+	case "strToBytes":
+		return i.builtinStrToBytes(args), true
+	case "bytesToStr":
+		return i.builtinBytesToStr(args), true
+	case "gzipCompress":
+		return i.builtinGzipCompress(args), true
+	case "gzipDecompress":
+		return i.builtinGzipDecompress(args), true
+	case "zlibCompress":
+		return i.builtinZlibCompress(args), true
+	case "zlibDecompress":
+		return i.builtinZlibDecompress(args), true
+	case "isBase64":
+		return i.builtinIsBase64(args), true
+	case "isHex":
+		return i.builtinIsHex(args), true
+	case "isBase32":
+		return i.builtinIsBase32(args), true
 	case "left":
 		return i.builtinLeft(args), true
 	case "right":
@@ -1732,19 +1832,6 @@ func (i *Interpreter) callBuiltin(name string, args []Value) (Value, bool) {
 		return i.builtinUUID(args), true // alias
 	case "uuidv7":
 		return i.builtinUUIDv7(args), true
-	// Encoding
-	case "base64Encode":
-		return i.builtinBase64Encode(args), true
-	case "base64Decode":
-		return i.builtinBase64Decode(args), true
-	case "base64URLEncode":
-		return i.builtinBase64URLEncode(args), true
-	case "base64URLDecode":
-		return i.builtinBase64URLDecode(args), true
-	case "hexEncode":
-		return i.builtinHexEncode(args), true
-	case "hexDecode":
-		return i.builtinHexDecode(args), true
 	// Simple crypto
 	case "xorEncrypt":
 		return i.builtinXorEncrypt(args), true
@@ -14587,6 +14674,1036 @@ func (i *Interpreter) builtinDirCopy(args []Value) Value {
 	}
 
 	return map[string]Value{"success": true, "src": src, "dst": dst, "filesCopied": copied}
+}
+
+// ============================================================================
+// Encoding/Decoding Functions
+// ============================================================================
+
+// Base32 Encoding/Decoding
+func (i *Interpreter) builtinBase32Encode(args []Value) Value {
+	if len(args) == 0 {
+		return ""
+	}
+	s, ok := args[0].(string)
+	if !ok {
+		return ""
+	}
+	return base32.StdEncoding.EncodeToString([]byte(s))
+}
+
+func (i *Interpreter) builtinBase32Decode(args []Value) Value {
+	if len(args) == 0 {
+		return ""
+	}
+	s, ok := args[0].(string)
+	if !ok {
+		return ""
+	}
+	data, err := base32.StdEncoding.DecodeString(s)
+	if err != nil {
+		return map[string]Value{"error": err.Error(), "success": false}
+	}
+	return string(data)
+}
+
+// ROT13 Encoding/Decoding (self-inverse)
+func (i *Interpreter) builtinRot13(args []Value) Value {
+	if len(args) == 0 {
+		return ""
+	}
+	s, ok := args[0].(string)
+	if !ok {
+		return ""
+	}
+
+	var result strings.Builder
+	for _, r := range s {
+		if r >= 'a' && r <= 'z' {
+			result.WriteRune('a' + (r-'a'+13)%26)
+		} else if r >= 'A' && r <= 'Z' {
+			result.WriteRune('A' + (r-'A'+13)%26)
+		} else {
+			result.WriteRune(r)
+		}
+	}
+	return result.String()
+}
+
+// ROT-N Encoding/Decoding
+func (i *Interpreter) builtinRotN(args []Value) Value {
+	if len(args) < 2 {
+		return ""
+	}
+	s, ok := args[0].(string)
+	if !ok {
+		return ""
+	}
+	n := i.toInt(args[1])
+
+	var result strings.Builder
+	for _, r := range s {
+		if r >= 'a' && r <= 'z' {
+			// Handle negative n
+			shift := ((int(r-'a') + int(n)) % 26 + 26) % 26
+			result.WriteRune(rune('a' + shift))
+		} else if r >= 'A' && r <= 'Z' {
+			shift := ((int(r-'A') + int(n)) % 26 + 26) % 26
+			result.WriteRune(rune('A' + shift))
+		} else {
+			result.WriteRune(r)
+		}
+	}
+	return result.String()
+}
+
+// Caesar Cipher
+func (i *Interpreter) builtinCaesarEncode(args []Value) Value {
+	if len(args) < 2 {
+		return ""
+	}
+	s, ok := args[0].(string)
+	if !ok {
+		return ""
+	}
+	shift := i.toInt(args[1])
+
+	var result strings.Builder
+	for _, r := range s {
+		if r >= 'a' && r <= 'z' {
+			result.WriteRune('a' + (r-'a'+rune(shift)+26)%26)
+		} else if r >= 'A' && r <= 'Z' {
+			result.WriteRune('A' + (r-'A'+rune(shift)+26)%26)
+		} else {
+			result.WriteRune(r)
+		}
+	}
+	return result.String()
+}
+
+func (i *Interpreter) builtinCaesarDecode(args []Value) Value {
+	if len(args) < 2 {
+		return ""
+	}
+	// Decode is encode with negative shift
+	shift := i.toInt(args[1])
+	newArgs := []Value{args[0], -shift}
+	return i.builtinCaesarEncode(newArgs)
+}
+
+// Quoted-Printable Encoding/Decoding
+func (i *Interpreter) builtinQuotedPrintableEncode(args []Value) Value {
+	if len(args) == 0 {
+		return ""
+	}
+	s, ok := args[0].(string)
+	if !ok {
+		return ""
+	}
+
+	var result strings.Builder
+	reader := strings.NewReader(s)
+	writer := quotedprintable.NewWriter(&result)
+	writer.Write([]byte(s))
+	reader.Read(make([]byte, len(s)))
+	return result.String()
+}
+
+func (i *Interpreter) builtinQuotedPrintableDecode(args []Value) Value {
+	if len(args) == 0 {
+		return ""
+	}
+	s, ok := args[0].(string)
+	if !ok {
+		return ""
+	}
+
+	reader := quotedprintable.NewReader(strings.NewReader(s))
+	data, err := io.ReadAll(reader)
+	if err != nil {
+		return map[string]Value{"error": err.Error(), "success": false}
+	}
+	return string(data)
+}
+
+// UUencode/UUdecode (simplified implementation)
+func (i *Interpreter) builtinUUEncode(args []Value) Value {
+	if len(args) == 0 {
+		return ""
+	}
+	s, ok := args[0].(string)
+	if !ok {
+		return ""
+	}
+
+	var result strings.Builder
+	data := []byte(s)
+
+	// Write begin line
+	mode := "644"
+	if len(args) > 1 {
+		mode, _ = args[1].(string)
+	}
+	filename := "file"
+	if len(args) > 2 {
+		filename, _ = args[2].(string)
+	}
+	result.WriteString(fmt.Sprintf("begin %s %s\n", mode, filename))
+
+	// Encode data
+	for len(data) > 0 {
+		chunk := data
+		if len(chunk) > 45 {
+			chunk = data[:45]
+			data = data[45:]
+		} else {
+			data = nil
+		}
+
+		// Write length byte
+		result.WriteByte(' ' + byte(len(chunk)))
+
+		// Encode chunk
+		for j := 0; j < len(chunk); j += 3 {
+			var b1, b2, b3 byte
+			b1 = chunk[j]
+			if j+1 < len(chunk) {
+				b2 = chunk[j+1]
+			}
+			if j+2 < len(chunk) {
+				b3 = chunk[j+2]
+			}
+
+			result.WriteByte(' ' + (b1 >> 2))
+			result.WriteByte(' ' + ((b1&0x03)<<4 | b2>>4))
+			result.WriteByte(' ' + ((b2&0x0f)<<2 | b3>>6))
+			result.WriteByte(' ' + (b3 & 0x3f))
+		}
+		result.WriteByte('\n')
+	}
+
+	result.WriteString("`\nend\n")
+	return result.String()
+}
+
+func (i *Interpreter) builtinUUDecode(args []Value) Value {
+	if len(args) == 0 {
+		return ""
+	}
+	s, ok := args[0].(string)
+	if !ok {
+		return ""
+	}
+
+	lines := strings.Split(s, "\n")
+	var result []byte
+	inData := false
+
+	for _, line := range lines {
+		if strings.HasPrefix(line, "begin ") {
+			inData = true
+			continue
+		}
+		if line == "end" {
+			break
+		}
+		if !inData || len(line) == 0 {
+			continue
+		}
+
+		// Get length
+		length := int(line[0] - ' ')
+		if length <= 0 {
+			continue
+		}
+
+		// Decode line
+		data := line[1:]
+		for j := 0; j < len(data) && len(result) < length; j += 4 {
+			if j+3 >= len(data) {
+				break
+			}
+
+			b1 := data[j] - ' '
+			b2 := data[j+1] - ' '
+			b3 := data[j+2] - ' '
+			b4 := data[j+3] - ' '
+
+			result = append(result, (b1<<2)|(b2>>4))
+			if len(result) < length {
+				result = append(result, ((b2&0x0f)<<4)|(b3>>2))
+			}
+			if len(result) < length {
+				result = append(result, ((b3&0x03)<<6)|b4)
+			}
+		}
+	}
+
+	return string(result)
+}
+
+// HTML Entity Encoding/Decoding (numeric entities)
+func (i *Interpreter) builtinHTMLEntityEncode(args []Value) Value {
+	if len(args) == 0 {
+		return ""
+	}
+	s, ok := args[0].(string)
+	if !ok {
+		return ""
+	}
+
+	var result strings.Builder
+	for _, r := range s {
+		if r < 128 && (unicode.IsLetter(r) || unicode.IsDigit(r) || unicode.IsSpace(r)) {
+			result.WriteRune(r)
+		} else {
+			result.WriteString(fmt.Sprintf("&#%d;", r))
+		}
+	}
+	return result.String()
+}
+
+func (i *Interpreter) builtinHTMLEntityDecode(args []Value) Value {
+	if len(args) == 0 {
+		return ""
+	}
+	s, ok := args[0].(string)
+	if !ok {
+		return ""
+	}
+
+	// Decode numeric entities
+	re := regexp.MustCompile(`&#(\d+);|&#x([0-9a-fA-F]+);`)
+	result := re.ReplaceAllStringFunc(s, func(match string) string {
+		if strings.HasPrefix(match, "&#x") || strings.HasPrefix(match, "&#X") {
+			// Hex entity
+			hexStr := match[3 : len(match)-1]
+			n, err := strconv.ParseInt(hexStr, 16, 32)
+			if err != nil {
+				return match
+			}
+			return string(rune(n))
+		} else {
+			// Decimal entity
+			numStr := match[2 : len(match)-1]
+			n, err := strconv.ParseInt(numStr, 10, 32)
+			if err != nil {
+				return match
+			}
+			return string(rune(n))
+		}
+	})
+	return result
+}
+
+// Unicode Escape/Unescape
+func (i *Interpreter) builtinUnicodeEncode(args []Value) Value {
+	if len(args) == 0 {
+		return ""
+	}
+	s, ok := args[0].(string)
+	if !ok {
+		return ""
+	}
+
+	var result strings.Builder
+	for _, r := range s {
+		if r < 128 {
+			result.WriteRune(r)
+		} else {
+			result.WriteString(fmt.Sprintf("\\u%04X", r))
+		}
+	}
+	return result.String()
+}
+
+func (i *Interpreter) builtinUnicodeDecode(args []Value) Value {
+	if len(args) == 0 {
+		return ""
+	}
+	s, ok := args[0].(string)
+	if !ok {
+		return ""
+	}
+
+	// Decode \uXXXX format
+	re := regexp.MustCompile(`\\u([0-9a-fA-F]{4})`)
+	result := re.ReplaceAllStringFunc(s, func(match string) string {
+		hexStr := match[2:]
+		n, err := strconv.ParseInt(hexStr, 16, 32)
+		if err != nil {
+			return match
+		}
+		return string(rune(n))
+	})
+	return result
+}
+
+// UTF-8 Encode/Decode (converts to/from byte array)
+func (i *Interpreter) builtinUTF8Encode(args []Value) Value {
+	if len(args) == 0 {
+		return []Value{}
+	}
+	s, ok := args[0].(string)
+	if !ok {
+		return []Value{}
+	}
+
+	data := []byte(s)
+	result := make([]Value, len(data))
+	for idx, b := range data {
+		result[idx] = int64(b)
+	}
+	return result
+}
+
+func (i *Interpreter) builtinUTF8Decode(args []Value) Value {
+	if len(args) == 0 {
+		return ""
+	}
+
+	var data []byte
+	switch v := args[0].(type) {
+	case []Value:
+		data = make([]byte, len(v))
+		for idx, val := range v {
+			data[idx] = byte(i.toInt(val))
+		}
+	case string:
+		return v
+	default:
+		return ""
+	}
+	return string(data)
+}
+
+// Punycode Encoding/Decoding
+func (i *Interpreter) builtinPunycodeEncode(args []Value) Value {
+	if len(args) == 0 {
+		return ""
+	}
+	s, ok := args[0].(string)
+	if !ok {
+		return ""
+	}
+
+	// Use idna for punycode
+	result, err := idna.ToASCII(s)
+	if err != nil {
+		return map[string]Value{"error": err.Error(), "success": false}
+	}
+	return result
+}
+
+func (i *Interpreter) builtinPunycodeDecode(args []Value) Value {
+	if len(args) == 0 {
+		return ""
+	}
+	s, ok := args[0].(string)
+	if !ok {
+		return ""
+	}
+
+	result, err := idna.ToUnicode(s)
+	if err != nil {
+		return map[string]Value{"error": err.Error(), "success": false}
+	}
+	return result
+}
+
+// JavaScript Escape/Unescape
+func (i *Interpreter) builtinJSEscape(args []Value) Value {
+	if len(args) == 0 {
+		return ""
+	}
+	s, ok := args[0].(string)
+	if !ok {
+		return ""
+	}
+
+	var result strings.Builder
+	for _, r := range s {
+		switch r {
+		case '\\':
+			result.WriteString("\\\\")
+		case '"':
+			result.WriteString("\\\"")
+		case '\'':
+			result.WriteString("\\'")
+		case '\n':
+			result.WriteString("\\n")
+		case '\r':
+			result.WriteString("\\r")
+		case '\t':
+			result.WriteString("\\t")
+		case '\b':
+			result.WriteString("\\b")
+		case '\f':
+			result.WriteString("\\f")
+		default:
+			if r < 32 {
+				result.WriteString(fmt.Sprintf("\\x%02X", r))
+			} else {
+				result.WriteRune(r)
+			}
+		}
+	}
+	return result.String()
+}
+
+func (i *Interpreter) builtinJSUnescape(args []Value) Value {
+	if len(args) == 0 {
+		return ""
+	}
+	s, ok := args[0].(string)
+	if !ok {
+		return ""
+	}
+
+	// Unescape JS escape sequences
+	result := s
+	replacements := []struct {
+		from, to string
+	}{
+		{"\\\\", "\x00"},
+		{"\\\"", "\""},
+		{"\\'", "'"},
+		{"\\n", "\n"},
+		{"\\r", "\r"},
+		{"\\t", "\t"},
+		{"\\b", "\b"},
+		{"\\f", "\f"},
+		{"\x00", "\\"},
+	}
+
+	for _, r := range replacements {
+		result = strings.ReplaceAll(result, r.from, r.to)
+	}
+
+	// Handle \xNN
+	hexRe := regexp.MustCompile(`\\x([0-9a-fA-F]{2})`)
+	result = hexRe.ReplaceAllStringFunc(result, func(match string) string {
+		n, err := strconv.ParseInt(match[2:], 16, 32)
+		if err != nil {
+			return match
+		}
+		return string(rune(n))
+	})
+
+	// Handle \uXXXX
+	unicodeRe := regexp.MustCompile(`\\u([0-9a-fA-F]{4})`)
+	result = unicodeRe.ReplaceAllStringFunc(result, func(match string) string {
+		n, err := strconv.ParseInt(match[2:], 16, 32)
+		if err != nil {
+			return match
+		}
+		return string(rune(n))
+	})
+
+	return result
+}
+
+// C String Escape/Unescape
+func (i *Interpreter) builtinCEscape(args []Value) Value {
+	if len(args) == 0 {
+		return ""
+	}
+	s, ok := args[0].(string)
+	if !ok {
+		return ""
+	}
+
+	var result strings.Builder
+	result.WriteString("\"")
+	for _, r := range s {
+		switch r {
+		case '\\':
+			result.WriteString("\\\\")
+		case '"':
+			result.WriteString("\\\"")
+		case '\a':
+			result.WriteString("\\a")
+		case '\b':
+			result.WriteString("\\b")
+		case '\f':
+			result.WriteString("\\f")
+		case '\n':
+			result.WriteString("\\n")
+		case '\r':
+			result.WriteString("\\r")
+		case '\t':
+			result.WriteString("\\t")
+		case '\v':
+			result.WriteString("\\v")
+		default:
+			if r < 32 || r > 126 {
+				result.WriteString(fmt.Sprintf("\\%03o", r))
+			} else {
+				result.WriteRune(r)
+			}
+		}
+	}
+	result.WriteString("\"")
+	return result.String()
+}
+
+func (i *Interpreter) builtinCUnescape(args []Value) Value {
+	if len(args) == 0 {
+		return ""
+	}
+	s, ok := args[0].(string)
+	if !ok {
+		return ""
+	}
+
+	// Remove surrounding quotes if present
+	if len(s) >= 2 && s[0] == '"' && s[len(s)-1] == '"' {
+		s = s[1 : len(s)-1]
+	}
+
+	var result strings.Builder
+	idx := 0
+	for idx < len(s) {
+		if s[idx] == '\\' && idx+1 < len(s) {
+			idx++
+			switch s[idx] {
+			case 'a':
+				result.WriteRune('\a')
+			case 'b':
+				result.WriteRune('\b')
+			case 'f':
+				result.WriteRune('\f')
+			case 'n':
+				result.WriteRune('\n')
+			case 'r':
+				result.WriteRune('\r')
+			case 't':
+				result.WriteRune('\t')
+			case 'v':
+				result.WriteRune('\v')
+			case '\\':
+				result.WriteRune('\\')
+			case '"':
+				result.WriteRune('"')
+			case '\'':
+				result.WriteRune('\'')
+			case '0', '1', '2', '3', '4', '5', '6', '7':
+				// Octal escape
+				n := 0
+				for j := 0; j < 3 && idx < len(s) && s[idx] >= '0' && s[idx] <= '7'; j++ {
+					n = n*8 + int(s[idx]-'0')
+					idx++
+				}
+				result.WriteRune(rune(n))
+				idx-- // Adjust for loop increment
+			case 'x':
+				// Hex escape
+				if idx+2 < len(s) {
+					hexStr := s[idx+1 : idx+3]
+					n, err := strconv.ParseInt(hexStr, 16, 32)
+					if err == nil {
+						result.WriteRune(rune(n))
+						idx += 2
+					}
+				}
+			default:
+				result.WriteByte(s[idx])
+			}
+		} else {
+			result.WriteByte(s[idx])
+		}
+		idx++
+	}
+	return result.String()
+}
+
+// Binary Encoding/Decoding
+func (i *Interpreter) builtinToBinary(args []Value) Value {
+	if len(args) == 0 {
+		return ""
+	}
+	s, ok := args[0].(string)
+	if !ok {
+		return ""
+	}
+
+	var result strings.Builder
+	for _, b := range []byte(s) {
+		if result.Len() > 0 {
+			result.WriteString(" ")
+		}
+		result.WriteString(fmt.Sprintf("%08b", b))
+	}
+	return result.String()
+}
+
+func (i *Interpreter) builtinFromBinary(args []Value) Value {
+	if len(args) == 0 {
+		return ""
+	}
+	s, ok := args[0].(string)
+	if !ok {
+		return ""
+	}
+
+	// Remove spaces
+	s = strings.ReplaceAll(s, " ", "")
+
+	var result []byte
+	for i := 0; i+8 <= len(s); i += 8 {
+		b, err := strconv.ParseUint(s[i:i+8], 2, 8)
+		if err != nil {
+			return ""
+		}
+		result = append(result, byte(b))
+	}
+	return string(result)
+}
+
+// Octal Encoding/Decoding
+func (i *Interpreter) builtinToOctal(args []Value) Value {
+	if len(args) == 0 {
+		return ""
+	}
+	s, ok := args[0].(string)
+	if !ok {
+		return ""
+	}
+
+	var result strings.Builder
+	for _, b := range []byte(s) {
+		if result.Len() > 0 {
+			result.WriteString(" ")
+		}
+		result.WriteString(fmt.Sprintf("%03o", b))
+	}
+	return result.String()
+}
+
+func (i *Interpreter) builtinFromOctal(args []Value) Value {
+	if len(args) == 0 {
+		return ""
+	}
+	s, ok := args[0].(string)
+	if !ok {
+		return ""
+	}
+
+	// Remove spaces
+	s = strings.ReplaceAll(s, " ", "")
+
+	var result []byte
+	for i := 0; i+3 <= len(s); i += 3 {
+		b, err := strconv.ParseUint(s[i:i+3], 8, 8)
+		if err != nil {
+			return ""
+		}
+		result = append(result, byte(b))
+	}
+	return string(result)
+}
+
+// Morse Code
+var morseCodeMap = map[rune]string{
+	'A': ".-", 'B': "-...", 'C': "-.-.", 'D': "-..", 'E': ".",
+	'F': "..-.", 'G': "--.", 'H': "....", 'I': "..", 'J': ".---",
+	'K': "-.-", 'L': ".-..", 'M': "--", 'N': "-.", 'O': "---",
+	'P': ".--.", 'Q': "--.-", 'R': ".-.", 'S': "...", 'T': "-",
+	'U': "..-", 'V': "...-", 'W': ".--", 'X': "-..-", 'Y': "-.--",
+	'Z': "--..", '0': "-----", '1': ".----", '2': "..---",
+	'3': "...--", '4': "....-", '5': ".....", '6': "-....",
+	'7': "--...", '8': "---..", '9': "----.", '.': ".-.-.-",
+	',': "--..--", '?': "..--..", '\'': ".----.", '!': "-.-.--",
+	'/': "-..-.", '(': "-.--.", ')': "-.--.-", '&': ".-...",
+	':': "---...", ';': "-.-.-.", '=': "-...-", '+': ".-.-.",
+	'-': "-....-", '_': "..--.-", '"': ".-..-.", '$': "...-..-",
+	'@': ".--.-.", ' ': "/",
+}
+
+var reverseMorseMap map[string]rune
+
+func init() {
+	reverseMorseMap = make(map[string]rune)
+	for k, v := range morseCodeMap {
+		reverseMorseMap[v] = k
+	}
+}
+
+func (i *Interpreter) builtinMorseEncode(args []Value) Value {
+	if len(args) == 0 {
+		return ""
+	}
+	s, ok := args[0].(string)
+	if !ok {
+		return ""
+	}
+
+	var result strings.Builder
+	for idx, r := range s {
+		if idx > 0 {
+			result.WriteString(" ")
+		}
+		upperR := unicode.ToUpper(r)
+		if code, exists := morseCodeMap[upperR]; exists {
+			result.WriteString(code)
+		} else {
+			result.WriteString(string(r))
+		}
+	}
+	return result.String()
+}
+
+func (i *Interpreter) builtinMorseDecode(args []Value) Value {
+	if len(args) == 0 {
+		return ""
+	}
+	s, ok := args[0].(string)
+	if !ok {
+		return ""
+	}
+
+	codes := strings.Split(s, " ")
+	var result strings.Builder
+	for _, code := range codes {
+		if r, exists := reverseMorseMap[code]; exists {
+			result.WriteRune(r)
+		} else if code == "" {
+			// Skip empty codes
+		} else {
+			result.WriteString(code)
+		}
+	}
+	return result.String()
+}
+
+// ASCII to Hex and vice versa
+func (i *Interpreter) builtinASCIItoHex(args []Value) Value {
+	if len(args) == 0 {
+		return ""
+	}
+	s, ok := args[0].(string)
+	if !ok {
+		return ""
+	}
+
+	var result strings.Builder
+	for _, r := range s {
+		result.WriteString(fmt.Sprintf("%02X", r))
+	}
+	return result.String()
+}
+
+func (i *Interpreter) builtinHexToASCII(args []Value) Value {
+	if len(args) == 0 {
+		return ""
+	}
+	s, ok := args[0].(string)
+	if !ok {
+		return ""
+	}
+
+	var result strings.Builder
+	for i := 0; i+2 <= len(s); i += 2 {
+		hexStr := s[i : i+2]
+		n, err := strconv.ParseInt(hexStr, 16, 32)
+		if err != nil {
+			continue
+		}
+		result.WriteRune(rune(n))
+	}
+	return result.String()
+}
+
+// String to Bytes and vice versa
+func (i *Interpreter) builtinStrToBytes(args []Value) Value {
+	if len(args) == 0 {
+		return []Value{}
+	}
+	s, ok := args[0].(string)
+	if !ok {
+		return []Value{}
+	}
+
+	data := []byte(s)
+	result := make([]Value, len(data))
+	for idx, b := range data {
+		result[idx] = int64(b)
+	}
+	return result
+}
+
+func (i *Interpreter) builtinBytesToStr(args []Value) Value {
+	if len(args) == 0 {
+		return ""
+	}
+
+	var data []byte
+	switch v := args[0].(type) {
+	case []Value:
+		data = make([]byte, len(v))
+		for idx, val := range v {
+			data[idx] = byte(i.toInt(val))
+		}
+	case string:
+		return v
+	default:
+		return ""
+	}
+	return string(data)
+}
+
+// Gzip Compression/Decompression
+func (i *Interpreter) builtinGzipCompress(args []Value) Value {
+	if len(args) == 0 {
+		return ""
+	}
+	s, ok := args[0].(string)
+	if !ok {
+		return ""
+	}
+
+	var buf bytes.Buffer
+	writer := gzip.NewWriter(&buf)
+	writer.Write([]byte(s))
+	writer.Close()
+
+	// Return as base64
+	return base64.StdEncoding.EncodeToString(buf.Bytes())
+}
+
+func (i *Interpreter) builtinGzipDecompress(args []Value) Value {
+	if len(args) == 0 {
+		return ""
+	}
+	s, ok := args[0].(string)
+	if !ok {
+		return ""
+	}
+
+	// Decode base64
+	data, err := base64.StdEncoding.DecodeString(s)
+	if err != nil {
+		return map[string]Value{"error": "invalid base64: " + err.Error(), "success": false}
+	}
+
+	reader, err := gzip.NewReader(bytes.NewReader(data))
+	if err != nil {
+		return map[string]Value{"error": err.Error(), "success": false}
+	}
+	defer reader.Close()
+
+	result, err := io.ReadAll(reader)
+	if err != nil {
+		return map[string]Value{"error": err.Error(), "success": false}
+	}
+	return string(result)
+}
+
+// Zlib Compression/Decompression
+func (i *Interpreter) builtinZlibCompress(args []Value) Value {
+	if len(args) == 0 {
+		return ""
+	}
+	s, ok := args[0].(string)
+	if !ok {
+		return ""
+	}
+
+	var buf bytes.Buffer
+	writer := zlib.NewWriter(&buf)
+	writer.Write([]byte(s))
+	writer.Close()
+
+	// Return as base64
+	return base64.StdEncoding.EncodeToString(buf.Bytes())
+}
+
+func (i *Interpreter) builtinZlibDecompress(args []Value) Value {
+	if len(args) == 0 {
+		return ""
+	}
+	s, ok := args[0].(string)
+	if !ok {
+		return ""
+	}
+
+	// Decode base64
+	data, err := base64.StdEncoding.DecodeString(s)
+	if err != nil {
+		return map[string]Value{"error": "invalid base64: " + err.Error(), "success": false}
+	}
+
+	reader, err := zlib.NewReader(bytes.NewReader(data))
+	if err != nil {
+		return map[string]Value{"error": err.Error(), "success": false}
+	}
+	defer reader.Close()
+
+	result, err := io.ReadAll(reader)
+	if err != nil {
+		return map[string]Value{"error": err.Error(), "success": false}
+	}
+	return string(result)
+}
+
+// Validation functions
+func (i *Interpreter) builtinIsBase64(args []Value) Value {
+	if len(args) == 0 {
+		return false
+	}
+	s, ok := args[0].(string)
+	if !ok || s == "" {
+		return false
+	}
+
+	// Check valid base64 characters
+	for _, r := range s {
+		if !((r >= 'A' && r <= 'Z') || (r >= 'a' && r <= 'z') ||
+			(r >= '0' && r <= '9') || r == '+' || r == '/' || r == '=') {
+			return false
+		}
+	}
+
+	// Try to decode
+	_, err := base64.StdEncoding.DecodeString(s)
+	return err == nil
+}
+
+func (i *Interpreter) builtinIsHex(args []Value) Value {
+	if len(args) == 0 {
+		return false
+	}
+	s, ok := args[0].(string)
+	if !ok || s == "" {
+		return false
+	}
+
+	for _, r := range s {
+		if !((r >= '0' && r <= '9') || (r >= 'a' && r <= 'f') || (r >= 'A' && r <= 'F')) {
+			return false
+		}
+	}
+	return true
+}
+
+func (i *Interpreter) builtinIsBase32(args []Value) Value {
+	if len(args) == 0 {
+		return false
+	}
+	s, ok := args[0].(string)
+	if !ok || s == "" {
+		return false
+	}
+
+	// Check valid base32 characters
+	for _, r := range s {
+		if !((r >= 'A' && r <= 'Z') || (r >= '2' && r <= '7') || r == '=') {
+			return false
+		}
+	}
+
+	_, err := base32.StdEncoding.DecodeString(s)
+	return err == nil
 }
 
 // SetupBuiltins sets up built-in objects.
