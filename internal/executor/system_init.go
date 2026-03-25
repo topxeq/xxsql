@@ -11,6 +11,7 @@ import (
 const (
 	SysTableMicroservices = "_sys_ms"
 	SysTableProjects      = "_sys_projects"
+	SysTablePlugins       = "_sys_plugins"
 )
 
 // InitSystemTables initializes system tables for XxSql.
@@ -21,7 +22,7 @@ func InitSystemTables(engine *storage.Engine) error {
 	}
 
 	// Check if tables already exist
-	if engine.TableExists(SysTableMicroservices) && engine.TableExists(SysTableProjects) {
+	if engine.TableExists(SysTableMicroservices) && engine.TableExists(SysTableProjects) && engine.TableExists(SysTablePlugins) {
 		return nil // Already initialized
 	}
 
@@ -38,6 +39,14 @@ func InitSystemTables(engine *storage.Engine) error {
 		err := createSystemProjectsTable(engine)
 		if err != nil {
 			return fmt.Errorf("failed to create %s: %w", SysTableProjects, err)
+		}
+	}
+
+	// Create _sys_plugins table for installed plugins
+	if !engine.TableExists(SysTablePlugins) {
+		err := createSystemPluginsTable(engine)
+		if err != nil {
+			return fmt.Errorf("failed to create %s: %w", SysTablePlugins, err)
 		}
 	}
 
@@ -294,6 +303,77 @@ func createSystemProjectsTable(engine *storage.Engine) error {
 	}
 
 	return engine.CreateTable(SysTableProjects, columns)
+}
+
+func createSystemPluginsTable(engine *storage.Engine) error {
+	columns := []*types.ColumnInfo{
+		{
+			Name:       "name",
+			Type:       types.TypeVarchar,
+			Size:       100,
+			Nullable:   false,
+			PrimaryKey: true,
+		},
+		{
+			Name:     "version",
+			Type:     types.TypeVarchar,
+			Size:     20,
+			Nullable: true,
+		},
+		{
+			Name:     "latest_version",
+			Type:     types.TypeVarchar,
+			Size:     20,
+			Nullable: true,
+		},
+		{
+			Name:     "author",
+			Type:     types.TypeVarchar,
+			Size:     100,
+			Nullable: true,
+		},
+		{
+			Name:     "description",
+			Type:     types.TypeText,
+			Nullable: true,
+		},
+		{
+			Name:     "category",
+			Type:     types.TypeVarchar,
+			Size:     50,
+			Nullable: true,
+		},
+		{
+			Name:     "enabled",
+			Type:     types.TypeBool,
+			Nullable: true,
+			Default:  types.NewBoolValue(true),
+		},
+		{
+			Name:     "installed_at",
+			Type:     types.TypeDatetime,
+			Nullable: true,
+		},
+		{
+			Name:     "tables",
+			Type:     types.TypeText,
+			Nullable: true,
+		},
+		{
+			Name:     "has_update",
+			Type:     types.TypeBool,
+			Nullable: true,
+			Default:  types.NewBoolValue(false),
+		},
+		{
+			Name:     "source",
+			Type:     types.TypeVarchar,
+			Size:     255,
+			Nullable: true,
+		},
+	}
+
+	return engine.CreateTable(SysTablePlugins, columns)
 }
 
 // InsertSystemMicroservice inserts a microservice script into _sys_ms table

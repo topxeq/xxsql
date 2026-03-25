@@ -17,6 +17,7 @@ import (
 	"github.com/topxeq/xxsql/internal/backup"
 	"github.com/topxeq/xxsql/internal/config"
 	"github.com/topxeq/xxsql/internal/executor"
+	"github.com/topxeq/xxsql/internal/storage"
 	"github.com/topxeq/xxsql/internal/xxscript"
 )
 
@@ -1708,4 +1709,611 @@ func (s *Server) deleteMicroservice(w http.ResponseWriter, r *http.Request, skey
 		"success": true,
 		"message": "microservice deleted",
 	})
+}
+
+// ============================================================================
+// Plugins API
+// ============================================================================
+
+// handleAPIPlugins handles GET /api/plugins - list installed plugins
+func (s *Server) handleAPIPlugins(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+
+	exec := executor.NewExecutor(s.engine)
+	result, err := exec.Execute("SELECT name, version, latest_version, author, description, category, enabled, installed_at, tables, has_update, source FROM _sys_plugins ORDER BY name")
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	plugins := make([]map[string]interface{}, 0, len(result.Rows))
+	for _, row := range result.Rows {
+		plugin := map[string]interface{}{
+			"name":           row[0],
+			"version":        row[1],
+			"latest_version": row[2],
+			"author":         row[3],
+			"description":    row[4],
+			"category":       row[5],
+			"enabled":        row[6] == true || fmt.Sprintf("%v", row[6]) == "true",
+			"installed_at":   row[7],
+			"tables":         row[8],
+			"has_update":     row[9] == true || fmt.Sprintf("%v", row[9]) == "true",
+			"source":         row[10],
+		}
+		plugins = append(plugins, plugin)
+	}
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"plugins": plugins,
+	})
+}
+
+// handleAPIPluginsAvailable handles GET /api/plugins/available - list available plugins from registry
+func (s *Server) handleAPIPluginsAvailable(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+
+	// Get installed plugins to check which are already installed
+	exec := executor.NewExecutor(s.engine)
+	result, _ := exec.Execute("SELECT name FROM _sys_plugins")
+	installed := make(map[string]bool)
+	for _, row := range result.Rows {
+		installed[fmt.Sprintf("%v", row[0])] = true
+	}
+
+	// Get available plugins from registry
+	available := []map[string]interface{}{}
+	for _, pi := range getAvailablePlugins() {
+		p := pi.(map[string]interface{})
+		plugin := map[string]interface{}{
+			"name":         p["name"],
+			"version":      p["version"],
+			"author":       p["author"],
+			"description":  p["description"],
+			"category":     p["category"],
+			"tables":       p["tables"],
+			"endpoints":    p["endpoints"],
+			"download_url": p["download_url"],
+			"installed":    installed[p["name"].(string)],
+		}
+		available = append(available, plugin)
+	}
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"plugins": available,
+	})
+}
+
+// handleAPIPluginRoutes handles /api/plugins/* routes
+func (s *Server) handleAPIPluginRoutes(w http.ResponseWriter, r *http.Request) {
+	path := strings.TrimPrefix(r.URL.Path, "/api/plugins/")
+
+	// Check for import endpoint
+	if path == "import" {
+		s.handleAPIPluginImport(w, r)
+		return
+	}
+
+	// Check for install endpoint
+	if path == "install" {
+		s.handleAPIPluginInstall(w, r)
+		return
+	}
+
+	// Check for other actions
+	if strings.Contains(path, "/") {
+		parts := strings.SplitN(path, "/", 2)
+		pluginName := parts[0]
+		action := parts[1]
+
+		switch action {
+		case "uninstall":
+			s.handleAPIPluginUninstall(w, r, pluginName)
+		case "enable":
+			s.handleAPIPluginEnable(w, r, pluginName)
+		case "disable":
+			s.handleAPIPluginDisable(w, r, pluginName)
+		default:
+			writeError(w, http.StatusNotFound, "unknown action")
+		}
+		return
+	}
+
+	// Get single plugin
+	if r.Method == http.MethodGet {
+		s.handleAPIPluginGet(w, r, path)
+		return
+	}
+
+	writeError(w, http.StatusNotFound, "not found")
+}
+
+// handleAPIPluginImport handles POST /api/plugins/import - import plugin from ZIP
+func (s *Server) handleAPIPluginImport(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+
+	// Parse multipart form
+	if err := r.ParseMultipartForm(50 << 20); err != nil {
+		writeError(w, http.StatusBadRequest, "failed to parse form: "+err.Error())
+		return
+	}
+
+	file, _, err := r.FormFile("plugin")
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "no plugin file provided")
+		return
+	}
+	defer file.Close()
+
+	// Save to temp file
+	tempFile, err := os.CreateTemp("", "plugin-*.zip")
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to create temp file")
+		return
+	}
+	defer os.Remove(tempFile.Name())
+	defer tempFile.Close()
+
+	if _, err := io.Copy(tempFile, file); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to save file")
+		return
+	}
+	tempFile.Close()
+
+	// Install plugin
+	if err := installPluginFromZIP(tempFile.Name()); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to install plugin: "+err.Error())
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"success": true,
+		"message": "plugin installed successfully",
+	})
+}
+
+// handleAPIPluginInstall handles POST /api/plugins/install - install from registry
+func (s *Server) handleAPIPluginInstall(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+
+	var req struct {
+		Name string `json:"name"`
+	}
+	if err := readJSON(r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request")
+		return
+	}
+
+	if req.Name == "" {
+		writeError(w, http.StatusBadRequest, "plugin name required")
+		return
+	}
+
+	// Find plugin in registry
+	plugin := getPluginFromRegistry(req.Name)
+	if plugin == nil {
+		writeError(w, http.StatusNotFound, "plugin not found in registry")
+		return
+	}
+
+	// Check if already installed
+	exec := executor.NewExecutor(s.engine)
+	result, _ := exec.Execute(fmt.Sprintf("SELECT name FROM _sys_plugins WHERE name = '%s'", req.Name))
+	if len(result.Rows) > 0 {
+		writeError(w, http.StatusBadRequest, "plugin already installed")
+		return
+	}
+
+	// Create plugin files locally (since we don't have GitHub download yet)
+	if err := createPluginLocally(plugin); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to create plugin: "+err.Error())
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"success": true,
+		"message": "plugin installed successfully",
+		"name":    req.Name,
+	})
+}
+
+// handleAPIPluginUninstall handles POST /api/plugins/{name}/uninstall
+func (s *Server) handleAPIPluginUninstall(w http.ResponseWriter, r *http.Request, name string) {
+	if r.Method != http.MethodPost {
+		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+
+	if err := uninstallPlugin(name); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"success": true,
+		"message": "plugin uninstalled",
+	})
+}
+
+// handleAPIPluginEnable handles POST /api/plugins/{name}/enable
+func (s *Server) handleAPIPluginEnable(w http.ResponseWriter, r *http.Request, name string) {
+	if r.Method != http.MethodPost {
+		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+
+	exec := executor.NewExecutor(s.engine)
+	_, err := exec.Execute(fmt.Sprintf("UPDATE _sys_plugins SET enabled = true WHERE name = '%s'", name))
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"success": true,
+		"message": "plugin enabled",
+	})
+}
+
+// handleAPIPluginDisable handles POST /api/plugins/{name}/disable
+func (s *Server) handleAPIPluginDisable(w http.ResponseWriter, r *http.Request, name string) {
+	if r.Method != http.MethodPost {
+		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+
+	exec := executor.NewExecutor(s.engine)
+	_, err := exec.Execute(fmt.Sprintf("UPDATE _sys_plugins SET enabled = false WHERE name = '%s'", name))
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"success": true,
+		"message": "plugin disabled",
+	})
+}
+
+// handleAPIPluginGet handles GET /api/plugins/{name}
+func (s *Server) handleAPIPluginGet(w http.ResponseWriter, r *http.Request, name string) {
+	exec := executor.NewExecutor(s.engine)
+	result, err := exec.Execute(fmt.Sprintf("SELECT name, version, latest_version, author, description, category, enabled, installed_at, tables, has_update, source FROM _sys_plugins WHERE name = '%s'", name))
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	if len(result.Rows) == 0 {
+		writeError(w, http.StatusNotFound, "plugin not found")
+		return
+	}
+
+	row := result.Rows[0]
+	writeJSON(w, http.StatusOK, map[string]interface{}{
+		"name":           row[0],
+		"version":        row[1],
+		"latest_version": row[2],
+		"author":         row[3],
+		"description":    row[4],
+		"category":       row[5],
+		"enabled":        row[6] == true || fmt.Sprintf("%v", row[6]) == "true",
+		"installed_at":   row[7],
+		"tables":         row[8],
+		"has_update":     row[9] == true || fmt.Sprintf("%v", row[9]) == "true",
+		"source":         row[10],
+	})
+}
+
+// Helper functions for plugin operations (these will use the plugin manager)
+
+func getAvailablePlugins() []interface{} {
+	// Return the built-in registry
+	return []interface{}{
+		map[string]interface{}{
+			"name":        "auth",
+			"version":     "1.0.0",
+			"author":      "XxSql Team",
+			"description": "User authentication with session management",
+			"category":    "auth",
+			"tables":      "_plugin_auth_users,_plugin_auth_sessions",
+			"endpoints": []map[string]string{
+				{"skey": "auth/login", "description": "User login"},
+				{"skey": "auth/register", "description": "Register new user"},
+				{"skey": "auth/logout", "description": "User logout"},
+				{"skey": "auth/check", "description": "Check authentication"},
+			},
+		},
+		map[string]interface{}{
+			"name":        "logging",
+			"version":     "1.0.0",
+			"author":      "XxSql Team",
+			"description": "Centralized logging service",
+			"category":    "logging",
+			"tables":      "_plugin_log_entries",
+			"endpoints": []map[string]string{
+				{"skey": "log/write", "description": "Write log entry"},
+				{"skey": "log/query", "description": "Query logs"},
+			},
+		},
+		map[string]interface{}{
+			"name":        "ratelimit",
+			"version":     "1.0.0",
+			"author":      "XxSql Team",
+			"description": "Request rate limiting",
+			"category":    "utility",
+			"tables":      "_plugin_ratelimit_rules,_plugin_ratelimit_counters",
+			"endpoints": []map[string]string{
+				{"skey": "ratelimit/check", "description": "Check rate limit"},
+				{"skey": "ratelimit/rules", "description": "Manage rules"},
+			},
+		},
+		map[string]interface{}{
+			"name":        "storage",
+			"version":     "1.0.0",
+			"author":      "XxSql Team",
+			"description": "File storage service",
+			"category":    "storage",
+			"tables":      "_plugin_storage_files",
+			"endpoints": []map[string]string{
+				{"skey": "storage/upload", "description": "Upload file"},
+				{"skey": "storage/download", "description": "Download file"},
+				{"skey": "storage/list", "description": "List files"},
+			},
+		},
+	}
+}
+
+func getPluginFromRegistry(name string) map[string]interface{} {
+	for _, p := range getAvailablePlugins() {
+		plugin := p.(map[string]interface{})
+		if plugin["name"] == name {
+			return plugin
+		}
+	}
+	return nil
+}
+
+func installPluginFromZIP(zipPath string) error {
+	// This will be implemented using the plugin manager
+	// For now, return a placeholder
+	return fmt.Errorf("ZIP import not yet implemented - use /api/plugins/install instead")
+}
+
+func uninstallPlugin(name string) error {
+	// Get plugin info first
+	exec := executor.NewExecutor(singletonEngine)
+	result, err := exec.Execute(fmt.Sprintf("SELECT tables FROM _sys_plugins WHERE name = '%s'", name))
+	if err != nil {
+		return err
+	}
+
+	if len(result.Rows) == 0 {
+		return fmt.Errorf("plugin not found")
+	}
+
+	// Get tables
+	tables := fmt.Sprintf("%v", result.Rows[0][0])
+	if tables != "" && tables != "<nil>" {
+		for _, table := range strings.Split(tables, ",") {
+			table = strings.TrimSpace(table)
+			if table != "" {
+				exec.Execute(fmt.Sprintf("DROP TABLE IF EXISTS %s", table))
+			}
+		}
+	}
+
+	// Remove microservices for this plugin
+	// Get endpoints from registry
+	plugin := getPluginFromRegistry(name)
+	if plugin != nil {
+		if endpoints, ok := plugin["endpoints"].([]map[string]string); ok {
+			for _, ep := range endpoints {
+				exec.Execute(fmt.Sprintf("DELETE FROM _sys_ms WHERE SKEY = '%s'", ep["skey"]))
+			}
+		}
+	}
+
+	// Delete from _sys_plugins
+	exec.Execute(fmt.Sprintf("DELETE FROM _sys_plugins WHERE name = '%s'", name))
+
+	return nil
+}
+
+func createPluginLocally(plugin map[string]interface{}) error {
+	name := plugin["name"].(string)
+	version := plugin["version"].(string)
+	author := plugin["author"].(string)
+	description := plugin["description"].(string)
+	category := plugin["category"].(string)
+	tables := plugin["tables"].(string)
+
+	exec := executor.NewExecutor(singletonEngine)
+
+	// Create tables based on plugin type
+	switch name {
+	case "auth":
+		// Create auth tables
+		exec.Execute(`CREATE TABLE IF NOT EXISTS _plugin_auth_users (
+			id SEQ PRIMARY KEY,
+			username VARCHAR(50) UNIQUE NOT NULL,
+			password VARCHAR(255) NOT NULL,
+			email VARCHAR(100) UNIQUE,
+			role VARCHAR(20) DEFAULT 'user',
+			created_at DATETIME,
+			last_login DATETIME
+		)`)
+		exec.Execute(`CREATE TABLE IF NOT EXISTS _plugin_auth_sessions (
+			id VARCHAR(64) PRIMARY KEY,
+			user_id INT NOT NULL,
+			created_at DATETIME,
+			expires_at DATETIME,
+			ip_address VARCHAR(45)
+		)`)
+
+		// Register auth microservices
+		authLoginScript := `
+var username = http.formValue("username")
+var password = http.formValue("password")
+if username == "" || password == "" {
+    http.status(400)
+    http.json({"success": false, "error": "Username and password required"})
+    return
+}
+var user = db.queryRow("SELECT id, username, password, role FROM _plugin_auth_users WHERE username = '" + username + "'")
+if user == null {
+    http.status(401)
+    http.json({"success": false, "error": "Invalid credentials"})
+    return
+}
+var hash = user.password
+if md5(password) != hash {
+    http.status(401)
+    http.json({"success": false, "error": "Invalid credentials"})
+    return
+}
+var sessionId = md5(username + string(now()) + string(rand()))
+db.exec("INSERT INTO _plugin_auth_sessions (id, user_id, created_at, expires_at, ip_address) VALUES ('" + sessionId + "', " + string(user.id) + ", NOW(), datetime('now', '+1 day'), '" + http.remoteAddr + "')")
+db.exec("UPDATE _plugin_auth_users SET last_login = NOW() WHERE id = " + string(user.id))
+http.setCookie("session_id", sessionId, 86400)
+http.json({"success": true, "user": {"id": user.id, "username": user.username, "role": user.role}})
+`
+		exec.Execute(fmt.Sprintf("INSERT INTO _sys_ms (SKEY, SCRIPT, description) VALUES ('auth/login', '%s', 'User login')", strings.ReplaceAll(authLoginScript, "'", "''")))
+
+		authRegisterScript := `
+var username = http.formValue("username")
+var password = http.formValue("password")
+var email = http.formValue("email")
+if username == "" || password == "" {
+    http.status(400)
+    http.json({"success": false, "error": "Username and password required"})
+    return
+}
+var existing = db.queryRow("SELECT id FROM _plugin_auth_users WHERE username = '" + username + "'")
+if existing != null {
+    http.status(400)
+    http.json({"success": false, "error": "Username already exists"})
+    return
+}
+var hash = md5(password)
+var result = db.exec("INSERT INTO _plugin_auth_users (username, password, email, role, created_at) VALUES ('" + username + "', '" + hash + "', '" + email + "', 'user', NOW())")
+http.json({"success": true, "user_id": result.insert_id})
+`
+		exec.Execute(fmt.Sprintf("INSERT INTO _sys_ms (SKEY, SCRIPT, description) VALUES ('auth/register', '%s', 'Register new user')", strings.ReplaceAll(authRegisterScript, "'", "''")))
+
+		authLogoutScript := `
+var sessionId = http.cookie("session_id")
+if sessionId != "" {
+    db.exec("DELETE FROM _plugin_auth_sessions WHERE id = '" + sessionId + "'")
+}
+http.setCookie("session_id", "", -1)
+http.json({"success": true, "message": "Logged out"})
+`
+		exec.Execute(fmt.Sprintf("INSERT INTO _sys_ms (SKEY, SCRIPT, description) VALUES ('auth/logout', '%s', 'User logout')", strings.ReplaceAll(authLogoutScript, "'", "''")))
+
+		authCheckScript := `
+var sessionId = http.cookie("session_id")
+if sessionId == "" {
+    http.json({"authenticated": false})
+    return
+}
+var session = db.queryRow("SELECT s.id, s.user_id, s.expires_at, u.username, u.role FROM _plugin_auth_sessions s JOIN _plugin_auth_users u ON s.user_id = u.id WHERE s.id = '" + sessionId + "' AND s.expires_at > NOW()")
+if session == null {
+    http.json({"authenticated": false})
+    return
+}
+http.json({"authenticated": true, "user": {"id": session.user_id, "username": session.username, "role": session.role}})
+`
+		exec.Execute(fmt.Sprintf("INSERT INTO _sys_ms (SKEY, SCRIPT, description) VALUES ('auth/check', '%s', 'Check authentication status')", strings.ReplaceAll(authCheckScript, "'", "''")))
+
+	case "logging":
+		exec.Execute(`CREATE TABLE IF NOT EXISTS _plugin_log_entries (
+			id SEQ PRIMARY KEY,
+			level VARCHAR(10),
+			message TEXT,
+			source VARCHAR(100),
+			data TEXT,
+			created_at DATETIME
+		)`)
+
+		logWriteScript := `
+var data = http.bodyJSON()
+if data == null || data.message == "" {
+    http.status(400)
+    http.json({"success": false, "error": "Message required"})
+    return
+}
+var level = data.level
+if level == "" { level = "INFO" }
+var result = db.exec("INSERT INTO _plugin_log_entries (level, message, source, data, created_at) VALUES ('" + level + "', '" + strings.ReplaceAll(data.message, "'", "''") + "', '" + data.source + "', '" + json(data.data) + "', NOW())")
+http.json({"success": true, "id": result.insert_id})
+`
+		exec.Execute(fmt.Sprintf("INSERT INTO _sys_ms (SKEY, SCRIPT, description) VALUES ('log/write', '%s', 'Write log entry')", strings.ReplaceAll(logWriteScript, "'", "''")))
+
+		logQueryScript := `
+var level = http.param("level")
+var source = http.param("source")
+var limit = http.param("limit")
+if limit == "" { limit = "100" }
+var sql = "SELECT * FROM _plugin_log_entries WHERE 1=1"
+if level != "" { sql = sql + " AND level = '" + level + "'" }
+if source != "" { sql = sql + " AND source = '" + source + "'" }
+sql = sql + " ORDER BY created_at DESC LIMIT " + limit
+var logs = db.query(sql)
+http.json({"logs": logs})
+`
+		exec.Execute(fmt.Sprintf("INSERT INTO _sys_ms (SKEY, SCRIPT, description) VALUES ('log/query', '%s', 'Query logs')", strings.ReplaceAll(logQueryScript, "'", "''")))
+
+	case "ratelimit":
+		exec.Execute(`CREATE TABLE IF NOT EXISTS _plugin_ratelimit_rules (
+			id SEQ PRIMARY KEY,
+			name VARCHAR(50) UNIQUE,
+			key_type VARCHAR(20),
+			limit INT,
+			window INT,
+			enabled BOOL DEFAULT true
+		)`)
+		exec.Execute(`CREATE TABLE IF NOT EXISTS _plugin_ratelimit_counters (
+			id SEQ PRIMARY KEY,
+			rule_id INT,
+			key_value VARCHAR(100),
+			count INT,
+			window_start DATETIME
+		)`)
+
+	case "storage":
+		exec.Execute(`CREATE TABLE IF NOT EXISTS _plugin_storage_files (
+			id SEQ PRIMARY KEY,
+			name VARCHAR(255),
+			path VARCHAR(500) UNIQUE,
+			size INT,
+			mime_type VARCHAR(100),
+			created_at DATETIME
+		)`)
+	}
+
+	// Insert into _sys_plugins
+	exec.Execute(fmt.Sprintf("INSERT INTO _sys_plugins (name, version, author, description, category, enabled, installed_at, tables, source) VALUES ('%s', '%s', '%s', '%s', '%s', true, NOW(), '%s', 'registry')",
+		name, version, author, description, category, tables))
+
+	return nil
+}
+
+// Singleton engine reference for helper functions
+var singletonEngine *storage.Engine
+
+func SetSingletonEngine(engine *storage.Engine) {
+	singletonEngine = engine
 }

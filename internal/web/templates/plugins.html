@@ -1,0 +1,305 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Plugins - XxSql</title>
+    <link rel="stylesheet" href="/static/style.css">
+    <style>
+        .plugin-card {
+            background: white;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+            padding: 20px;
+            margin-bottom: 15px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        .plugin-card .info h4 {
+            margin: 0 0 5px 0;
+            color: #2c3e50;
+        }
+        .plugin-card .info .meta {
+            color: #7f8c8d;
+            font-size: 0.85rem;
+        }
+        .plugin-card .info .endpoints {
+            margin-top: 10px;
+            font-size: 0.85rem;
+        }
+        .plugin-card .info .endpoints span {
+            display: inline-block;
+            background: #e8f4f8;
+            padding: 2px 8px;
+            border-radius: 4px;
+            margin-right: 5px;
+            margin-bottom: 5px;
+            color: #3498db;
+        }
+        .plugin-card .actions {
+            display: flex;
+            gap: 10px;
+            align-items: center;
+        }
+        .badge {
+            display: inline-block;
+            padding: 3px 8px;
+            border-radius: 4px;
+            font-size: 0.75rem;
+            font-weight: 500;
+        }
+        .badge-installed { background: #d4edda; color: #155724; }
+        .badge-available { background: #cce5ff; color: #004085; }
+        .badge-auth { background: #f8d7da; color: #721c24; }
+        .badge-logging { background: #d1ecf1; color: #0c5460; }
+        .badge-utility { background: #fff3cd; color: #856404; }
+        .badge-storage { background: #d4edda; color: #155724; }
+        .section-title {
+            font-size: 1.2rem;
+            color: #2c3e50;
+            margin: 20px 0 15px 0;
+            padding-bottom: 10px;
+            border-bottom: 2px solid #3498db;
+        }
+        .empty-state {
+            text-align: center;
+            padding: 40px;
+            color: #7f8c8d;
+        }
+        .toggle-switch {
+            position: relative;
+            width: 50px;
+            height: 26px;
+        }
+        .toggle-switch input {
+            opacity: 0;
+            width: 0;
+            height: 0;
+        }
+        .toggle-slider {
+            position: absolute;
+            cursor: pointer;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background-color: #ccc;
+            transition: .3s;
+            border-radius: 26px;
+        }
+        .toggle-slider:before {
+            position: absolute;
+            content: "";
+            height: 20px;
+            width: 20px;
+            left: 3px;
+            bottom: 3px;
+            background-color: white;
+            transition: .3s;
+            border-radius: 50%;
+        }
+        input:checked + .toggle-slider {
+            background-color: #3498db;
+        }
+        input:checked + .toggle-slider:before {
+            transform: translateX(24px);
+        }
+    </style>
+</head>
+<body>
+    <div class="layout">
+        <aside class="sidebar">
+            <div class="logo"><h1>XxSql</h1><span>Web Management</span></div>
+            <nav>
+                <a href="/"><span class="icon">📊</span><span>Dashboard</span></a>
+                <a href="/query"><span class="icon">🔍</span><span>Query</span></a>
+                <a href="/tables"><span class="icon">📋</span><span>Tables</span></a>
+                <a href="/projects"><span class="icon">📁</span><span>Projects</span></a>
+                <a href="/microservices"><span class="icon">⚡</span><span>Microservices</span></a>
+                <a href="/plugins" class="active"><span class="icon">🧩</span><span>Plugins</span></a>
+                <a href="/users"><span class="icon">👥</span><span>Users</span></a>
+                <a href="/backup"><span class="icon">💾</span><span>Backup</span></a>
+                <a href="/logs"><span class="icon">📜</span><span>Logs</span></a>
+                <a href="/config"><span class="icon">⚙️</span><span>Config</span></a>
+            </nav>
+        </aside>
+
+        <main class="main">
+            <header class="header">
+                <h2>Plugins</h2>
+                <div class="user-info"><span>{{.User}}</span><a href="/api/logout" onclick="logout(event)">Logout</a></div>
+            </header>
+
+            <!-- Installed Plugins Section -->
+            <div class="section-title">Installed Plugins</div>
+            <div id="installed-plugins">
+                <div class="empty-state">Loading...</div>
+            </div>
+
+            <!-- Available Plugins Section -->
+            <div class="section-title">Available Plugins</div>
+            <div id="available-plugins">
+                <div class="empty-state">Loading...</div>
+            </div>
+        </main>
+    </div>
+
+    <script>
+        let installedPlugins = [];
+        let availablePlugins = [];
+
+        async function loadPlugins() {
+            // Load installed plugins
+            try {
+                const resp = await fetch('/api/plugins');
+                const data = await resp.json();
+                installedPlugins = data.plugins || [];
+            } catch (e) {
+                installedPlugins = [];
+            }
+
+            // Load available plugins
+            try {
+                const resp = await fetch('/api/plugins/available');
+                const data = await resp.json();
+                availablePlugins = data.plugins || [];
+            } catch (e) {
+                availablePlugins = [];
+            }
+
+            renderPlugins();
+        }
+
+        function renderPlugins() {
+            // Render installed plugins
+            const installedContainer = document.getElementById('installed-plugins');
+            if (installedPlugins.length === 0) {
+                installedContainer.innerHTML = '<div class="empty-state">No plugins installed. Install from the Available Plugins section below.</div>';
+            } else {
+                installedContainer.innerHTML = installedPlugins.map(p => renderPluginCard(p, true)).join('');
+            }
+
+            // Render available plugins (excluding installed)
+            const installedNames = new Set(installedPlugins.map(p => p.name));
+            const notInstalled = availablePlugins.filter(p => !installedNames.has(p.name));
+
+            const availableContainer = document.getElementById('available-plugins');
+            if (notInstalled.length === 0) {
+                availableContainer.innerHTML = '<div class="empty-state">All official plugins are installed!</div>';
+            } else {
+                availableContainer.innerHTML = notInstalled.map(p => renderPluginCard(p, false)).join('');
+            }
+        }
+
+        function renderPluginCard(p, installed) {
+            const categoryClass = 'badge-' + (p.category || 'utility');
+            const endpointsHtml = (p.endpoints || []).map(e =>
+                '<span>/ms/' + escapeHtml(e.skey || e.SKEY) + '</span>'
+            ).join('');
+
+            const actionsHtml = installed
+                ? `<div class="actions">
+                     <label class="toggle-switch">
+                       <input type="checkbox" ${p.enabled ? 'checked' : ''} onchange="togglePlugin('${escapeHtml(p.name)}', this.checked)">
+                       <span class="toggle-slider"></span>
+                     </label>
+                     <button class="btn btn-danger btn-sm" onclick="uninstallPlugin('${escapeHtml(p.name)}')">Uninstall</button>
+                   </div>`
+                : `<div class="actions">
+                     <button class="btn btn-primary btn-sm" onclick="installPlugin('${escapeHtml(p.name)}')">Install</button>
+                   </div>`;
+
+            return `
+                <div class="plugin-card">
+                    <div class="info">
+                        <h4>${escapeHtml(p.name)} <span class="badge ${categoryClass}">${escapeHtml(p.category)}</span>
+                            ${installed ? (p.enabled ? '<span class="badge badge-installed">Enabled</span>' : '<span class="badge" style="background:#f5f5f5;color:#666">Disabled</span>') : '<span class="badge badge-available">Available</span>'}
+                        </h4>
+                        <div class="meta">
+                            ${escapeHtml(p.description || '')} | Version: ${escapeHtml(p.version || '1.0.0')} | By: ${escapeHtml(p.author || 'XxSql Team')}
+                        </div>
+                        ${endpointsHtml ? '<div class="endpoints">' + endpointsHtml + '</div>' : ''}
+                    </div>
+                    ${actionsHtml}
+                </div>
+            `;
+        }
+
+        function escapeHtml(str) {
+            if (str == null) return '';
+            return String(str).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+        }
+
+        async function installPlugin(name) {
+            if (!confirm('Install plugin "' + name + '"?')) return;
+
+            try {
+                const resp = await fetch('/api/plugins/install', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ name })
+                });
+                const data = await resp.json();
+
+                if (resp.ok) {
+                    alert('Plugin installed successfully!');
+                    loadPlugins();
+                } else {
+                    alert('Error: ' + (data.error || 'Failed to install plugin'));
+                }
+            } catch (err) {
+                alert('Error: ' + err.message);
+            }
+        }
+
+        async function uninstallPlugin(name) {
+            if (!confirm('Uninstall plugin "' + name + '"? This will also remove all associated tables.')) return;
+
+            try {
+                const resp = await fetch('/api/plugins/' + encodeURIComponent(name) + '/uninstall', {
+                    method: 'POST'
+                });
+                const data = await resp.json();
+
+                if (resp.ok) {
+                    alert('Plugin uninstalled successfully!');
+                    loadPlugins();
+                } else {
+                    alert('Error: ' + (data.error || 'Failed to uninstall plugin'));
+                }
+            } catch (err) {
+                alert('Error: ' + err.message);
+            }
+        }
+
+        async function togglePlugin(name, enabled) {
+            const action = enabled ? 'enable' : 'disable';
+
+            try {
+                const resp = await fetch('/api/plugins/' + encodeURIComponent(name) + '/' + action, {
+                    method: 'POST'
+                });
+                const data = await resp.json();
+
+                if (resp.ok) {
+                    loadPlugins();
+                } else {
+                    alert('Error: ' + (data.error || 'Failed to update plugin'));
+                    loadPlugins(); // Reload to reset toggle
+                }
+            } catch (err) {
+                alert('Error: ' + err.message);
+                loadPlugins();
+            }
+        }
+
+        function logout(e) {
+            e.preventDefault();
+            fetch('/api/logout', { method: 'POST' }).then(() => window.location.href = '/login');
+        }
+
+        loadPlugins();
+    </script>
+</body>
+</html>

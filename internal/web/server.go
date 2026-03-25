@@ -87,6 +87,9 @@ func (s *Server) Start() error {
 	// Create mux
 	mux := http.NewServeMux()
 
+	// Set singleton engine for plugin operations
+	SetSingletonEngine(s.engine)
+
 	// Static files
 	staticFS, _ := fs.Sub(assets, "static")
 	fileServer := http.FileServer(http.FS(staticFS))
@@ -103,6 +106,7 @@ func (s *Server) Start() error {
 	mux.HandleFunc("/login", s.handleLoginPage)
 	mux.HandleFunc("/projects", s.handlePage("projects"))
 	mux.HandleFunc("/microservices", s.handlePage("microservices"))
+	mux.HandleFunc("/plugins", s.handlePage("plugins"))
 	mux.HandleFunc("/files/", s.handleProjectFileManager)
 
 	// API routes
@@ -132,6 +136,11 @@ func (s *Server) Start() error {
 	// Microservice API routes
 	mux.HandleFunc("/api/microservices", s.handleAPIMicroservices)
 	mux.HandleFunc("/api/microservices/", s.handleAPIMicroserviceDetail)
+
+	// Plugin API routes
+	mux.HandleFunc("/api/plugins", s.handleAPIPlugins)
+	mux.HandleFunc("/api/plugins/available", s.handleAPIPluginsAvailable)
+	mux.HandleFunc("/api/plugins/", s.handleAPIPluginRoutes)
 
 	// Microservice routes (XxScript)
 	mux.HandleFunc("/ms/", s.handleMicroservice)
