@@ -1664,6 +1664,102 @@ func (i *Interpreter) callBuiltin(name string, args []Value) (Value, bool) {
 		return i.builtinTimestamp(args), true
 	case "dateParts":
 		return i.builtinDateParts(args), true
+	// Date/Time functions - formatting
+	case "dateFormat":
+		return i.builtinDateFormat(args), true
+	case "dateParse":
+		return i.builtinDateParse(args), true
+	case "strftime":
+		return i.builtinStrftime(args), true
+	case "strptime":
+		return i.builtinStrptime(args), true
+	// Date/Time functions - creation
+	case "date":
+		return i.builtinDate(args), true
+	case "dateFromUnix":
+		return i.builtinDateFromUnix(args), true
+	case "dateNow":
+		return i.builtinDateNow(args), true
+	case "today":
+		return i.builtinToday(args), true
+	// Date/Time functions - extraction
+	case "year":
+		return i.builtinYear(args), true
+	case "month":
+		return i.builtinMonth(args), true
+	case "day":
+		return i.builtinDay(args), true
+	case "hour":
+		return i.builtinHour(args), true
+	case "minute":
+		return i.builtinMinute(args), true
+	case "second":
+		return i.builtinSecond(args), true
+	case "weekday":
+		return i.builtinWeekday(args), true
+	case "yearday":
+		return i.builtinYearday(args), true
+	case "week":
+		return i.builtinWeek(args), true
+	case "quarter":
+		return i.builtinQuarter(args), true
+	// Date/Time functions - manipulation
+	case "dateAdd":
+		return i.builtinDateAdd(args), true
+	case "dateSub":
+		return i.builtinDateSub(args), true
+	case "dateAddDays":
+		return i.builtinDateAddDays(args), true
+	case "dateAddMonths":
+		return i.builtinDateAddMonths(args), true
+	case "dateAddYears":
+		return i.builtinDateAddYears(args), true
+	case "startOfDay":
+		return i.builtinStartOfDay(args), true
+	case "endOfDay":
+		return i.builtinEndOfDay(args), true
+	case "startOfWeek":
+		return i.builtinStartOfWeek(args), true
+	case "endOfWeek":
+		return i.builtinEndOfWeek(args), true
+	case "startOfMonth":
+		return i.builtinStartOfMonth(args), true
+	case "endOfMonth":
+		return i.builtinEndOfMonth(args), true
+	case "startOfYear":
+		return i.builtinStartOfYear(args), true
+	case "endOfYear":
+		return i.builtinEndOfYear(args), true
+	// Date/Time functions - comparison
+	case "dateDiff":
+		return i.builtinDateDiff(args), true
+	case "dateCompare":
+		return i.builtinDateCompare(args), true
+	case "dateBefore":
+		return i.builtinDateBefore(args), true
+	case "dateAfter":
+		return i.builtinDateAfter(args), true
+	case "dateEqual":
+		return i.builtinDateEqual(args), true
+	case "dateBetween":
+		return i.builtinDateBetween(args), true
+	// Date/Time functions - utilities
+	case "isLeapYear":
+		return i.builtinIsLeapYear(args), true
+	case "daysInMonth":
+		return i.builtinDaysInMonth(args), true
+	case "daysInYear":
+		return i.builtinDaysInYear(args), true
+	case "parseDuration":
+		return i.builtinParseDuration(args), true
+	case "formatDuration":
+		return i.builtinFormatDuration(args), true
+	case "age":
+		return i.builtinAge(args), true
+	case "isWeekend":
+		return i.builtinIsWeekend(args), true
+	case "isWorkday":
+		return i.builtinIsWorkday(args), true
 	// OS - Command execution
 	case "exec":
 		return i.builtinExec(args), true
@@ -1707,10 +1803,6 @@ func (i *Interpreter) callBuiltin(name string, args []Value) (Value, bool) {
 		return i.builtinFormatDate(args), true
 	case "parseDate":
 		return i.builtinParseDate(args), true
-	case "formatDuration":
-		return i.builtinFormatDuration(args), true
-	case "parseDuration":
-		return i.builtinParseDuration(args), true
 	// Format - Text
 	case "indent":
 		return i.builtinIndent(args), true
@@ -7873,6 +7965,778 @@ func (i *Interpreter) builtinDateParts(args []Value) Value {
 }
 
 // ============================================================================
+// Date/Time Functions
+// ============================================================================
+
+// Helper to parse time from various inputs
+func parseTimeArg(arg Value) time.Time {
+	switch v := arg.(type) {
+	case time.Time:
+		return v
+	case float64:
+		return time.Unix(int64(v), 0)
+	case int64:
+		return time.Unix(v, 0)
+	case int:
+		return time.Unix(int64(v), 0)
+	case string:
+		// Try common formats
+		formats := []string{
+			time.RFC3339,
+			"2006-01-02T15:04:05",
+			"2006-01-02 15:04:05",
+			"2006-01-02",
+			"2006/01/02",
+			"01/02/2006",
+			"02-01-2006",
+		}
+		for _, format := range formats {
+			if t, err := time.Parse(format, v); err == nil {
+				return t
+			}
+		}
+	}
+	return time.Time{}
+}
+
+// builtinDateFormat formats a time using Go's reference time format
+func (i *Interpreter) builtinDateFormat(args []Value) Value {
+	if len(args) < 2 {
+		return ""
+	}
+
+	t := parseTimeArg(args[0])
+	if t.IsZero() {
+		t = time.Now()
+	}
+
+	format, ok := args[1].(string)
+	if !ok {
+		return ""
+	}
+
+	// Convert common format placeholders to Go format
+	// Support both Go format and common strftime-like format
+	switch format {
+	case "RFC3339":
+		return t.Format(time.RFC3339)
+	case "RFC3339Nano":
+		return t.Format(time.RFC3339Nano)
+	case "Date":
+		return t.Format("2006-01-02")
+	case "DateTime":
+		return t.Format("2006-01-02 15:04:05")
+	case "Time":
+		return t.Format("15:04:05")
+	case "ISO":
+		return t.Format("2006-01-02T15:04:05Z07:00")
+	default:
+		return t.Format(format)
+	}
+}
+
+// builtinDateParse parses a string into a timestamp
+func (i *Interpreter) builtinDateParse(args []Value) Value {
+	if len(args) < 2 {
+		return int64(0)
+	}
+
+	dateStr, ok1 := args[0].(string)
+	format, ok2 := args[1].(string)
+	if !ok1 || !ok2 {
+		return int64(0)
+	}
+
+	// Handle named formats
+	switch format {
+	case "RFC3339":
+		format = time.RFC3339
+	case "RFC3339Nano":
+		format = time.RFC3339Nano
+	case "Date":
+		format = "2006-01-02"
+	case "DateTime":
+		format = "2006-01-02 15:04:05"
+	case "ISO":
+		format = "2006-01-02T15:04:05Z07:00"
+	}
+
+	t, err := time.Parse(format, dateStr)
+	if err != nil {
+		return map[string]Value{"success": false, "error": err.Error()}
+	}
+
+	return map[string]Value{
+		"success": true,
+		"unix":    t.Unix(),
+		"string":  t.Format(time.RFC3339),
+	}
+}
+
+// builtinStrftime formats time using strftime-like format
+func (i *Interpreter) builtinStrftime(args []Value) Value {
+	if len(args) < 2 {
+		return ""
+	}
+
+	t := parseTimeArg(args[0])
+	if t.IsZero() {
+		t = time.Now()
+	}
+
+	format, ok := args[1].(string)
+	if !ok {
+		return ""
+	}
+
+	// Convert strftime format to Go format
+	goFormat := convertStrftimeToGo(format)
+	return t.Format(goFormat)
+}
+
+func convertStrftimeToGo(format string) string {
+	// Common strftime conversions
+	replacements := []struct {
+		strftime string
+		goFormat string
+	}{
+		{"%Y", "2006"},
+		{"%y", "06"},
+		{"%m", "01"},
+		{"%d", "02"},
+		{"%H", "15"},
+		{"%M", "04"},
+		{"%S", "05"},
+		{"%I", "03"}, // 12-hour
+		{"%p", "PM"},
+		{"%A", "Monday"},
+		{"%a", "Mon"},
+		{"%B", "January"},
+		{"%b", "Jan"},
+		{"%w", "Monday"}, // weekday
+		{"%j", "002"},    // day of year
+		{"%U", "00"},     // week number (Sunday start)
+		{"%W", "00"},     // week number (Monday start)
+		{"%Z", "MST"},
+		{"%z", "-0700"},
+		{"%%", "%"},
+	}
+
+	result := format
+	for _, r := range replacements {
+		result = strings.ReplaceAll(result, r.strftime, r.goFormat)
+	}
+	return result
+}
+
+// builtinStrptime parses a string using strftime-like format
+func (i *Interpreter) builtinStrptime(args []Value) Value {
+	if len(args) < 2 {
+		return map[string]Value{"success": false}
+	}
+
+	dateStr, ok1 := args[0].(string)
+	format, ok2 := args[1].(string)
+	if !ok1 || !ok2 {
+		return map[string]Value{"success": false}
+	}
+
+	goFormat := convertStrftimeToGo(format)
+	t, err := time.Parse(goFormat, dateStr)
+	if err != nil {
+		return map[string]Value{"success": false, "error": err.Error()}
+	}
+
+	return map[string]Value{
+		"success": true,
+		"unix":    t.Unix(),
+	}
+}
+
+// builtinDate creates a date from components
+func (i *Interpreter) builtinDate(args []Value) Value {
+	if len(args) < 3 {
+		return time.Now().Unix()
+	}
+
+	year := i.toInt(args[0])
+	month := i.toInt(args[1])
+	day := i.toInt(args[2])
+
+	hour, min, sec := 0, 0, 0
+	if len(args) > 3 {
+		hour = i.toInt(args[3])
+	}
+	if len(args) > 4 {
+		min = i.toInt(args[4])
+	}
+	if len(args) > 5 {
+		sec = i.toInt(args[5])
+	}
+
+	t := time.Date(year, time.Month(month), day, hour, min, sec, 0, time.Local)
+	return t.Unix()
+}
+
+// builtinDateFromUnix creates a date from Unix timestamp
+func (i *Interpreter) builtinDateFromUnix(args []Value) Value {
+	if len(args) == 0 {
+		return time.Now().Unix()
+	}
+
+	ts := i.toInt(args[0])
+	t := time.Unix(int64(ts), 0)
+	return map[string]Value{
+		"unix":   t.Unix(),
+		"string": t.Format(time.RFC3339),
+	}
+}
+
+// builtinDateNow returns current time info
+func (i *Interpreter) builtinDateNow(args []Value) Value {
+	t := time.Now()
+	return map[string]Value{
+		"unix":       t.Unix(),
+		"unixMilli":  t.UnixMilli(),
+		"unixMicro":  t.UnixMicro(),
+		"unixNano":   t.UnixNano(),
+		"string":     t.Format(time.RFC3339),
+		"date":       t.Format("2006-01-02"),
+		"time":       t.Format("15:04:05"),
+		"datetime":   t.Format("2006-01-02 15:04:05"),
+		"year":       int64(t.Year()),
+		"month":      int64(t.Month()),
+		"day":        int64(t.Day()),
+		"hour":       int64(t.Hour()),
+		"minute":     int64(t.Minute()),
+		"second":     int64(t.Second()),
+		"weekday":    t.Weekday().String(),
+		"weekdayNum": int64(t.Weekday()),
+	}
+}
+
+// builtinToday returns today's date info
+func (i *Interpreter) builtinToday(args []Value) Value {
+	now := time.Now()
+	t := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
+	return map[string]Value{
+		"date":     t.Format("2006-01-02"),
+		"unix":     t.Unix(),
+		"year":     int64(t.Year()),
+		"month":    int64(t.Month()),
+		"day":      int64(t.Day()),
+		"weekday":  t.Weekday().String(),
+		"start":    t.Unix(),
+		"end":      t.Add(24*time.Hour - time.Second).Unix(),
+	}
+}
+
+// Extraction functions
+func (i *Interpreter) builtinYear(args []Value) Value {
+	t := parseTimeArg(args[0])
+	if t.IsZero() {
+		t = time.Now()
+	}
+	return int64(t.Year())
+}
+
+func (i *Interpreter) builtinMonth(args []Value) Value {
+	t := parseTimeArg(args[0])
+	if t.IsZero() {
+		t = time.Now()
+	}
+	return int64(t.Month())
+}
+
+func (i *Interpreter) builtinDay(args []Value) Value {
+	t := parseTimeArg(args[0])
+	if t.IsZero() {
+		t = time.Now()
+	}
+	return int64(t.Day())
+}
+
+func (i *Interpreter) builtinHour(args []Value) Value {
+	t := parseTimeArg(args[0])
+	if t.IsZero() {
+		t = time.Now()
+	}
+	return int64(t.Hour())
+}
+
+func (i *Interpreter) builtinMinute(args []Value) Value {
+	t := parseTimeArg(args[0])
+	if t.IsZero() {
+		t = time.Now()
+	}
+	return int64(t.Minute())
+}
+
+func (i *Interpreter) builtinSecond(args []Value) Value {
+	t := parseTimeArg(args[0])
+	if t.IsZero() {
+		t = time.Now()
+	}
+	return int64(t.Second())
+}
+
+func (i *Interpreter) builtinWeekday(args []Value) Value {
+	t := parseTimeArg(args[0])
+	if t.IsZero() {
+		t = time.Now()
+	}
+	return t.Weekday().String()
+}
+
+func (i *Interpreter) builtinYearday(args []Value) Value {
+	t := parseTimeArg(args[0])
+	if t.IsZero() {
+		t = time.Now()
+	}
+	return int64(t.YearDay())
+}
+
+func (i *Interpreter) builtinWeek(args []Value) Value {
+	t := parseTimeArg(args[0])
+	if t.IsZero() {
+		t = time.Now()
+	}
+	_, week := t.ISOWeek()
+	return int64(week)
+}
+
+func (i *Interpreter) builtinQuarter(args []Value) Value {
+	t := parseTimeArg(args[0])
+	if t.IsZero() {
+		t = time.Now()
+	}
+	month := t.Month()
+	quarter := (month-1)/3 + 1
+	return int64(quarter)
+}
+
+// Manipulation functions
+func (i *Interpreter) builtinDateAdd(args []Value) Value {
+	if len(args) < 2 {
+		return time.Now().Unix()
+	}
+
+	t := parseTimeArg(args[0])
+	if t.IsZero() {
+		t = time.Now()
+	}
+
+	// Parse duration
+	switch d := args[1].(type) {
+	case string:
+		if dur, err := time.ParseDuration(d); err == nil {
+			return t.Add(dur).Unix()
+		}
+	case float64:
+		return t.Add(time.Duration(d * float64(time.Second))).Unix()
+	case int64:
+		return t.Add(time.Duration(d) * time.Second).Unix()
+	case int:
+		return t.Add(time.Duration(d) * time.Second).Unix()
+	}
+
+	return t.Unix()
+}
+
+func (i *Interpreter) builtinDateSub(args []Value) Value {
+	if len(args) < 2 {
+		return int64(0)
+	}
+
+	t := parseTimeArg(args[0])
+	other := parseTimeArg(args[1])
+
+	return int64(t.Sub(other).Seconds())
+}
+
+func (i *Interpreter) builtinDateAddDays(args []Value) Value {
+	if len(args) < 2 {
+		return time.Now().Unix()
+	}
+
+	t := parseTimeArg(args[0])
+	if t.IsZero() {
+		t = time.Now()
+	}
+
+	days := i.toInt(args[1])
+	return t.AddDate(0, 0, int(days)).Unix()
+}
+
+func (i *Interpreter) builtinDateAddMonths(args []Value) Value {
+	if len(args) < 2 {
+		return time.Now().Unix()
+	}
+
+	t := parseTimeArg(args[0])
+	if t.IsZero() {
+		t = time.Now()
+	}
+
+	months := i.toInt(args[1])
+	return t.AddDate(0, int(months), 0).Unix()
+}
+
+func (i *Interpreter) builtinDateAddYears(args []Value) Value {
+	if len(args) < 2 {
+		return time.Now().Unix()
+	}
+
+	t := parseTimeArg(args[0])
+	if t.IsZero() {
+		t = time.Now()
+	}
+
+	years := i.toInt(args[1])
+	return t.AddDate(int(years), 0, 0).Unix()
+}
+
+func (i *Interpreter) builtinStartOfDay(args []Value) Value {
+	t := parseTimeArg(args[0])
+	if t.IsZero() {
+		t = time.Now()
+	}
+	start := time.Date(t.Year(), t.Month(), t.Day(), 0, 0, 0, 0, t.Location())
+	return start.Unix()
+}
+
+func (i *Interpreter) builtinEndOfDay(args []Value) Value {
+	t := parseTimeArg(args[0])
+	if t.IsZero() {
+		t = time.Now()
+	}
+	end := time.Date(t.Year(), t.Month(), t.Day(), 23, 59, 59, 0, t.Location())
+	return end.Unix()
+}
+
+func (i *Interpreter) builtinStartOfWeek(args []Value) Value {
+	t := parseTimeArg(args[0])
+	if t.IsZero() {
+		t = time.Now()
+	}
+	weekday := t.Weekday()
+	daysToSubtract := int(weekday)
+	if daysToSubtract == 0 {
+		daysToSubtract = 6 // Sunday = end of week
+	} else {
+		daysToSubtract--
+	}
+	start := t.AddDate(0, 0, -daysToSubtract)
+	start = time.Date(start.Year(), start.Month(), start.Day(), 0, 0, 0, 0, start.Location())
+	return start.Unix()
+}
+
+func (i *Interpreter) builtinEndOfWeek(args []Value) Value {
+	t := parseTimeArg(args[0])
+	if t.IsZero() {
+		t = time.Now()
+	}
+	weekday := t.Weekday()
+	daysToAdd := 6 - int(weekday)
+	if weekday == time.Sunday {
+		daysToAdd = 0
+	}
+	end := t.AddDate(0, 0, daysToAdd)
+	end = time.Date(end.Year(), end.Month(), end.Day(), 23, 59, 59, 0, end.Location())
+	return end.Unix()
+}
+
+func (i *Interpreter) builtinStartOfMonth(args []Value) Value {
+	t := parseTimeArg(args[0])
+	if t.IsZero() {
+		t = time.Now()
+	}
+	start := time.Date(t.Year(), t.Month(), 1, 0, 0, 0, 0, t.Location())
+	return start.Unix()
+}
+
+func (i *Interpreter) builtinEndOfMonth(args []Value) Value {
+	t := parseTimeArg(args[0])
+	if t.IsZero() {
+		t = time.Now()
+	}
+	// First day of next month minus 1 day
+	nextMonth := t.AddDate(0, 1, -t.Day()+1)
+	end := time.Date(nextMonth.Year(), nextMonth.Month(), nextMonth.Day()-1, 23, 59, 59, 0, nextMonth.Location())
+	return end.Unix()
+}
+
+func (i *Interpreter) builtinStartOfYear(args []Value) Value {
+	t := parseTimeArg(args[0])
+	if t.IsZero() {
+		t = time.Now()
+	}
+	start := time.Date(t.Year(), 1, 1, 0, 0, 0, 0, t.Location())
+	return start.Unix()
+}
+
+func (i *Interpreter) builtinEndOfYear(args []Value) Value {
+	t := parseTimeArg(args[0])
+	if t.IsZero() {
+		t = time.Now()
+	}
+	end := time.Date(t.Year(), 12, 31, 23, 59, 59, 0, t.Location())
+	return end.Unix()
+}
+
+// Comparison functions
+func (i *Interpreter) builtinDateDiff(args []Value) Value {
+	if len(args) < 2 {
+		return map[string]Value{}
+	}
+
+	t1 := parseTimeArg(args[0])
+	t2 := parseTimeArg(args[1])
+
+	if t1.IsZero() || t2.IsZero() {
+		return map[string]Value{"error": "invalid date"}
+	}
+
+	dur := t2.Sub(t1)
+	seconds := int64(dur.Seconds())
+	minutes := seconds / 60
+	hours := minutes / 60
+	days := hours / 24
+
+	return map[string]Value{
+		"seconds":    seconds,
+		"minutes":    minutes,
+		"hours":      hours,
+		"days":       days,
+		"weeks":      days / 7,
+		"months":     days / 30,
+		"years":      days / 365,
+		"absSeconds": int64(math.Abs(float64(seconds))),
+		"absDays":    int64(math.Abs(float64(days))),
+	}
+}
+
+func (i *Interpreter) builtinDateCompare(args []Value) Value {
+	if len(args) < 2 {
+		return int64(0)
+	}
+
+	t1 := parseTimeArg(args[0])
+	t2 := parseTimeArg(args[1])
+
+	if t1.Before(t2) {
+		return int64(-1)
+	} else if t1.After(t2) {
+		return int64(1)
+	}
+	return int64(0)
+}
+
+func (i *Interpreter) builtinDateBefore(args []Value) Value {
+	if len(args) < 2 {
+		return false
+	}
+
+	t1 := parseTimeArg(args[0])
+	t2 := parseTimeArg(args[1])
+
+	return t1.Before(t2)
+}
+
+func (i *Interpreter) builtinDateAfter(args []Value) Value {
+	if len(args) < 2 {
+		return false
+	}
+
+	t1 := parseTimeArg(args[0])
+	t2 := parseTimeArg(args[1])
+
+	return t1.After(t2)
+}
+
+func (i *Interpreter) builtinDateEqual(args []Value) Value {
+	if len(args) < 2 {
+		return false
+	}
+
+	t1 := parseTimeArg(args[0])
+	t2 := parseTimeArg(args[1])
+
+	return t1.Equal(t2)
+}
+
+func (i *Interpreter) builtinDateBetween(args []Value) Value {
+	if len(args) < 3 {
+		return false
+	}
+
+	t := parseTimeArg(args[0])
+	start := parseTimeArg(args[1])
+	end := parseTimeArg(args[2])
+
+	return (t.Equal(start) || t.After(start)) && (t.Equal(end) || t.Before(end))
+}
+
+// Utility functions
+func (i *Interpreter) builtinIsLeapYear(args []Value) Value {
+	year := time.Now().Year()
+	if len(args) > 0 {
+		year = int(i.toInt(args[0]))
+	}
+
+	isLeap := (year%4 == 0 && year%100 != 0) || (year%400 == 0)
+	return isLeap
+}
+
+func (i *Interpreter) builtinDaysInMonth(args []Value) Value {
+	year := time.Now().Year()
+	month := int(time.Now().Month())
+
+	if len(args) >= 2 {
+		year = int(i.toInt(args[0]))
+		month = int(i.toInt(args[1]))
+	} else if len(args) == 1 {
+		// Assume it's a timestamp
+		t := parseTimeArg(args[0])
+		year = t.Year()
+		month = int(t.Month())
+	}
+
+	// First day of next month minus 1 day gives last day of current month
+	firstOfNextMonth := time.Date(year, time.Month(month+1), 1, 0, 0, 0, 0, time.UTC)
+	lastDay := firstOfNextMonth.AddDate(0, 0, -1).Day()
+	return int64(lastDay)
+}
+
+func (i *Interpreter) builtinDaysInYear(args []Value) Value {
+	year := time.Now().Year()
+	if len(args) > 0 {
+		year = int(i.toInt(args[0]))
+	}
+
+	if (year%4 == 0 && year%100 != 0) || (year%400 == 0) {
+		return int64(366)
+	}
+	return int64(365)
+}
+
+func (i *Interpreter) builtinParseDuration(args []Value) Value {
+	if len(args) == 0 {
+		return map[string]Value{"success": false, "error": "no duration provided"}
+	}
+
+	durStr, ok := args[0].(string)
+	if !ok {
+		return map[string]Value{"success": false, "error": "duration must be a string"}
+	}
+
+	dur, err := time.ParseDuration(durStr)
+	if err != nil {
+		return map[string]Value{"success": false, "error": err.Error()}
+	}
+
+	return map[string]Value{
+		"success":     true,
+		"nanoseconds": int64(dur),
+		"seconds":     dur.Seconds(),
+		"minutes":     dur.Minutes(),
+		"hours":       dur.Hours(),
+		"string":      dur.String(),
+	}
+}
+
+func (i *Interpreter) builtinFormatDuration(args []Value) Value {
+	if len(args) == 0 {
+		return ""
+	}
+
+	var d time.Duration
+	switch v := args[0].(type) {
+	case float64:
+		d = time.Duration(v * float64(time.Second))
+	case int64:
+		d = time.Duration(v) * time.Second
+	case int:
+		d = time.Duration(v) * time.Second
+	case string:
+		parsed, err := time.ParseDuration(v)
+		if err != nil {
+			return ""
+		}
+		d = parsed
+	default:
+		return ""
+	}
+
+	// Format in human-readable form
+	seconds := int64(d.Seconds())
+	minutes := seconds / 60
+	hours := minutes / 60
+	days := hours / 24
+
+	parts := []string{}
+	if days > 0 {
+		parts = append(parts, fmt.Sprintf("%dd", days))
+	}
+	if hours%24 > 0 {
+		parts = append(parts, fmt.Sprintf("%dh", hours%24))
+	}
+	if minutes%60 > 0 {
+		parts = append(parts, fmt.Sprintf("%dm", minutes%60))
+	}
+	if seconds%60 > 0 {
+		parts = append(parts, fmt.Sprintf("%ds", seconds%60))
+	}
+
+	if len(parts) == 0 {
+		return "0s"
+	}
+	return strings.Join(parts, " ")
+}
+
+func (i *Interpreter) builtinAge(args []Value) Value {
+	if len(args) == 0 {
+		return int64(0)
+	}
+
+	birthdate := parseTimeArg(args[0])
+	if birthdate.IsZero() {
+		return int64(0)
+	}
+
+	now := time.Now()
+	years := now.Year() - birthdate.Year()
+
+	// Adjust if birthday hasn't occurred this year
+	if now.Month() < birthdate.Month() ||
+		(now.Month() == birthdate.Month() && now.Day() < birthdate.Day()) {
+		years--
+	}
+
+	return int64(years)
+}
+
+func (i *Interpreter) builtinIsWeekend(args []Value) Value {
+	t := parseTimeArg(args[0])
+	if t.IsZero() {
+		t = time.Now()
+	}
+
+	weekday := t.Weekday()
+	return weekday == time.Saturday || weekday == time.Sunday
+}
+
+func (i *Interpreter) builtinIsWorkday(args []Value) Value {
+	t := parseTimeArg(args[0])
+	if t.IsZero() {
+		t = time.Now()
+	}
+
+	weekday := t.Weekday()
+	return weekday != time.Saturday && weekday != time.Sunday
+}
+
+// ============================================================================
 // OS Functions - Command Execution
 // ============================================================================
 
@@ -8369,74 +9233,6 @@ func (i *Interpreter) builtinParseDate(args []Value) Value {
 		"minute":  int64(t.Minute()),
 		"second":  int64(t.Second()),
 	}
-}
-
-func (i *Interpreter) builtinFormatDuration(args []Value) Value {
-	if len(args) == 0 {
-		return "0s"
-	}
-
-	var d time.Duration
-	switch v := args[0].(type) {
-	case float64:
-		d = time.Duration(v * float64(time.Second))
-	case int64:
-		d = time.Duration(v) * time.Second
-	case int:
-		d = time.Duration(v) * time.Second
-	case string:
-		parsed, err := time.ParseDuration(v)
-		if err != nil {
-			return "0s"
-		}
-		d = parsed
-	default:
-		return "0s"
-	}
-
-	// Format as human readable
-	seconds := int(d.Seconds())
-	minutes := seconds / 60
-	hours := minutes / 60
-	days := hours / 24
-
-	seconds %= 60
-	minutes %= 60
-	hours %= 24
-
-	parts := []string{}
-	if days > 0 {
-		parts = append(parts, fmt.Sprintf("%dd", days))
-	}
-	if hours > 0 {
-		parts = append(parts, fmt.Sprintf("%dh", hours))
-	}
-	if minutes > 0 {
-		parts = append(parts, fmt.Sprintf("%dm", minutes))
-	}
-	if seconds > 0 || len(parts) == 0 {
-		parts = append(parts, fmt.Sprintf("%ds", seconds))
-	}
-
-	return strings.Join(parts, " ")
-}
-
-func (i *Interpreter) builtinParseDuration(args []Value) Value {
-	if len(args) == 0 {
-		return int64(0)
-	}
-
-	durStr, ok := args[0].(string)
-	if !ok {
-		return int64(0)
-	}
-
-	d, err := time.ParseDuration(durStr)
-	if err != nil {
-		return int64(0)
-	}
-
-	return int64(d.Seconds())
 }
 
 // ============================================================================
