@@ -57,7 +57,7 @@ func TestInterpreter_JSONParseArray(t *testing.T) {
 		t.Fatalf("Execution error: %v", err)
 	}
 
-	if !compareValues(int64(2), result) {
+	if !valuesEqual(int64(2), result) {
 		t.Errorf("Expected 2, got %v", result)
 	}
 }
@@ -123,7 +123,7 @@ func TestInterpreter_ArrayAssignment(t *testing.T) {
 		t.Fatalf("Execution error: %v", err)
 	}
 
-	if !compareValues(int64(20), result) {
+	if !valuesEqual(int64(20), result) {
 		t.Errorf("Expected 20, got %v", result)
 	}
 }
@@ -139,7 +139,7 @@ func TestInterpreter_UnaryMinus(t *testing.T) {
 		t.Fatalf("Execution error: %v", err)
 	}
 
-	if !compareValues(int64(-5), result) {
+	if !valuesEqual(int64(-5), result) {
 		t.Errorf("Expected -5, got %v", result)
 	}
 }
@@ -208,7 +208,7 @@ func TestInterpreter_NestedFunctionCalls(t *testing.T) {
 		t.Fatalf("Execution error: %v", err)
 	}
 
-	if !compareValues(int64(12), result) {
+	if !valuesEqual(int64(12), result) {
 		t.Errorf("Expected 12, got %v", result)
 	}
 }

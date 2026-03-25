@@ -161,7 +161,7 @@ func TestInterpreter(t *testing.T) {
 				t.Errorf("Run error: %v", err)
 				return
 			}
-			if !compareValues(result, tt.expected) {
+			if !valuesEqual(result, tt.expected) {
 				t.Errorf("Expected %v, got %v", tt.expected, result)
 			}
 		})
@@ -329,7 +329,7 @@ result
 				t.Errorf("Run error: %v", err)
 				return
 			}
-			if !compareValues(result, tt.expected) {
+			if !valuesEqual(result, tt.expected) {
 				t.Errorf("Expected %v, got %v", tt.expected, result)
 			}
 		})
@@ -406,7 +406,7 @@ func TestStringFunctions(t *testing.T) {
 				t.Errorf("Run error: %v", err)
 				return
 			}
-			if !compareValues(result, tt.expected) {
+			if !valuesEqual(result, tt.expected) {
 				t.Errorf("Expected %v, got %v", tt.expected, result)
 			}
 		})
@@ -458,7 +458,7 @@ func TestMathFunctions(t *testing.T) {
 				t.Errorf("Run error: %v", err)
 				return
 			}
-			if !compareValues(result, tt.expected) {
+			if !valuesEqual(result, tt.expected) {
 				t.Errorf("Expected %v, got %v", tt.expected, result)
 			}
 		})
@@ -495,7 +495,7 @@ func TestArrayFunctions(t *testing.T) {
 				t.Errorf("Run error: %v", err)
 				return
 			}
-			if !compareValues(result, tt.expected) {
+			if !valuesEqual(result, tt.expected) {
 				t.Errorf("Expected %v, got %v", tt.expected, result)
 			}
 		})
@@ -541,7 +541,7 @@ func TestTimeFunctions(t *testing.T) {
 	}
 }
 
-func compareValues(a, b Value) bool {
+func valuesEqual(a, b Value) bool {
 	// Handle nil
 	if a == nil && b == nil {
 		return true
@@ -591,7 +591,7 @@ func compareValues(a, b Value) bool {
 			return false
 		}
 		for i := range av {
-			if !compareValues(av[i], bv[i]) {
+			if !valuesEqual(av[i], bv[i]) {
 				return false
 			}
 		}
@@ -602,7 +602,7 @@ func compareValues(a, b Value) bool {
 			return false
 		}
 		for k, v := range av {
-			if !compareValues(v, bv[k]) {
+			if !valuesEqual(v, bv[k]) {
 				return false
 			}
 		}

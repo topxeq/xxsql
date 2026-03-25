@@ -40,6 +40,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 	"unicode"
 
@@ -2388,6 +2389,162 @@ func (i *Interpreter) callBuiltin(name string, args []Value) (Value, bool) {
 		return i.builtinToWords(args), true
 	case "toOrdinal":
 		return i.builtinToOrdinal(args), true
+	// Phase 2: WebSocket Support
+	case "wsConnect":
+		return i.builtinWSConnect(args), true
+	case "wsSend":
+		return i.builtinWSSend(args), true
+	case "wsReceive":
+		return i.builtinWSReceive(args), true
+	case "wsClose":
+		return i.builtinWSClose(args), true
+	case "wsIsConnected":
+		return i.builtinWSIsConnected(args), true
+	// Phase 2: Redis Client
+	case "redisConnect":
+		return i.builtinRedisConnect(args), true
+	case "redisGet":
+		return i.builtinRedisGet(args), true
+	case "redisSet":
+		return i.builtinRedisSet(args), true
+	case "redisDel":
+		return i.builtinRedisDel(args), true
+	case "redisExists":
+		return i.builtinRedisExists(args), true
+	case "redisExpire":
+		return i.builtinRedisExpire(args), true
+	case "redisIncr":
+		return i.builtinRedisIncr(args), true
+	case "redisDecr":
+		return i.builtinRedisDecr(args), true
+	case "redisLPush":
+		return i.builtinRedisLPush(args), true
+	case "redisRPush":
+		return i.builtinRedisRPush(args), true
+	case "redisLPop":
+		return i.builtinRedisLPop(args), true
+	case "redisRPop":
+		return i.builtinRedisRPop(args), true
+	case "redisHSet":
+		return i.builtinRedisHSet(args), true
+	case "redisHGet":
+		return i.builtinRedisHGet(args), true
+	case "redisHDel":
+		return i.builtinRedisHDel(args), true
+	case "redisHGetAll":
+		return i.builtinRedisHGetAll(args), true
+	case "redisKeys":
+		return i.builtinRedisKeys(args), true
+	case "redisTTL":
+		return i.builtinRedisTTL(args), true
+	// Phase 2: PDF Processing
+	case "pdfCreate":
+		return i.builtinPDFCreate(args), true
+	case "pdfAddPage":
+		return i.builtinPDFAddPage(args), true
+	case "pdfAddText":
+		return i.builtinPDFAddText(args), true
+	case "pdfSetFont":
+		return i.builtinPDFSetFont(args), true
+	case "pdfSave":
+		return i.builtinPDFSave(args), true
+	case "pdfCell":
+		return i.builtinPDFCell(args), true
+	// Phase 2: Excel Processing
+	case "excelCreate":
+		return i.builtinExcelCreate(args), true
+	case "excelOpen":
+		return i.builtinExcelOpen(args), true
+	case "excelSetCell":
+		return i.builtinExcelSetCell(args), true
+	case "excelGetCell":
+		return i.builtinExcelGetCell(args), true
+	case "excelNewSheet":
+		return i.builtinExcelNewSheet(args), true
+	case "excelSave":
+		return i.builtinExcelSave(args), true
+	case "excelClose":
+		return i.builtinExcelClose(args), true
+	// Phase 2: Charts
+	case "chartLine":
+		return i.builtinChartLine(args), true
+	case "chartBar":
+		return i.builtinChartBar(args), true
+	case "chartPie":
+		return i.builtinChartPie(args), true
+	// Phase 2: Job Scheduling
+	case "cronParse":
+		return i.builtinCronParse(args), true
+	case "cronNext":
+		return i.builtinCronNext(args), true
+	case "cronNextN":
+		return i.builtinCronNextN(args), true
+	// Phase 2: Geo Location
+	case "geoDistance":
+		return i.builtinGeoDistance(args), true
+	case "geoEncode":
+		return i.builtinGeoEncode(args), true
+	case "geoDecode":
+		return i.builtinGeoDecode(args), true
+	case "geoIP":
+		return i.builtinGeoIP(args), true
+	case "geoBoundingBox":
+		return i.builtinGeoBoundingBox(args), true
+	// Phase 2: HTML Parsing
+	case "htmlParse":
+		return i.builtinHTMLParse(args), true
+	case "htmlSelect":
+		return i.builtinHTMLSelect(args), true
+	case "htmlSelectAll":
+		return i.builtinHTMLSelectAll(args), true
+	case "htmlAttr":
+		return i.builtinHTMLAttr(args), true
+	case "htmlText":
+		return i.builtinHTMLText(args), true
+	case "htmlLinks":
+		return i.builtinHTMLLinks(args), true
+	case "rssParse":
+		return i.builtinRSSParse(args), true
+	// Phase 2: ML Simplified
+	case "mlTokenize":
+		return i.builtinMLTokenize(args), true
+	case "mlSentiment":
+		return i.builtinMLSentiment(args), true
+	case "mlSimilarity":
+		return i.builtinMLSimilarity(args), true
+	case "mlKeywords":
+		return i.builtinMLKeywords(args), true
+	case "mlNgrams":
+		return i.builtinMLNgrams(args), true
+	case "mlWordFreq":
+		return i.builtinMLWordFreq(args), true
+	// Phase 2: State Machine
+	case "stateMachine":
+		return i.builtinStateMachine(args), true
+	case "stateTransition":
+		return i.builtinStateTransition(args), true
+	// Phase 2: Rate Limiting
+	case "rateLimiter":
+		return i.builtinRateLimiter(args), true
+	case "rateLimitCheck":
+		return i.builtinRateLimitCheck(args), true
+	// Phase 2: Expression Evaluation
+	case "exprEval":
+		return i.builtinExprEval(args), true
+	// Phase 2: Git Operations
+	case "gitStatus":
+		return i.builtinGitStatus(args), true
+	case "gitLog":
+		return i.builtinGitLog(args), true
+	case "gitBranch":
+		return i.builtinGitBranch(args), true
+	// Phase 2: Metrics
+	case "metricsCounter":
+		return i.builtinMetricsCounter(args), true
+	case "metricsGauge":
+		return i.builtinMetricsGauge(args), true
+	case "metricsGet":
+		return i.builtinMetricsGet(args), true
 	default:
 		return nil, false
 	}
@@ -7054,6 +7211,11 @@ func toFloatValue(v Value) (float64, bool) {
 	default:
 		return 0, false
 	}
+}
+
+func toFloat(v Value) float64 {
+	val, _ := toFloatValue(v)
+	return val
 }
 
 func naturalLess(a, b string) bool {
@@ -18491,6 +18653,1794 @@ func (i *Interpreter) builtinWhois(args []Value) Value {
 		"domain":  domain,
 		"message": "Whois lookup requires external whois server connection",
 		"note":    "Use dnsLookup for DNS information",
+	}
+}
+
+// Cron parsing and scheduling
+func (i *Interpreter) builtinCronParse(args []Value) Value {
+	if len(args) == 0 {
+		return map[string]Value{"error": "need cron expression"}
+	}
+	expr, ok := args[0].(string)
+	if !ok {
+		return map[string]Value{"error": "cron expression must be string"}
+	}
+
+	parts := strings.Fields(expr)
+	if len(parts) != 5 {
+		return map[string]Value{"error": "invalid cron expression, need 5 fields (minute hour day month weekday)"}
+	}
+
+	return map[string]Value{
+		"valid":    true,
+		"minute":   parts[0],
+		"hour":     parts[1],
+		"day":      parts[2],
+		"month":    parts[3],
+		"weekday":  parts[4],
+		"original": expr,
+	}
+}
+
+func (i *Interpreter) builtinCronNext(args []Value) Value {
+	if len(args) == 0 {
+		return map[string]Value{"error": "need cron expression"}
+	}
+	expr, ok := args[0].(string)
+	if !ok {
+		return map[string]Value{"error": "cron expression must be string"}
+	}
+
+	// Get optional start time
+	startTime := time.Now()
+	if len(args) > 1 {
+		if t, ok := args[1].(string); ok {
+			if parsed, err := time.Parse(time.RFC3339, t); err == nil {
+				startTime = parsed
+			}
+		}
+	}
+
+	// Simple cron parser - supports basic patterns
+	next, err := parseCronAndFindNext(expr, startTime)
+	if err != nil {
+		return map[string]Value{"error": err.Error()}
+	}
+
+	return map[string]Value{
+		"valid":   true,
+		"next":    next.Format(time.RFC3339),
+		"unix":    next.Unix(),
+		"from":    startTime.Format(time.RFC3339),
+	}
+}
+
+func (i *Interpreter) builtinCronNextN(args []Value) Value {
+	if len(args) == 0 {
+		return map[string]Value{"error": "need cron expression"}
+	}
+	expr, ok := args[0].(string)
+	if !ok {
+		return map[string]Value{"error": "cron expression must be string"}
+	}
+
+	count := 5
+	if len(args) > 1 {
+		if c, ok := args[1].(int); ok {
+			count = c
+		} else if c, ok := args[1].(float64); ok {
+			count = int(c)
+		}
+	}
+
+	startTime := time.Now()
+	if len(args) > 2 {
+		if t, ok := args[2].(string); ok {
+			if parsed, err := time.Parse(time.RFC3339, t); err == nil {
+				startTime = parsed
+			}
+		}
+	}
+
+	results := make([]Value, 0, count)
+	current := startTime
+	for len(results) < count {
+		next, err := parseCronAndFindNext(expr, current)
+		if err != nil {
+			break
+		}
+		results = append(results, map[string]Value{
+			"time":  next.Format(time.RFC3339),
+			"unix":  next.Unix(),
+		})
+		current = next
+	}
+
+	return map[string]Value{
+		"valid":  true,
+		"count":  len(results),
+		"times":  results,
+	}
+}
+
+// Helper function for cron parsing
+func parseCronAndFindNext(expr string, start time.Time) (time.Time, error) {
+	parts := strings.Fields(expr)
+	if len(parts) != 5 {
+		return time.Time{}, fmt.Errorf("invalid cron expression")
+	}
+
+	// Simple implementation - only handles exact values and *
+	// For more complex patterns, a proper cron parser library is recommended
+	minute, hour, day, month, weekday := parts[0], parts[1], parts[2], parts[3], parts[4]
+
+	// Start from the next minute
+	current := start.Add(time.Minute).Truncate(time.Minute)
+
+	// Search for next match (limit iterations to prevent infinite loop)
+	for i := 0; i < 366*24*60; i++ {
+		if matchesCron(current, minute, hour, day, month, weekday) {
+			return current, nil
+		}
+		current = current.Add(time.Minute)
+	}
+
+	return time.Time{}, fmt.Errorf("no matching time found within 1 year")
+}
+
+func matchesCron(t time.Time, minute, hour, day, month, weekday string) bool {
+	return matchField(t.Minute(), minute, 0, 59) &&
+		matchField(t.Hour(), hour, 0, 23) &&
+		matchField(t.Day(), day, 1, 31) &&
+		matchField(int(t.Month()), month, 1, 12) &&
+		matchField(int(t.Weekday()), weekday, 0, 6)
+}
+
+func matchField(value int, field string, min, max int) bool {
+	if field == "*" {
+		return true
+	}
+
+	// Handle comma-separated values
+	if strings.Contains(field, ",") {
+		for _, part := range strings.Split(field, ",") {
+			if matchField(value, part, min, max) {
+				return true
+			}
+		}
+		return false
+	}
+
+	// Handle ranges
+	if strings.Contains(field, "-") {
+		parts := strings.Split(field, "-")
+		if len(parts) == 2 {
+			start, _ := strconv.Atoi(parts[0])
+			end, _ := strconv.Atoi(parts[1])
+			return value >= start && value <= end
+		}
+	}
+
+	// Handle step values (*/n)
+	if strings.HasPrefix(field, "*/") {
+		step, _ := strconv.Atoi(strings.TrimPrefix(field, "*/"))
+		if step > 0 {
+			return value%step == 0
+		}
+	}
+
+	// Exact match
+	intVal, _ := strconv.Atoi(field)
+	return value == intVal
+}
+
+// Geo location functions
+func (i *Interpreter) builtinGeoDistance(args []Value) Value {
+	if len(args) < 4 {
+		return map[string]Value{"error": "need lat1, lon1, lat2, lon2"}
+	}
+
+	lat1 := toFloat(args[0])
+	lon1 := toFloat(args[1])
+	lat2 := toFloat(args[2])
+	lon2 := toFloat(args[3])
+
+	// Haversine formula
+	const earthRadius = 6371.0 // km
+
+	lat1Rad := lat1 * math.Pi / 180
+	lat2Rad := lat2 * math.Pi / 180
+	deltaLat := (lat2 - lat1) * math.Pi / 180
+	deltaLon := (lon2 - lon1) * math.Pi / 180
+
+	a := math.Sin(deltaLat/2)*math.Sin(deltaLat/2) +
+		math.Cos(lat1Rad)*math.Cos(lat2Rad)*
+			math.Sin(deltaLon/2)*math.Sin(deltaLon/2)
+	c := 2 * math.Atan2(math.Sqrt(a), math.Sqrt(1-a))
+
+	distanceKm := earthRadius * c
+	distanceMiles := distanceKm * 0.621371
+
+	return map[string]Value{
+		"km":     math.Round(distanceKm*100) / 100,
+		"miles":  math.Round(distanceMiles*100) / 100,
+		"meters": math.Round(distanceKm * 1000),
+		"valid":  true,
+	}
+}
+
+func (i *Interpreter) builtinGeoEncode(args []Value) Value {
+	if len(args) < 2 {
+		return map[string]Value{"error": "need latitude and longitude"}
+	}
+
+	lat := toFloat(args[0])
+	lon := toFloat(args[1])
+
+	// Simple geohash encoding
+	geohash := encodeGeohash(lat, lon, 12)
+
+	return map[string]Value{
+		"geohash": geohash,
+		"lat":     lat,
+		"lon":     lon,
+		"valid":   true,
+	}
+}
+
+func (i *Interpreter) builtinGeoDecode(args []Value) Value {
+	if len(args) == 0 {
+		return map[string]Value{"error": "need geohash"}
+	}
+
+	geohash, ok := args[0].(string)
+	if !ok {
+		return map[string]Value{"error": "geohash must be string"}
+	}
+
+	lat, lon := decodeGeohash(geohash)
+
+	return map[string]Value{
+		"lat":     lat,
+		"lon":     lon,
+		"geohash": geohash,
+		"valid":   true,
+	}
+}
+
+func (i *Interpreter) builtinGeoBoundingBox(args []Value) Value {
+	if len(args) < 3 {
+		return map[string]Value{"error": "need lat, lon, radius_km"}
+	}
+
+	lat := toFloat(args[0])
+	lon := toFloat(args[1])
+	radiusKm := toFloat(args[2])
+
+	// Calculate bounding box
+	latDelta := radiusKm / 111.0 // 1 degree latitude ≈ 111 km
+	lonDelta := radiusKm / (111.0 * math.Cos(lat*math.Pi/180))
+
+	return map[string]Value{
+		"minLat": lat - latDelta,
+		"maxLat": lat + latDelta,
+		"minLon": lon - lonDelta,
+		"maxLon": lon + lonDelta,
+		"center": map[string]Value{
+			"lat": lat,
+			"lon": lon,
+		},
+		"radiusKm": radiusKm,
+		"valid":    true,
+	}
+}
+
+func (i *Interpreter) builtinGeoIP(args []Value) Value {
+	if len(args) == 0 {
+		return map[string]Value{"error": "need IP address"}
+	}
+
+	ip, ok := args[0].(string)
+	if !ok {
+		return map[string]Value{"error": "IP must be string"}
+	}
+
+	// Basic IP validation
+	netIP := net.ParseIP(ip)
+	if netIP == nil {
+		return map[string]Value{"error": "invalid IP address"}
+	}
+
+	// Return IP info (actual geo lookup requires external service)
+	return map[string]Value{
+		"ip":      ip,
+		"version": map[string]Value{"v4": netIP.To4() != nil, "v6": netIP.To4() == nil},
+		"note":    "Geo location requires external IP service",
+		"valid":   true,
+	}
+}
+
+func (i *Interpreter) builtinGeoWithin(args []Value) Value {
+	if len(args) < 3 {
+		return map[string]Value{"error": "need lat, lon, and bounding box or center+radius"}
+	}
+
+	lat := toFloat(args[0])
+	lon := toFloat(args[1])
+
+	// Check if point is within bounding box
+	if bbox, ok := args[2].(map[string]Value); ok {
+		minLat := toFloat(bbox["minLat"])
+		maxLat := toFloat(bbox["maxLat"])
+		minLon := toFloat(bbox["minLon"])
+		maxLon := toFloat(bbox["maxLon"])
+
+		within := lat >= minLat && lat <= maxLat && lon >= minLon && lon <= maxLon
+		return map[string]Value{
+			"within": within,
+			"point":  map[string]Value{"lat": lat, "lon": lon},
+			"valid":  true,
+		}
+	}
+
+	return map[string]Value{"error": "third argument must be bounding box map"}
+}
+
+// Geohash encoding/decoding helpers
+func encodeGeohash(lat, lon float64, precision int) string {
+	const base32 = "0123456789bcdefghjkmnpqrstuvwxyz"
+
+	latRange := [2]float64{-90, 90}
+	lonRange := [2]float64{-180, 180}
+
+	var geohash strings.Builder
+	var bits uint
+	var mid float64
+	currentBit := 0
+
+	for geohash.Len() < precision {
+		if currentBit%2 == 0 {
+			// Even bit: longitude
+			mid = (lonRange[0] + lonRange[1]) / 2
+			if lon > mid {
+				bits = bits*2 + 1
+				lonRange[0] = mid
+			} else {
+				bits = bits * 2
+				lonRange[1] = mid
+			}
+		} else {
+			// Odd bit: latitude
+			mid = (latRange[0] + latRange[1]) / 2
+			if lat > mid {
+				bits = bits*2 + 1
+				latRange[0] = mid
+			} else {
+				bits = bits * 2
+				latRange[1] = mid
+			}
+		}
+
+		currentBit++
+		if currentBit%5 == 0 {
+			geohash.WriteByte(base32[bits])
+			bits = 0
+		}
+	}
+
+	return geohash.String()
+}
+
+func decodeGeohash(geohash string) (lat, lon float64) {
+	const base32 = "0123456789bcdefghjkmnpqrstuvwxyz"
+
+	latRange := [2]float64{-90, 90}
+	lonRange := [2]float64{-180, 180}
+
+	for _, c := range geohash {
+		idx := strings.Index(base32, string(c))
+		if idx < 0 {
+			continue
+		}
+
+		for i := 4; i >= 0; i-- {
+			bit := (idx >> i) & 1
+
+			if (len(geohash)-strings.Index(geohash, string(c)))*5+(4-i) == 0 {
+				continue
+			}
+
+			// Determine if this is a lon or lat bit
+			pos := (strings.Index(geohash, string(c)))*5 + (4 - i)
+			if pos%2 == 0 {
+				// Even position: longitude
+				mid := (lonRange[0] + lonRange[1]) / 2
+				if bit == 1 {
+					lonRange[0] = mid
+				} else {
+					lonRange[1] = mid
+				}
+			} else {
+				// Odd position: latitude
+				mid := (latRange[0] + latRange[1]) / 2
+				if bit == 1 {
+					latRange[0] = mid
+				} else {
+					latRange[1] = mid
+				}
+			}
+		}
+	}
+
+	return (latRange[0] + latRange[1]) / 2, (lonRange[0] + lonRange[1]) / 2
+}
+
+// Rate limiting functions
+var rateLimiters = make(map[string]*rateLimiter)
+var rateLimitersMutex sync.RWMutex
+
+type rateLimiter struct {
+	tokens     float64
+	maxTokens  float64
+	refillRate float64 // tokens per second
+	lastRefill time.Time
+}
+
+func (i *Interpreter) builtinRateLimiter(args []Value) Value {
+	if len(args) < 3 {
+		return map[string]Value{"error": "need name, maxTokens, refillRate"}
+	}
+
+	name, ok := args[0].(string)
+	if !ok {
+		return map[string]Value{"error": "name must be string"}
+	}
+
+	maxTokens := toFloat(args[1])
+	refillRate := toFloat(args[2])
+
+	rateLimitersMutex.Lock()
+	defer rateLimitersMutex.Unlock()
+
+	rateLimiters[name] = &rateLimiter{
+		tokens:     maxTokens,
+		maxTokens:  maxTokens,
+		refillRate: refillRate,
+		lastRefill: time.Now(),
+	}
+
+	return map[string]Value{
+		"name":       name,
+		"maxTokens":  maxTokens,
+		"refillRate": refillRate,
+		"created":    true,
+	}
+}
+
+func (i *Interpreter) builtinRateLimitCheck(args []Value) Value {
+	if len(args) == 0 {
+		return map[string]Value{"error": "need name"}
+	}
+
+	name, ok := args[0].(string)
+	if !ok {
+		return map[string]Value{"error": "name must be string"}
+	}
+
+	cost := 1.0
+	if len(args) > 1 {
+		cost = toFloat(args[1])
+	}
+
+	rateLimitersMutex.Lock()
+	defer rateLimitersMutex.Unlock()
+
+	rl, exists := rateLimiters[name]
+	if !exists {
+		return map[string]Value{"error": "rate limiter not found", "name": name}
+	}
+
+	// Refill tokens
+	now := time.Now()
+	elapsed := now.Sub(rl.lastRefill).Seconds()
+	rl.tokens = math.Min(rl.maxTokens, rl.tokens+elapsed*rl.refillRate)
+	rl.lastRefill = now
+
+	if rl.tokens >= cost {
+		rl.tokens -= cost
+		return map[string]Value{
+			"allowed":     true,
+			"tokensLeft":  rl.tokens,
+			"name":        name,
+		}
+	}
+
+	return map[string]Value{
+		"allowed":     false,
+		"tokensLeft":  rl.tokens,
+		"retryAfter":  (cost - rl.tokens) / rl.refillRate,
+		"name":        name,
+	}
+}
+
+func (i *Interpreter) builtinRateLimitReset(args []Value) Value {
+	if len(args) == 0 {
+		return map[string]Value{"error": "need name"}
+	}
+
+	name, ok := args[0].(string)
+	if !ok {
+		return map[string]Value{"error": "name must be string"}
+	}
+
+	rateLimitersMutex.Lock()
+	defer rateLimitersMutex.Unlock()
+
+	if rl, exists := rateLimiters[name]; exists {
+		rl.tokens = rl.maxTokens
+		rl.lastRefill = time.Now()
+		return map[string]Value{"reset": true, "name": name}
+	}
+
+	return map[string]Value{"error": "rate limiter not found", "name": name}
+}
+
+// Metrics functions
+var metricsStore = make(map[string]*metricValue)
+var metricsMutex sync.RWMutex
+
+type metricValue struct {
+	metricType string
+	value      float64
+	labels     map[string]string
+	updatedAt  time.Time
+}
+
+func (i *Interpreter) builtinMetricsCounter(args []Value) Value {
+	if len(args) < 2 {
+		return map[string]Value{"error": "need name and value"}
+	}
+
+	name, ok := args[0].(string)
+	if !ok {
+		return map[string]Value{"error": "name must be string"}
+	}
+	value := toFloat(args[1])
+
+	metricsMutex.Lock()
+	defer metricsMutex.Unlock()
+
+	if existing, exists := metricsStore[name]; exists {
+		existing.value += value
+		existing.updatedAt = time.Now()
+	} else {
+		metricsStore[name] = &metricValue{
+			metricType: "counter",
+			value:      value,
+			updatedAt:  time.Now(),
+		}
+	}
+
+	return map[string]Value{
+		"name":  name,
+		"value": metricsStore[name].value,
+		"type":  "counter",
+	}
+}
+
+func (i *Interpreter) builtinMetricsGauge(args []Value) Value {
+	if len(args) < 2 {
+		return map[string]Value{"error": "need name and value"}
+	}
+
+	name, ok := args[0].(string)
+	if !ok {
+		return map[string]Value{"error": "name must be string"}
+	}
+	value := toFloat(args[1])
+
+	metricsMutex.Lock()
+	defer metricsMutex.Unlock()
+
+	metricsStore[name] = &metricValue{
+		metricType: "gauge",
+		value:      value,
+		updatedAt:  time.Now(),
+	}
+
+	return map[string]Value{
+		"name":  name,
+		"value": value,
+		"type":  "gauge",
+	}
+}
+
+func (i *Interpreter) builtinMetricsGet(args []Value) Value {
+	if len(args) == 0 {
+		// Return all metrics
+		metricsMutex.RLock()
+		defer metricsMutex.RUnlock()
+
+		result := make(map[string]Value)
+		for name, m := range metricsStore {
+			result[name] = map[string]Value{
+				"type":  m.metricType,
+				"value": m.value,
+				"updatedAt": m.updatedAt.Format(time.RFC3339),
+			}
+		}
+		return result
+	}
+
+	name, ok := args[0].(string)
+	if !ok {
+		return map[string]Value{"error": "name must be string"}
+	}
+
+	metricsMutex.RLock()
+	defer metricsMutex.RUnlock()
+
+	if m, exists := metricsStore[name]; exists {
+		return map[string]Value{
+			"name":     name,
+			"type":     m.metricType,
+			"value":    m.value,
+			"updatedAt": m.updatedAt.Format(time.RFC3339),
+		}
+	}
+
+	return map[string]Value{"error": "metric not found", "name": name}
+}
+
+// State machine functions
+type stateMachineState struct {
+	name        string
+	transitions map[string]string // event -> target state
+	onEnter     string
+	onExit      string
+}
+
+var stateMachines = make(map[string]*stateMachine)
+var stateMachinesMutex sync.RWMutex
+
+type stateMachine struct {
+	currentState string
+	states       map[string]*stateMachineState
+	initialState string
+}
+
+func (i *Interpreter) builtinStateMachine(args []Value) Value {
+	if len(args) == 0 {
+		return map[string]Value{"error": "need name"}
+	}
+
+	name, ok := args[0].(string)
+	if !ok {
+		return map[string]Value{"error": "name must be string"}
+	}
+
+	initial := "initial"
+	if len(args) > 1 {
+		if init, ok := args[1].(string); ok {
+			initial = init
+		}
+	}
+
+	sm := &stateMachine{
+		currentState: initial,
+		states:       make(map[string]*stateMachineState),
+		initialState: initial,
+	}
+
+	sm.states[initial] = &stateMachineState{
+		name:        initial,
+		transitions: make(map[string]string),
+	}
+
+	stateMachinesMutex.Lock()
+	stateMachines[name] = sm
+	stateMachinesMutex.Unlock()
+
+	return map[string]Value{
+		"name":       name,
+		"state":      initial,
+		"created":    true,
+	}
+}
+
+func (i *Interpreter) builtinStateAdd(args []Value) Value {
+	if len(args) < 2 {
+		return map[string]Value{"error": "need machine name and state name"}
+	}
+
+	name, ok := args[0].(string)
+	if !ok {
+		return map[string]Value{"error": "machine name must be string"}
+	}
+
+	stateName, ok := args[1].(string)
+	if !ok {
+		return map[string]Value{"error": "state name must be string"}
+	}
+
+	stateMachinesMutex.Lock()
+	defer stateMachinesMutex.Unlock()
+
+	sm, exists := stateMachines[name]
+	if !exists {
+		return map[string]Value{"error": "state machine not found"}
+	}
+
+	sm.states[stateName] = &stateMachineState{
+		name:        stateName,
+		transitions: make(map[string]string),
+	}
+
+	return map[string]Value{
+		"added":    true,
+		"machine":  name,
+		"state":    stateName,
+	}
+}
+
+func (i *Interpreter) builtinStateTransition(args []Value) Value {
+	if len(args) < 3 {
+		return map[string]Value{"error": "need machine name, event, and target state"}
+	}
+
+	name, ok := args[0].(string)
+	if !ok {
+		return map[string]Value{"error": "machine name must be string"}
+	}
+
+	event, ok := args[1].(string)
+	if !ok {
+		return map[string]Value{"error": "event must be string"}
+	}
+
+	targetState, ok := args[2].(string)
+	if !ok {
+		return map[string]Value{"error": "target state must be string"}
+	}
+
+	stateMachinesMutex.Lock()
+	defer stateMachinesMutex.Unlock()
+
+	sm, exists := stateMachines[name]
+	if !exists {
+		return map[string]Value{"error": "state machine not found"}
+	}
+
+	// Check if current state exists
+	current, exists := sm.states[sm.currentState]
+	if !exists {
+		return map[string]Value{"error": "current state not defined"}
+	}
+
+	// Check if target state exists
+	if _, exists := sm.states[targetState]; !exists {
+		return map[string]Value{"error": "target state not defined"}
+	}
+
+	// Add transition
+	current.transitions[event] = targetState
+
+	// Check if this event is valid for current state
+	if target, valid := current.transitions[event]; valid {
+		sm.currentState = target
+		return map[string]Value{
+			"transitioned": true,
+			"from":         current.name,
+			"to":           target,
+			"event":        event,
+		}
+	}
+
+	return map[string]Value{
+		"transitioned": false,
+		"currentState": sm.currentState,
+		"error":        "invalid event for current state",
+	}
+}
+
+func (i *Interpreter) builtinStateCurrent(args []Value) Value {
+	if len(args) == 0 {
+		return map[string]Value{"error": "need machine name"}
+	}
+
+	name, ok := args[0].(string)
+	if !ok {
+		return map[string]Value{"error": "machine name must be string"}
+	}
+
+	stateMachinesMutex.RLock()
+	defer stateMachinesMutex.RUnlock()
+
+	sm, exists := stateMachines[name]
+	if !exists {
+		return map[string]Value{"error": "state machine not found"}
+	}
+
+	return map[string]Value{
+		"name":       name,
+		"state":      sm.currentState,
+		"initial":    sm.initialState,
+		"stateCount": len(sm.states),
+	}
+}
+
+// Expression evaluation
+func (i *Interpreter) builtinExprEval(args []Value) Value {
+	if len(args) == 0 {
+		return map[string]Value{"error": "need expression"}
+	}
+
+	expr, ok := args[0].(string)
+	if !ok {
+		return map[string]Value{"error": "expression must be string"}
+	}
+
+	// Simple expression evaluator
+	result, err := evalExpression(expr)
+	if err != nil {
+		return map[string]Value{"error": err.Error()}
+	}
+
+	return map[string]Value{
+		"result": result,
+		"expr":   expr,
+		"valid":  true,
+	}
+}
+
+func evalExpression(expr string) (interface{}, error) {
+	// Simple expression parser supporting +, -, *, /, %, parentheses
+	// This is a basic implementation - for complex expressions, use a proper parser
+
+	// Tokenize
+	tokens := tokenize(expr)
+	if len(tokens) == 0 {
+		return nil, fmt.Errorf("empty expression")
+	}
+
+	// Parse and evaluate
+	pos := 0
+	return parseAddSub(tokens, &pos)
+}
+
+func tokenize(expr string) []string {
+	var tokens []string
+	var current strings.Builder
+
+	for _, c := range expr {
+		switch c {
+		case ' ', '\t', '\n':
+			if current.Len() > 0 {
+				tokens = append(tokens, current.String())
+				current.Reset()
+			}
+		case '+', '-', '*', '/', '%', '(', ')':
+			if current.Len() > 0 {
+				tokens = append(tokens, current.String())
+				current.Reset()
+			}
+			tokens = append(tokens, string(c))
+		default:
+			current.WriteRune(c)
+		}
+	}
+	if current.Len() > 0 {
+		tokens = append(tokens, current.String())
+	}
+	return tokens
+}
+
+func parseAddSub(tokens []string, pos *int) (float64, error) {
+	left, err := parseMulDiv(tokens, pos)
+	if err != nil {
+		return 0, err
+	}
+
+	for *pos < len(tokens) {
+		op := tokens[*pos]
+		if op != "+" && op != "-" {
+			break
+		}
+		*pos++
+		right, err := parseMulDiv(tokens, pos)
+		if err != nil {
+			return 0, err
+		}
+		if op == "+" {
+			left += right
+		} else {
+			left -= right
+		}
+	}
+	return left, nil
+}
+
+func parseMulDiv(tokens []string, pos *int) (float64, error) {
+	left, err := parsePrimary(tokens, pos)
+	if err != nil {
+		return 0, err
+	}
+
+	for *pos < len(tokens) {
+		op := tokens[*pos]
+		if op != "*" && op != "/" && op != "%" {
+			break
+		}
+		*pos++
+		right, err := parsePrimary(tokens, pos)
+		if err != nil {
+			return 0, err
+		}
+		switch op {
+		case "*":
+			left *= right
+		case "/":
+			if right == 0 {
+				return 0, fmt.Errorf("division by zero")
+			}
+			left /= right
+		case "%":
+			left = math.Mod(left, right)
+		}
+	}
+	return left, nil
+}
+
+func parsePrimary(tokens []string, pos *int) (float64, error) {
+	if *pos >= len(tokens) {
+		return 0, fmt.Errorf("unexpected end of expression")
+	}
+
+	token := tokens[*pos]
+	*pos++
+
+	if token == "(" {
+		result, err := parseAddSub(tokens, pos)
+		if err != nil {
+			return 0, err
+		}
+		if *pos >= len(tokens) || tokens[*pos] != ")" {
+			return 0, fmt.Errorf("missing closing parenthesis")
+		}
+		*pos++
+		return result, nil
+	}
+
+	// Number
+	val, err := strconv.ParseFloat(token, 64)
+	if err != nil {
+		return 0, fmt.Errorf("invalid number: %s", token)
+	}
+	return val, nil
+}
+
+// HTML parsing functions (basic implementation)
+func (i *Interpreter) builtinHTMLParse(args []Value) Value {
+	if len(args) == 0 {
+		return map[string]Value{"error": "need HTML string"}
+	}
+
+	htmlStr, ok := args[0].(string)
+	if !ok {
+		return map[string]Value{"error": "HTML must be string"}
+	}
+
+	// Basic HTML parsing - just extract text content
+	text := extractTextFromHTML(htmlStr)
+
+	return map[string]Value{
+		"html":    htmlStr,
+		"text":    text,
+		"length":  len(htmlStr),
+		"valid":   true,
+	}
+}
+
+func (i *Interpreter) builtinHTMLSelect(args []Value) Value {
+	if len(args) < 2 {
+		return map[string]Value{"error": "need HTML and selector"}
+	}
+
+	htmlStr, ok := args[0].(string)
+	if !ok {
+		return map[string]Value{"error": "HTML must be string"}
+	}
+
+	selector, ok := args[1].(string)
+	if !ok {
+		return map[string]Value{"error": "selector must be string"}
+	}
+
+	// Basic selector implementation
+	elements := findElementsBySelector(htmlStr, selector)
+
+	return map[string]Value{
+		"found":    len(elements) > 0,
+		"count":    len(elements),
+		"elements": elements,
+		"selector": selector,
+	}
+}
+
+func (i *Interpreter) builtinHTMLSelectAll(args []Value) Value {
+	return i.builtinHTMLSelect(args) // Same implementation
+}
+
+func (i *Interpreter) builtinHTMLAttr(args []Value) Value {
+	if len(args) < 2 {
+		return map[string]Value{"error": "need HTML element and attribute name"}
+	}
+
+	htmlStr, ok := args[0].(string)
+	if !ok {
+		return map[string]Value{"error": "HTML must be string"}
+	}
+
+	attr, ok := args[1].(string)
+	if !ok {
+		return map[string]Value{"error": "attribute must be string"}
+	}
+
+	value := extractAttribute(htmlStr, attr)
+
+	return map[string]Value{
+		"attribute": attr,
+		"value":     value,
+		"found":     value != "",
+	}
+}
+
+func (i *Interpreter) builtinHTMLText(args []Value) Value {
+	if len(args) == 0 {
+		return map[string]Value{"error": "need HTML string"}
+	}
+
+	htmlStr, ok := args[0].(string)
+	if !ok {
+		return map[string]Value{"error": "HTML must be string"}
+	}
+
+	text := extractTextFromHTML(htmlStr)
+
+	return map[string]Value{
+		"text": text,
+	}
+}
+
+func (i *Interpreter) builtinHTMLLinks(args []Value) Value {
+	if len(args) == 0 {
+		return map[string]Value{"error": "need HTML string"}
+	}
+
+	htmlStr, ok := args[0].(string)
+	if !ok {
+		return map[string]Value{"error": "HTML must be string"}
+	}
+
+	links := extractLinks(htmlStr)
+
+	return map[string]Value{
+		"links": links,
+		"count": len(links),
+	}
+}
+
+// Helper functions for HTML processing
+func extractTextFromHTML(htmlStr string) string {
+	// Remove HTML tags
+	re := regexp.MustCompile(`<[^>]*>`)
+	text := re.ReplaceAllString(htmlStr, " ")
+	// Decode HTML entities
+	text = html.UnescapeString(text)
+	// Clean up whitespace
+	text = strings.Join(strings.Fields(text), " ")
+	return text
+}
+
+func findElementsBySelector(htmlStr, selector string) []Value {
+	var elements []Value
+
+	// Basic tag selector (e.g., "div", "p", "a")
+	re := regexp.MustCompile(`<` + selector + `[^>]*>(.*?)</` + selector + `>`)
+	matches := re.FindAllStringSubmatch(htmlStr, -1)
+
+	for _, match := range matches {
+		if len(match) > 1 {
+			elements = append(elements, match[0])
+		}
+	}
+
+	return elements
+}
+
+func extractAttribute(htmlStr, attr string) string {
+	re := regexp.MustCompile(attr + `=["']([^"']*)["']`)
+	match := re.FindStringSubmatch(htmlStr)
+	if len(match) > 1 {
+		return match[1]
+	}
+	return ""
+}
+
+func extractLinks(htmlStr string) []Value {
+	var links []Value
+
+	// Extract href attributes
+	hrefRe := regexp.MustCompile(`href=["']([^"']*)["']`)
+	matches := hrefRe.FindAllStringSubmatch(htmlStr, -1)
+	for _, match := range matches {
+		if len(match) > 1 {
+			links = append(links, match[1])
+		}
+	}
+
+	return links
+}
+
+// RSS parsing
+func (i *Interpreter) builtinRSSParse(args []Value) Value {
+	if len(args) == 0 {
+		return map[string]Value{"error": "need RSS XML string"}
+	}
+
+	rssXML, ok := args[0].(string)
+	if !ok {
+		return map[string]Value{"error": "RSS must be string"}
+	}
+
+	// Basic RSS parsing
+	items := parseRSSItems(rssXML)
+
+	return map[string]Value{
+		"valid": true,
+		"items": items,
+		"count": len(items),
+	}
+}
+
+func parseRSSItems(rssXML string) []Value {
+	var items []Value
+
+	// Simple regex-based parsing
+	itemRe := regexp.MustCompile(`<item>(.*?)</item>`)
+	matches := itemRe.FindAllStringSubmatch(rssXML, -1)
+
+	for _, match := range matches {
+		if len(match) > 1 {
+			itemXML := match[1]
+			title := extractXMLContent(itemXML, "title")
+			link := extractXMLContent(itemXML, "link")
+			desc := extractXMLContent(itemXML, "description")
+
+			items = append(items, map[string]Value{
+				"title":       title,
+				"link":        link,
+				"description": desc,
+			})
+		}
+	}
+
+	return items
+}
+
+func extractXMLContent(xmlStr, tag string) string {
+	re := regexp.MustCompile(`<` + tag + `><!\[CDATA\[(.*?)\]\]></` + tag + `>`)
+	match := re.FindStringSubmatch(xmlStr)
+	if len(match) > 1 {
+		return match[1]
+	}
+
+	re = regexp.MustCompile(`<` + tag + `>(.*?)</` + tag + `>`)
+	match = re.FindStringSubmatch(xmlStr)
+	if len(match) > 1 {
+		return match[1]
+	}
+	return ""
+}
+
+// ML functions (simplified implementations)
+func (i *Interpreter) builtinMLTokenize(args []Value) Value {
+	if len(args) == 0 {
+		return map[string]Value{"error": "need text"}
+	}
+
+	text, ok := args[0].(string)
+	if !ok {
+		return map[string]Value{"error": "text must be string"}
+	}
+
+	// Simple whitespace tokenization
+	words := strings.Fields(text)
+	tokens := make([]Value, len(words))
+	for idx, w := range words {
+		// Clean punctuation
+		w = strings.Trim(w, ".,!?;:\"'()[]{}")
+		tokens[idx] = w
+	}
+
+	return map[string]Value{
+		"tokens": tokens,
+		"count":  len(tokens),
+		"valid":  true,
+	}
+}
+
+func (i *Interpreter) builtinMLSentiment(args []Value) Value {
+	if len(args) == 0 {
+		return map[string]Value{"error": "need text"}
+	}
+
+	text, ok := args[0].(string)
+	if !ok {
+		return map[string]Value{"error": "text must be string"}
+	}
+
+	// Simple sentiment analysis based on keyword matching
+	positive := []string{"good", "great", "excellent", "amazing", "wonderful", "fantastic", "happy", "love", "best", "beautiful"}
+	negative := []string{"bad", "terrible", "awful", "horrible", "worst", "hate", "poor", "sad", "angry", "disappointing"}
+
+	textLower := strings.ToLower(text)
+	posScore := 0
+	negScore := 0
+
+	for _, word := range positive {
+		if strings.Contains(textLower, word) {
+			posScore++
+		}
+	}
+	for _, word := range negative {
+		if strings.Contains(textLower, word) {
+			negScore++
+		}
+	}
+
+	total := posScore + negScore
+	if total == 0 {
+		return map[string]Value{
+			"sentiment": "neutral",
+			"score":     0.0,
+			"positive":  0,
+			"negative":  0,
+		}
+	}
+
+	score := float64(posScore-negScore) / float64(total)
+	sentiment := "neutral"
+	if score > 0.2 {
+		sentiment = "positive"
+	} else if score < -0.2 {
+		sentiment = "negative"
+	}
+
+	return map[string]Value{
+		"sentiment": sentiment,
+		"score":     math.Round(score*100) / 100,
+		"positive":  posScore,
+		"negative":  negScore,
+	}
+}
+
+func (i *Interpreter) builtinMLSimilarity(args []Value) Value {
+	if len(args) < 2 {
+		return map[string]Value{"error": "need two texts"}
+	}
+
+	text1, ok := args[0].(string)
+	if !ok {
+		return map[string]Value{"error": "text1 must be string"}
+	}
+
+	text2, ok := args[1].(string)
+	if !ok {
+		return map[string]Value{"error": "text2 must be string"}
+	}
+
+	// Jaccard similarity based on words
+	words1 := make(map[string]bool)
+	for _, w := range strings.Fields(strings.ToLower(text1)) {
+		words1[strings.Trim(w, ".,!?;:\"'")] = true
+	}
+
+	words2 := make(map[string]bool)
+	for _, w := range strings.Fields(strings.ToLower(text2)) {
+		words2[strings.Trim(w, ".,!?;:\"'")] = true
+	}
+
+	intersection := 0
+	for w := range words1 {
+		if words2[w] {
+			intersection++
+		}
+	}
+
+	union := len(words1) + len(words2) - intersection
+	if union == 0 {
+		return map[string]Value{"similarity": 0.0}
+	}
+
+	similarity := float64(intersection) / float64(union)
+
+	return map[string]Value{
+		"similarity": math.Round(similarity*100) / 100,
+		"intersection": intersection,
+		"union":      union,
+	}
+}
+
+func (i *Interpreter) builtinMLKeywords(args []Value) Value {
+	if len(args) == 0 {
+		return map[string]Value{"error": "need text"}
+	}
+
+	text, ok := args[0].(string)
+	if !ok {
+		return map[string]Value{"error": "text must be string"}
+	}
+
+	count := 5
+	if len(args) > 1 {
+		if c, ok := args[1].(int); ok {
+			count = c
+		}
+	}
+
+	// Simple keyword extraction based on word frequency
+	wordFreq := make(map[string]int)
+	stopWords := map[string]bool{
+		"the": true, "a": true, "an": true, "is": true, "are": true,
+		"was": true, "were": true, "be": true, "been": true, "being": true,
+		"have": true, "has": true, "had": true, "do": true, "does": true,
+		"did": true, "will": true, "would": true, "could": true, "should": true,
+		"may": true, "might": true, "must": true, "shall": true, "can": true,
+		"to": true, "of": true, "in": true, "for": true, "on": true,
+		"with": true, "at": true, "by": true, "from": true, "as": true,
+		"into": true, "through": true, "during": true, "before": true, "after": true,
+		"and": true, "but": true, "or": true, "nor": true, "so": true, "yet": true,
+		"this": true, "that": true, "these": true, "those": true,
+		"it": true, "its": true, "they": true, "them": true, "their": true,
+		"he": true, "she": true, "him": true, "her": true, "his": true,
+		"we": true, "us": true, "our": true, "you": true, "your": true, "i": true, "my": true,
+	}
+
+	for _, w := range strings.Fields(strings.ToLower(text)) {
+		w = strings.Trim(w, ".,!?;:\"'()[]{}")
+		if len(w) > 2 && !stopWords[w] {
+			wordFreq[w]++
+		}
+	}
+
+	// Sort by frequency
+	type wordCount struct {
+		word  string
+		count int
+	}
+	var sorted []wordCount
+	for w, c := range wordFreq {
+		sorted = append(sorted, wordCount{w, c})
+	}
+	sort.Slice(sorted, func(i, j int) bool {
+		return sorted[i].count > sorted[j].count
+	})
+
+	keywords := make([]Value, 0, count)
+	for i := 0; i < count && i < len(sorted); i++ {
+		keywords = append(keywords, map[string]Value{
+			"word":  sorted[i].word,
+			"count": sorted[i].count,
+		})
+	}
+
+	return map[string]Value{
+		"keywords": keywords,
+		"count":    len(keywords),
+	}
+}
+
+func (i *Interpreter) builtinMLNgrams(args []Value) Value {
+	if len(args) == 0 {
+		return map[string]Value{"error": "need text"}
+	}
+
+	text, ok := args[0].(string)
+	if !ok {
+		return map[string]Value{"error": "text must be string"}
+	}
+
+	n := 2
+	if len(args) > 1 {
+		if val, ok := args[1].(int); ok {
+			n = val
+		}
+	}
+
+	words := strings.Fields(strings.ToLower(text))
+	for idx, w := range words {
+		words[idx] = strings.Trim(w, ".,!?;:\"'")
+	}
+
+	if len(words) < n {
+		return map[string]Value{
+			"ngrams": []Value{},
+			"n":      n,
+		}
+	}
+
+	var ngrams []Value
+	for j := 0; j <= len(words)-n; j++ {
+		ngram := strings.Join(words[j:j+n], " ")
+		ngrams = append(ngrams, ngram)
+	}
+
+	return map[string]Value{
+		"ngrams": ngrams,
+		"n":      n,
+		"count":  len(ngrams),
+	}
+}
+
+func (i *Interpreter) builtinMLWordFreq(args []Value) Value {
+	if len(args) == 0 {
+		return map[string]Value{"error": "need text"}
+	}
+
+	text, ok := args[0].(string)
+	if !ok {
+		return map[string]Value{"error": "text must be string"}
+	}
+
+	wordFreq := make(map[string]int)
+	for _, w := range strings.Fields(strings.ToLower(text)) {
+		w = strings.Trim(w, ".,!?;:\"'()[]{}")
+		if len(w) > 0 {
+			wordFreq[w]++
+		}
+	}
+
+	freq := make(map[string]Value)
+	for w, c := range wordFreq {
+		freq[w] = c
+	}
+
+	return map[string]Value{
+		"frequencies": freq,
+		"uniqueWords": len(wordFreq),
+	}
+}
+
+// WebSocket functions (require gorilla/websocket - stub implementation)
+func (i *Interpreter) builtinWSConnect(args []Value) Value {
+	if len(args) == 0 {
+		return map[string]Value{"error": "need URL"}
+	}
+	url, ok := args[0].(string)
+	if !ok {
+		return map[string]Value{"error": "URL must be string"}
+	}
+	return map[string]Value{
+		"error":   "WebSocket support requires github.com/gorilla/websocket",
+		"hint":    "Add dependency and rebuild",
+		"url":     url,
+	}
+}
+
+func (i *Interpreter) builtinWSSend(args []Value) Value {
+	return map[string]Value{"error": "WebSocket not available - requires gorilla/websocket dependency"}
+}
+
+func (i *Interpreter) builtinWSReceive(args []Value) Value {
+	return map[string]Value{"error": "WebSocket not available - requires gorilla/websocket dependency"}
+}
+
+func (i *Interpreter) builtinWSClose(args []Value) Value {
+	return map[string]Value{"error": "WebSocket not available - requires gorilla/websocket dependency"}
+}
+
+func (i *Interpreter) builtinWSIsConnected(args []Value) Value {
+	return map[string]Value{"error": "WebSocket not available - requires gorilla/websocket dependency", "connected": false}
+}
+
+// Redis functions (require go-redis - stub implementation)
+func (i *Interpreter) builtinRedisConnect(args []Value) Value {
+	if len(args) == 0 {
+		return map[string]Value{"error": "need connection string"}
+	}
+	addr, ok := args[0].(string)
+	if !ok {
+		return map[string]Value{"error": "address must be string"}
+	}
+	return map[string]Value{
+		"error": "Redis support requires github.com/redis/go-redis/v9",
+		"hint":  "Add dependency and rebuild",
+		"addr":  addr,
+	}
+}
+
+func (i *Interpreter) builtinRedisGet(args []Value) Value {
+	return map[string]Value{"error": "Redis not available - requires go-redis dependency"}
+}
+
+func (i *Interpreter) builtinRedisSet(args []Value) Value {
+	return map[string]Value{"error": "Redis not available - requires go-redis dependency"}
+}
+
+func (i *Interpreter) builtinRedisDel(args []Value) Value {
+	return map[string]Value{"error": "Redis not available - requires go-redis dependency"}
+}
+
+func (i *Interpreter) builtinRedisExists(args []Value) Value {
+	return map[string]Value{"error": "Redis not available - requires go-redis dependency"}
+}
+
+func (i *Interpreter) builtinRedisExpire(args []Value) Value {
+	return map[string]Value{"error": "Redis not available - requires go-redis dependency"}
+}
+
+func (i *Interpreter) builtinRedisIncr(args []Value) Value {
+	return map[string]Value{"error": "Redis not available - requires go-redis dependency"}
+}
+
+func (i *Interpreter) builtinRedisDecr(args []Value) Value {
+	return map[string]Value{"error": "Redis not available - requires go-redis dependency"}
+}
+
+func (i *Interpreter) builtinRedisLPush(args []Value) Value {
+	return map[string]Value{"error": "Redis not available - requires go-redis dependency"}
+}
+
+func (i *Interpreter) builtinRedisRPush(args []Value) Value {
+	return map[string]Value{"error": "Redis not available - requires go-redis dependency"}
+}
+
+func (i *Interpreter) builtinRedisLPop(args []Value) Value {
+	return map[string]Value{"error": "Redis not available - requires go-redis dependency"}
+}
+
+func (i *Interpreter) builtinRedisRPop(args []Value) Value {
+	return map[string]Value{"error": "Redis not available - requires go-redis dependency"}
+}
+
+func (i *Interpreter) builtinRedisHSet(args []Value) Value {
+	return map[string]Value{"error": "Redis not available - requires go-redis dependency"}
+}
+
+func (i *Interpreter) builtinRedisHGet(args []Value) Value {
+	return map[string]Value{"error": "Redis not available - requires go-redis dependency"}
+}
+
+func (i *Interpreter) builtinRedisHDel(args []Value) Value {
+	return map[string]Value{"error": "Redis not available - requires go-redis dependency"}
+}
+
+func (i *Interpreter) builtinRedisHGetAll(args []Value) Value {
+	return map[string]Value{"error": "Redis not available - requires go-redis dependency"}
+}
+
+func (i *Interpreter) builtinRedisKeys(args []Value) Value {
+	return map[string]Value{"error": "Redis not available - requires go-redis dependency"}
+}
+
+func (i *Interpreter) builtinRedisTTL(args []Value) Value {
+	return map[string]Value{"error": "Redis not available - requires go-redis dependency"}
+}
+
+// PDF functions (require gofpdf - stub implementation)
+func (i *Interpreter) builtinPDFCreate(args []Value) Value {
+	return map[string]Value{
+		"error": "PDF support requires github.com/jung-kurt/gofpdf",
+		"hint":  "Add dependency and rebuild",
+	}
+}
+
+func (i *Interpreter) builtinPDFAddPage(args []Value) Value {
+	return map[string]Value{"error": "PDF not available - requires gofpdf dependency"}
+}
+
+func (i *Interpreter) builtinPDFAddText(args []Value) Value {
+	return map[string]Value{"error": "PDF not available - requires gofpdf dependency"}
+}
+
+func (i *Interpreter) builtinPDFSetFont(args []Value) Value {
+	return map[string]Value{"error": "PDF not available - requires gofpdf dependency"}
+}
+
+func (i *Interpreter) builtinPDFSave(args []Value) Value {
+	return map[string]Value{"error": "PDF not available - requires gofpdf dependency"}
+}
+
+func (i *Interpreter) builtinPDFCell(args []Value) Value {
+	return map[string]Value{"error": "PDF not available - requires gofpdf dependency"}
+}
+
+// Excel functions (require excelize - stub implementation)
+func (i *Interpreter) builtinExcelCreate(args []Value) Value {
+	return map[string]Value{
+		"error": "Excel support requires github.com/xuri/excelize/v2",
+		"hint":  "Add dependency and rebuild",
+	}
+}
+
+func (i *Interpreter) builtinExcelOpen(args []Value) Value {
+	return map[string]Value{"error": "Excel not available - requires excelize dependency"}
+}
+
+func (i *Interpreter) builtinExcelSetCell(args []Value) Value {
+	return map[string]Value{"error": "Excel not available - requires excelize dependency"}
+}
+
+func (i *Interpreter) builtinExcelGetCell(args []Value) Value {
+	return map[string]Value{"error": "Excel not available - requires excelize dependency"}
+}
+
+func (i *Interpreter) builtinExcelNewSheet(args []Value) Value {
+	return map[string]Value{"error": "Excel not available - requires excelize dependency"}
+}
+
+func (i *Interpreter) builtinExcelSave(args []Value) Value {
+	return map[string]Value{"error": "Excel not available - requires excelize dependency"}
+}
+
+func (i *Interpreter) builtinExcelClose(args []Value) Value {
+	return map[string]Value{"error": "Excel not available - requires excelize dependency"}
+}
+
+// Chart functions (require go-chart - stub implementation)
+func (i *Interpreter) builtinChartLine(args []Value) Value {
+	return map[string]Value{
+		"error": "Chart support requires github.com/wcharczuk/go-chart/v2",
+		"hint":  "Add dependency and rebuild",
+	}
+}
+
+func (i *Interpreter) builtinChartBar(args []Value) Value {
+	return map[string]Value{"error": "Chart not available - requires go-chart dependency"}
+}
+
+func (i *Interpreter) builtinChartPie(args []Value) Value {
+	return map[string]Value{"error": "Chart not available - requires go-chart dependency"}
+}
+
+// Git functions (using exec)
+func (i *Interpreter) builtinGitStatus(args []Value) Value {
+	dir := ""
+	if len(args) > 0 {
+		if d, ok := args[0].(string); ok {
+			dir = d
+		}
+	}
+
+	cmd := exec.Command("git", "status", "--porcelain")
+	if dir != "" {
+		cmd.Dir = dir
+	}
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return map[string]Value{"error": err.Error(), "output": string(output)}
+	}
+
+	lines := strings.Split(strings.TrimSpace(string(output)), "\n")
+	var changes []Value
+	for _, line := range lines {
+		if line == "" {
+			continue
+		}
+		if len(line) >= 3 {
+			status := strings.TrimSpace(line[:2])
+			file := line[3:]
+			changes = append(changes, map[string]Value{
+				"status": status,
+				"file":   file,
+			})
+		}
+	}
+
+	return map[string]Value{
+		"clean":   len(changes) == 0,
+		"changes": changes,
+		"count":   len(changes),
+	}
+}
+
+func (i *Interpreter) builtinGitLog(args []Value) Value {
+	dir := ""
+	if len(args) > 0 {
+		if d, ok := args[0].(string); ok {
+			dir = d
+		}
+	}
+
+	count := 10
+	if len(args) > 1 {
+		if c, ok := args[1].(int); ok {
+			count = c
+		}
+	}
+
+	cmd := exec.Command("git", "log", fmt.Sprintf("-%d", count), "--pretty=format:%H|%s|%an|%ad", "--date=short")
+	if dir != "" {
+		cmd.Dir = dir
+	}
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return map[string]Value{"error": err.Error(), "output": string(output)}
+	}
+
+	var commits []Value
+	lines := strings.Split(strings.TrimSpace(string(output)), "\n")
+	for _, line := range lines {
+		if line == "" {
+			continue
+		}
+		parts := strings.Split(line, "|")
+		if len(parts) >= 4 {
+			commits = append(commits, map[string]Value{
+				"hash":    parts[0],
+				"message": parts[1],
+				"author":  parts[2],
+				"date":    parts[3],
+			})
+		}
+	}
+
+	return map[string]Value{
+		"commits": commits,
+		"count":   len(commits),
+	}
+}
+
+func (i *Interpreter) builtinGitBranch(args []Value) Value {
+	dir := ""
+	if len(args) > 0 {
+		if d, ok := args[0].(string); ok {
+			dir = d
+		}
+	}
+
+	// Get current branch
+	cmd := exec.Command("git", "branch", "--show-current")
+	if dir != "" {
+		cmd.Dir = dir
+	}
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return map[string]Value{"error": err.Error(), "output": string(output)}
+	}
+	currentBranch := strings.TrimSpace(string(output))
+
+	// Get all branches
+	cmd = exec.Command("git", "branch", "-a")
+	if dir != "" {
+		cmd.Dir = dir
+	}
+	output, err = cmd.CombinedOutput()
+	if err != nil {
+		return map[string]Value{"error": err.Error(), "output": string(output)}
+	}
+
+	var branches []Value
+	lines := strings.Split(strings.TrimSpace(string(output)), "\n")
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		current := strings.HasPrefix(line, "* ")
+		name := strings.TrimPrefix(line, "* ")
+		name = strings.TrimSpace(name)
+		branches = append(branches, map[string]Value{
+			"name":    name,
+			"current": current,
+		})
+	}
+
+	return map[string]Value{
+		"current":  currentBranch,
+		"branches": branches,
+		"count":    len(branches),
 	}
 }
 

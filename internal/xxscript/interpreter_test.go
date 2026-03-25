@@ -44,7 +44,7 @@ func TestInterpreter_EvalBasic(t *testing.T) {
 			continue
 		}
 
-		if !compareValues(tt.expected, result) {
+		if !valuesEqual(tt.expected, result) {
 			t.Errorf("For %s: expected %v (%T), got %v (%T)", tt.input, tt.expected, tt.expected, result, result)
 		}
 	}
@@ -62,7 +62,7 @@ func TestInterpreter_Variables(t *testing.T) {
 		t.Fatalf("Execution error: %v", err)
 	}
 
-	if !compareValues(int64(30), result) {
+	if !valuesEqual(int64(30), result) {
 		t.Errorf("Expected 30, got %v", result)
 	}
 }
@@ -117,7 +117,7 @@ func TestInterpreter_IfStatement(t *testing.T) {
 			t.Fatalf("Execution error: %v", err)
 		}
 
-		if !compareValues(tt.expected, result) {
+		if !valuesEqual(tt.expected, result) {
 			t.Errorf("Expected %v, got %v", tt.expected, result)
 		}
 	}
@@ -137,7 +137,7 @@ func TestInterpreter_ForLoop(t *testing.T) {
 		t.Fatalf("Execution error: %v", err)
 	}
 
-	if !compareValues(int64(15), result) {
+	if !valuesEqual(int64(15), result) {
 		t.Errorf("Expected 15, got %v", result)
 	}
 }
@@ -158,7 +158,7 @@ func TestInterpreter_WhileLoop(t *testing.T) {
 		t.Fatalf("Execution error: %v", err)
 	}
 
-	if !compareValues(int64(5), result) {
+	if !valuesEqual(int64(5), result) {
 		t.Errorf("Expected 5, got %v", result)
 	}
 }
@@ -176,7 +176,7 @@ func TestInterpreter_Functions(t *testing.T) {
 		t.Fatalf("Execution error: %v", err)
 	}
 
-	if !compareValues(int64(7), result) {
+	if !valuesEqual(int64(7), result) {
 		t.Errorf("Expected 7, got %v", result)
 	}
 }
@@ -197,7 +197,7 @@ func TestInterpreter_RecursiveFunction(t *testing.T) {
 		t.Fatalf("Execution error: %v", err)
 	}
 
-	if !compareValues(int64(120), result) {
+	if !valuesEqual(int64(120), result) {
 		t.Errorf("Expected 120, got %v", result)
 	}
 }
@@ -213,7 +213,7 @@ func TestInterpreter_Arrays(t *testing.T) {
 		t.Fatalf("Execution error: %v", err)
 	}
 
-	if !compareValues(int64(3), result) {
+	if !valuesEqual(int64(3), result) {
 		t.Errorf("Expected 3, got %v", result)
 	}
 }
@@ -262,7 +262,7 @@ func TestInterpreter_Builtins(t *testing.T) {
 			continue
 		}
 
-		if !compareValues(tt.expected, result) {
+		if !valuesEqual(tt.expected, result) {
 			t.Errorf("For %s: expected %v (%T), got %v (%T)", tt.input, tt.expected, tt.expected, result, result)
 		}
 	}
@@ -336,7 +336,7 @@ func TestInterpreter_BreakContinue(t *testing.T) {
 	}
 
 	// 0+1+2+4+5+6 = 18 (skips 3, breaks at 7)
-	if !compareValues(int64(18), result) {
+	if !valuesEqual(int64(18), result) {
 		t.Errorf("Expected 18, got %v", result)
 	}
 }
@@ -396,7 +396,7 @@ func TestInterpreter_StringFunctions(t *testing.T) {
 			continue
 		}
 
-		if !compareValues(tt.expected, result) {
+		if !valuesEqual(tt.expected, result) {
 			t.Errorf("For %s: expected %v, got %v", tt.input, tt.expected, result)
 		}
 	}
@@ -413,7 +413,7 @@ func TestInterpreter_SplitFunction(t *testing.T) {
 		t.Fatalf("Execution error: %v", err)
 	}
 
-	if !compareValues(int64(3), result) {
+	if !valuesEqual(int64(3), result) {
 		t.Errorf("Expected 3, got %v", result)
 	}
 }
@@ -435,7 +435,7 @@ func TestInterpreter_MathFunctions(t *testing.T) {
 			continue
 		}
 
-		if !compareValues(tt.expected, result) {
+		if !valuesEqual(tt.expected, result) {
 			t.Errorf("For %s: expected %v, got %v", tt.input, tt.expected, result)
 		}
 	}
@@ -453,7 +453,7 @@ func TestInterpreter_PushFunction(t *testing.T) {
 		t.Fatalf("Execution error: %v", err)
 	}
 
-	if !compareValues(int64(3), result) {
+	if !valuesEqual(int64(3), result) {
 		t.Errorf("Expected 3, got %v", result)
 	}
 }
@@ -470,7 +470,7 @@ func TestInterpreter_PopFunction(t *testing.T) {
 		t.Fatalf("Execution error: %v", err)
 	}
 
-	if !compareValues(int64(3), result) {
+	if !valuesEqual(int64(3), result) {
 		t.Errorf("Expected 3, got %v", result)
 	}
 }
@@ -487,7 +487,7 @@ func TestInterpreter_SliceFunction(t *testing.T) {
 		t.Fatalf("Execution error: %v", err)
 	}
 
-	if !compareValues(int64(2), result) {
+	if !valuesEqual(int64(2), result) {
 		t.Errorf("Expected 2, got %v", result)
 	}
 }
@@ -503,7 +503,7 @@ func TestInterpreter_RangeFunction(t *testing.T) {
 		t.Fatalf("Execution error: %v", err)
 	}
 
-	if !compareValues(int64(4), result) {
+	if !valuesEqual(int64(4), result) {
 		t.Errorf("Expected 4, got %v", result)
 	}
 }
@@ -520,7 +520,7 @@ func TestInterpreter_ObjectFunctions(t *testing.T) {
 		t.Fatalf("Execution error: %v", err)
 	}
 
-	if !compareValues(int64(2), result) {
+	if !valuesEqual(int64(2), result) {
 		t.Errorf("Expected 2, got %v", result)
 	}
 }
@@ -537,7 +537,7 @@ func TestInterpreter_ValuesFunction(t *testing.T) {
 		t.Fatalf("Execution error: %v", err)
 	}
 
-	if !compareValues(int64(2), result) {
+	if !valuesEqual(int64(2), result) {
 		t.Errorf("Expected 2, got %v", result)
 	}
 }
@@ -575,7 +575,7 @@ func TestInterpreter_TrimPrefixSuffix(t *testing.T) {
 			continue
 		}
 
-		if !compareValues(tt.expected, result) {
+		if !valuesEqual(tt.expected, result) {
 			t.Errorf("For %s: expected %v, got %v", tt.input, tt.expected, result)
 		}
 	}
