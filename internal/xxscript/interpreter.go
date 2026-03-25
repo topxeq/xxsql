@@ -13,8 +13,10 @@ import (
 	"crypto/sha512"
 	"encoding/base32"
 	"encoding/base64"
+	"encoding/csv"
 	"encoding/hex"
 	"encoding/json"
+	"encoding/xml"
 	"errors"
 	"fmt"
 	"hash/adler32"
@@ -45,6 +47,10 @@ import (
 	"golang.org/x/crypto/pbkdf2"
 	"golang.org/x/crypto/sha3"
 	"golang.org/x/net/idna"
+
+	"github.com/BurntSushi/toml"
+	"github.com/skip2/go-qrcode"
+	"gopkg.in/yaml.v3"
 
 	"github.com/topxeq/xxsql/internal/storage"
 )
@@ -2184,6 +2190,92 @@ func (i *Interpreter) callBuiltin(name string, args []Value) (Value, bool) {
 		return i.builtinCSV(args), true
 	case "csvParse":
 		return i.builtinCSVParse(args), true
+	case "csvStringify":
+		return i.builtinCSVStringify(args), true
+	case "csvEncode":
+		return i.builtinCSVStringify(args), true // alias
+	// Format - XML
+	case "xmlParse":
+		return i.builtinXMLParse(args), true
+	case "xmlStringify":
+		return i.builtinXMLStringify(args), true
+	case "xmlEncode":
+		return i.builtinXMLStringify(args), true // alias
+	case "xmlGet":
+		return i.builtinXMLGet(args), true
+	// Format - YAML
+	case "yamlParse":
+		return i.builtinYAMLParse(args), true
+	case "yamlStringify":
+		return i.builtinYAMLStringify(args), true
+	case "yamlEncode":
+		return i.builtinYAMLStringify(args), true // alias
+	// Format - TOML
+	case "tomlParse":
+		return i.builtinTOMLParse(args), true
+	case "tomlStringify":
+		return i.builtinTOMLStringify(args), true
+	case "tomlEncode":
+		return i.builtinTOMLStringify(args), true // alias
+	// Format - Markdown
+	case "markdownToHTML":
+		return i.builtinMarkdownToHTML(args), true
+	case "htmlToMarkdown":
+		return i.builtinHTMLToMarkdown(args), true
+	// Network - HTTP Extended
+	case "httpDownload":
+		return i.builtinHTTPDownload(args), true
+	case "httpUpload":
+		return i.builtinHTTPUpload(args), true
+	case "httpHead":
+		return i.builtinHTTPHead(args), true
+	case "httpPatch":
+		return i.builtinHTTPPatch(args), true
+	case "httpOptions":
+		return i.builtinHTTPOptions(args), true
+	// Network - Connectivity
+	case "ping":
+		return i.builtinPing(args), true
+	case "portCheck":
+		return i.builtinPortCheck(args), true
+	case "portScan":
+		return i.builtinPortScan(args), true
+	// Concurrency
+	case "retry":
+		return i.builtinRetry(args), true
+	case "parallel":
+		return i.builtinParallel(args), true
+	case "timeout":
+		return i.builtinTimeout(args), true
+	// Random Generation
+	case "randomPassword":
+		return i.builtinRandomPassword(args), true
+	case "randomColor":
+		return i.builtinRandomColor(args), true
+	case "randomName":
+		return i.builtinRandomName(args), true
+	case "randomUUID":
+		return i.builtinUUID(args), true // alias
+	case "randomToken":
+		return i.builtinRandomToken(args), true
+	// QR Code
+	case "qrEncode":
+		return i.builtinQREncode(args), true
+	case "qrDataURL":
+		return i.builtinQRDataURL(args), true
+	// Cache functions
+	case "cacheSet":
+		return i.builtinCacheSet(args), true
+	case "cacheGet":
+		return i.builtinCacheGet(args), true
+	case "cacheDel":
+		return i.builtinCacheDel(args), true
+	case "cacheHas":
+		return i.builtinCacheHas(args), true
+	case "cacheClear":
+		return i.builtinCacheClear(args), true
+	case "cacheKeys":
+		return i.builtinCacheKeys(args), true
 	// Format - Other
 	case "printf":
 		return i.builtinPrintf(args), true
@@ -15704,6 +15796,1125 @@ func (i *Interpreter) builtinIsBase32(args []Value) Value {
 
 	_, err := base32.StdEncoding.DecodeString(s)
 	return err == nil
+}
+
+// ============================================================================
+// Data Format Functions
+// ============================================================================
+
+// CSV Stringify
+func (i *Interpreter) builtinCSVStringify(args []Value) Value {
+	if len(args) == 0 {
+		return ""
+	}
+
+	var buf strings.Builder
+	writer := csv.NewWriter(&buf)
+
+	// Handle different input types
+	switch v := args[0].(type) {
+	case []Value:
+		// Check if it's array of arrays (rows) or array of values (single row)
+		if len(v) > 0 {
+			if _, ok := v[0].([]Value); ok {
+				// Array of rows
+				for _, row := range v {
+					if rowArr, ok := row.([]Value); ok {
+						record := make([]string, len(rowArr))
+						for idx, cell := range rowArr {
+							record[idx] = fmt.Sprintf("%v", cell)
+						}
+						writer.Write(record)
+					}
+				}
+			} else {
+				// Single row
+				record := make([]string, len(v))
+				for idx, cell := range v {
+					record[idx] = fmt.Sprintf("%v", cell)
+				}
+				writer.Write(record)
+			}
+		}
+	case map[string]Value:
+		// Single object - write header and values
+		keys := make([]string, 0, len(v))
+		values := make([]string, 0, len(v))
+		for k, val := range v {
+			keys = append(keys, k)
+			values = append(values, fmt.Sprintf("%v", val))
+		}
+		writer.Write(keys)
+		writer.Write(values)
+	}
+
+	writer.Flush()
+	return buf.String()
+}
+
+// XML Parse - simple XML to map
+func (i *Interpreter) builtinXMLParse(args []Value) Value {
+	if len(args) == 0 {
+		return map[string]Value{}
+	}
+	s, ok := args[0].(string)
+	if !ok {
+		return map[string]Value{"error": "input must be string"}
+	}
+
+	decoder := xml.NewDecoder(strings.NewReader(s))
+	var result map[string]Value = make(map[string]Value)
+
+	// Simple parsing - extract root element content
+	for {
+		token, err := decoder.Token()
+		if err != nil {
+			break
+		}
+
+		switch t := token.(type) {
+		case xml.StartElement:
+			// Parse element content
+			var content string
+			if err := decoder.DecodeElement(&content, &t); err == nil {
+				result[t.Name.Local] = content
+			}
+		}
+	}
+
+	return result
+}
+
+// XML Stringify - map to XML
+func (i *Interpreter) builtinXMLStringify(args []Value) Value {
+	if len(args) == 0 {
+		return ""
+	}
+
+	data, ok := args[0].(map[string]Value)
+	if !ok {
+		return ""
+	}
+
+	root := "root"
+	if len(args) > 1 {
+		if r, ok := args[1].(string); ok {
+			root = r
+		}
+	}
+
+	var buf strings.Builder
+	buf.WriteString("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n")
+	buf.WriteString("<" + root + ">\n")
+
+	for k, v := range data {
+		buf.WriteString(fmt.Sprintf("  <%s>%v</%s>\n", k, escapeXML(fmt.Sprintf("%v", v)), k))
+	}
+
+	buf.WriteString("</" + root + ">")
+	return buf.String()
+}
+
+func escapeXML(s string) string {
+	s = strings.ReplaceAll(s, "&", "&amp;")
+	s = strings.ReplaceAll(s, "<", "&lt;")
+	s = strings.ReplaceAll(s, ">", "&gt;")
+	s = strings.ReplaceAll(s, "\"", "&quot;")
+	s = strings.ReplaceAll(s, "'", "&apos;")
+	return s
+}
+
+// XML Get - extract value from XML path
+func (i *Interpreter) builtinXMLGet(args []Value) Value {
+	if len(args) < 2 {
+		return nil
+	}
+
+	xmlStr, ok := args[0].(string)
+	if !ok {
+		return nil
+	}
+
+	path, ok := args[1].(string)
+	if !ok {
+		return nil
+	}
+
+	// Simple regex-based extraction
+	pattern := fmt.Sprintf(`<%s[^>]*>(.*?)</%s>`, path, path)
+	re := regexp.MustCompile(pattern)
+	matches := re.FindStringSubmatch(xmlStr)
+	if len(matches) > 1 {
+		return matches[1]
+	}
+	return nil
+}
+
+// YAML Parse
+func (i *Interpreter) builtinYAMLParse(args []Value) Value {
+	if len(args) == 0 {
+		return map[string]Value{}
+	}
+	s, ok := args[0].(string)
+	if !ok {
+		return map[string]Value{"error": "input must be string"}
+	}
+
+	var result interface{}
+	if err := yaml.Unmarshal([]byte(s), &result); err != nil {
+		return map[string]Value{"error": err.Error()}
+	}
+
+	return i.convertToValue(result)
+}
+
+// YAML Stringify
+func (i *Interpreter) builtinYAMLStringify(args []Value) Value {
+	if len(args) == 0 {
+		return ""
+	}
+
+	data := args[0]
+	goData := i.valueToGo(data)
+
+	result, err := yaml.Marshal(goData)
+	if err != nil {
+		return ""
+	}
+	return string(result)
+}
+
+// TOML Parse
+func (i *Interpreter) builtinTOMLParse(args []Value) Value {
+	if len(args) == 0 {
+		return map[string]Value{}
+	}
+	s, ok := args[0].(string)
+	if !ok {
+		return map[string]Value{"error": "input must be string"}
+	}
+
+	var result map[string]interface{}
+	if _, err := toml.Decode(s, &result); err != nil {
+		return map[string]Value{"error": err.Error()}
+	}
+
+	return i.convertToValue(result).(map[string]Value)
+}
+
+// TOML Stringify
+func (i *Interpreter) builtinTOMLStringify(args []Value) Value {
+	if len(args) == 0 {
+		return ""
+	}
+
+	data, ok := args[0].(map[string]Value)
+	if !ok {
+		return ""
+	}
+
+	goData := i.valueToGo(data).(map[string]interface{})
+
+	var buf strings.Builder
+	if err := toml.NewEncoder(&buf).Encode(goData); err != nil {
+		return ""
+	}
+	return buf.String()
+}
+
+// Markdown to HTML
+func (i *Interpreter) builtinMarkdownToHTML(args []Value) Value {
+	if len(args) == 0 {
+		return ""
+	}
+	s, ok := args[0].(string)
+	if !ok {
+		return ""
+	}
+
+	// Simple markdown to HTML conversion
+	result := s
+
+	// Headers
+	result = regexp.MustCompile(`(?m)^### (.+)$`).ReplaceAllString(result, "<h3>$1</h3>")
+	result = regexp.MustCompile(`(?m)^## (.+)$`).ReplaceAllString(result, "<h2>$1</h2>")
+	result = regexp.MustCompile(`(?m)^# (.+)$`).ReplaceAllString(result, "<h1>$1</h1>")
+
+	// Bold and Italic
+	result = regexp.MustCompile(`\*\*\*(.+?)\*\*\*`).ReplaceAllString(result, "<strong><em>$1</em></strong>")
+	result = regexp.MustCompile(`\*\*(.+?)\*\*`).ReplaceAllString(result, "<strong>$1</strong>")
+	result = regexp.MustCompile(`\*(.+?)\*`).ReplaceAllString(result, "<em>$1</em>")
+	result = regexp.MustCompile(`__(.+?)__`).ReplaceAllString(result, "<strong>$1</strong>")
+	result = regexp.MustCompile(`_(.+?)_`).ReplaceAllString(result, "<em>$1</em>")
+
+	// Code
+	result = regexp.MustCompile("```(.+?)```").ReplaceAllString(result, "<pre><code>$1</code></pre>")
+	result = regexp.MustCompile("`(.+?)`").ReplaceAllString(result, "<code>$1</code>")
+
+	// Links
+	result = regexp.MustCompile(`\[(.+?)\]\((.+?)\)`).ReplaceAllString(result, `<a href="$2">$1</a>`)
+
+	// Line breaks
+	result = regexp.MustCompile(`\n\n`).ReplaceAllString(result, "</p><p>")
+	result = regexp.MustCompile(`\n`).ReplaceAllString(result, "<br>")
+
+	return "<p>" + result + "</p>"
+}
+
+// HTML to Markdown
+func (i *Interpreter) builtinHTMLToMarkdown(args []Value) Value {
+	if len(args) == 0 {
+		return ""
+	}
+	s, ok := args[0].(string)
+	if !ok {
+		return ""
+	}
+
+	// Simple HTML to Markdown conversion
+	result := s
+
+	// Remove HTML tags and convert to markdown
+	result = regexp.MustCompile(`<h1[^>]*>(.+?)</h1>`).ReplaceAllString(result, "# $1\n")
+	result = regexp.MustCompile(`<h2[^>]*>(.+?)</h2>`).ReplaceAllString(result, "## $1\n")
+	result = regexp.MustCompile(`<h3[^>]*>(.+?)</h3>`).ReplaceAllString(result, "### $1\n")
+	result = regexp.MustCompile(`<strong[^>]*>(.+?)</strong>`).ReplaceAllString(result, "**$1**")
+	result = regexp.MustCompile(`<b[^>]*>(.+?)</b>`).ReplaceAllString(result, "**$1**")
+	result = regexp.MustCompile(`<em[^>]*>(.+?)</em>`).ReplaceAllString(result, "*$1*")
+	result = regexp.MustCompile(`<i[^>]*>(.+?)</i>`).ReplaceAllString(result, "*$1*")
+	result = regexp.MustCompile(`<code[^>]*>(.+?)</code>`).ReplaceAllString(result, "`$1`")
+	result = regexp.MustCompile(`<a[^>]*href="([^"]+)"[^>]*>(.+?)</a>`).ReplaceAllString(result, "[$2]($1)")
+	result = regexp.MustCompile(`<br\s*/?>`).ReplaceAllString(result, "\n")
+	result = regexp.MustCompile(`<p[^>]*>(.+?)</p>`).ReplaceAllString(result, "$1\n\n")
+	result = regexp.MustCompile(`<[^>]+>`).ReplaceAllString(result, "")
+
+	return result
+}
+
+// ============================================================================
+// Network Extended Functions
+// ============================================================================
+
+// HTTP Download
+func (i *Interpreter) builtinHTTPDownload(args []Value) Value {
+	if len(args) < 2 {
+		return map[string]Value{"success": false, "error": "need url and filepath"}
+	}
+
+	url, ok := args[0].(string)
+	if !ok {
+		return map[string]Value{"success": false, "error": "url must be string"}
+	}
+
+	filepath, ok := args[1].(string)
+	if !ok {
+		return map[string]Value{"success": false, "error": "filepath must be string"}
+	}
+
+	// Create HTTP client with timeout
+	client := &http.Client{Timeout: 30 * time.Second}
+	resp, err := client.Get(url)
+	if err != nil {
+		return map[string]Value{"success": false, "error": err.Error()}
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return map[string]Value{"success": false, "error": fmt.Sprintf("HTTP %d", resp.StatusCode)}
+	}
+
+	// Create file
+	out, err := os.Create(filepath)
+	if err != nil {
+		return map[string]Value{"success": false, "error": err.Error()}
+	}
+	defer out.Close()
+
+	// Write body to file
+	_, err = io.Copy(out, resp.Body)
+	if err != nil {
+		return map[string]Value{"success": false, "error": err.Error()}
+	}
+
+	return map[string]Value{
+		"success":  true,
+		"url":      url,
+		"filepath": filepath,
+		"size":     resp.ContentLength,
+	}
+}
+
+// HTTP Upload
+func (i *Interpreter) builtinHTTPUpload(args []Value) Value {
+	if len(args) < 2 {
+		return map[string]Value{"success": false, "error": "need url and filepath"}
+	}
+
+	url, ok := args[0].(string)
+	if !ok {
+		return map[string]Value{"success": false, "error": "url must be string"}
+	}
+
+	filepath, ok := args[1].(string)
+	if !ok {
+		return map[string]Value{"success": false, "error": "filepath must be string"}
+	}
+
+	// Read file
+	file, err := os.Open(filepath)
+	if err != nil {
+		return map[string]Value{"success": false, "error": err.Error()}
+	}
+	defer file.Close()
+
+	// Create request
+	req, err := http.NewRequest("POST", url, file)
+	if err != nil {
+		return map[string]Value{"success": false, "error": err.Error()}
+	}
+
+	// Set content type
+	req.Header.Set("Content-Type", "application/octet-stream")
+
+	client := &http.Client{Timeout: 60 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return map[string]Value{"success": false, "error": err.Error()}
+	}
+	defer resp.Body.Close()
+
+	body, _ := io.ReadAll(resp.Body)
+
+	return map[string]Value{
+		"success":      true,
+		"status":       resp.StatusCode,
+		"responseBody": string(body),
+	}
+}
+
+// HTTP Head
+func (i *Interpreter) builtinHTTPHead(args []Value) Value {
+	if len(args) == 0 {
+		return map[string]Value{"error": "need url"}
+	}
+
+	url, ok := args[0].(string)
+	if !ok {
+		return map[string]Value{"error": "url must be string"}
+	}
+
+	client := &http.Client{Timeout: 10 * time.Second}
+	resp, err := client.Head(url)
+	if err != nil {
+		return map[string]Value{"error": err.Error()}
+	}
+	defer resp.Body.Close()
+
+	headers := make(map[string]Value)
+	for k, v := range resp.Header {
+		if len(v) == 1 {
+			headers[k] = v[0]
+		} else {
+			arr := make([]Value, len(v))
+			for idx, s := range v {
+				arr[idx] = s
+			}
+			headers[k] = arr
+		}
+	}
+
+	return map[string]Value{
+		"status":      resp.StatusCode,
+		"headers":     headers,
+		"contentSize": resp.ContentLength,
+	}
+}
+
+// HTTP Patch
+func (i *Interpreter) builtinHTTPPatch(args []Value) Value {
+	if len(args) < 2 {
+		return map[string]Value{"error": "need url and body"}
+	}
+
+	url, ok := args[0].(string)
+	if !ok {
+		return map[string]Value{"error": "url must be string"}
+	}
+
+	bodyData := args[1]
+	var bodyReader io.Reader
+
+	switch v := bodyData.(type) {
+	case string:
+		bodyReader = strings.NewReader(v)
+	case map[string]Value:
+		jsonData, _ := json.Marshal(v)
+		bodyReader = bytes.NewReader(jsonData)
+	default:
+		bodyReader = strings.NewReader(fmt.Sprintf("%v", v))
+	}
+
+	req, err := http.NewRequest("PATCH", url, bodyReader)
+	if err != nil {
+		return map[string]Value{"error": err.Error()}
+	}
+
+	req.Header.Set("Content-Type", "application/json")
+
+	client := &http.Client{Timeout: 30 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return map[string]Value{"error": err.Error()}
+	}
+	defer resp.Body.Close()
+
+	body, _ := io.ReadAll(resp.Body)
+
+	return map[string]Value{
+		"status":       resp.StatusCode,
+		"responseBody": string(body),
+	}
+}
+
+// HTTP Options
+func (i *Interpreter) builtinHTTPOptions(args []Value) Value {
+	if len(args) == 0 {
+		return map[string]Value{"error": "need url"}
+	}
+
+	url, ok := args[0].(string)
+	if !ok {
+		return map[string]Value{"error": "url must be string"}
+	}
+
+	req, err := http.NewRequest("OPTIONS", url, nil)
+	if err != nil {
+		return map[string]Value{"error": err.Error()}
+	}
+
+	client := &http.Client{Timeout: 10 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return map[string]Value{"error": err.Error()}
+	}
+	defer resp.Body.Close()
+
+	allow := resp.Header.Get("Allow")
+	methods := strings.Split(allow, ",")
+	result := make([]Value, len(methods))
+	for idx, m := range methods {
+		result[idx] = strings.TrimSpace(m)
+	}
+
+	return map[string]Value{
+		"status":  resp.StatusCode,
+		"methods": result,
+		"allow":   allow,
+	}
+}
+
+// Ping - TCP connectivity test
+func (i *Interpreter) builtinPing(args []Value) Value {
+	if len(args) == 0 {
+		return map[string]Value{"success": false, "error": "need host"}
+	}
+
+	host, ok := args[0].(string)
+	if !ok {
+		return map[string]Value{"success": false, "error": "host must be string"}
+	}
+
+	port := 80
+	if len(args) > 1 {
+		port = int(i.toInt(args[1]))
+	}
+
+	timeout := 5 * time.Second
+	if len(args) > 2 {
+		timeout = time.Duration(i.toInt(args[2])) * time.Second
+	}
+
+	start := time.Now()
+	conn, err := net.DialTimeout("tcp", fmt.Sprintf("%s:%d", host, port), timeout)
+	elapsed := time.Since(start)
+
+	if err != nil {
+		return map[string]Value{
+			"success": false,
+			"error":   err.Error(),
+			"host":    host,
+			"port":    port,
+		}
+	}
+	conn.Close()
+
+	return map[string]Value{
+		"success":  true,
+		"host":     host,
+		"port":     port,
+		"latency":  elapsed.Milliseconds(),
+		"latencyMs": elapsed.Milliseconds(),
+	}
+}
+
+// Port Check
+func (i *Interpreter) builtinPortCheck(args []Value) Value {
+	if len(args) < 2 {
+		return map[string]Value{"error": "need host and port"}
+	}
+
+	host, ok := args[0].(string)
+	if !ok {
+		return map[string]Value{"error": "host must be string"}
+	}
+
+	port := int(i.toInt(args[1]))
+	timeout := 3 * time.Second
+	if len(args) > 2 {
+		timeout = time.Duration(i.toInt(args[2])) * time.Second
+	}
+
+	address := fmt.Sprintf("%s:%d", host, port)
+	conn, err := net.DialTimeout("tcp", address, timeout)
+	if err != nil {
+		return map[string]Value{
+			"open":  false,
+			"host":  host,
+			"port":  port,
+			"error": err.Error(),
+		}
+	}
+	conn.Close()
+
+	return map[string]Value{
+		"open": true,
+		"host": host,
+		"port": port,
+	}
+}
+
+// Port Scan
+func (i *Interpreter) builtinPortScan(args []Value) Value {
+	if len(args) == 0 {
+		return []Value{}
+	}
+
+	host, ok := args[0].(string)
+	if !ok {
+		return []Value{}
+	}
+
+	startPort := 1
+	endPort := 1024
+	if len(args) > 1 {
+		startPort = int(i.toInt(args[1]))
+	}
+	if len(args) > 2 {
+		endPort = int(i.toInt(args[2]))
+	}
+
+	var openPorts []Value
+	timeout := 500 * time.Millisecond
+
+	for port := startPort; port <= endPort && port <= 65535; port++ {
+		address := fmt.Sprintf("%s:%d", host, port)
+		conn, err := net.DialTimeout("tcp", address, timeout)
+		if err == nil {
+			conn.Close()
+			openPorts = append(openPorts, int64(port))
+		}
+	}
+
+	return openPorts
+}
+
+// ============================================================================
+// Concurrency Functions
+// ============================================================================
+
+// Retry
+func (i *Interpreter) builtinRetry(args []Value) Value {
+	if len(args) < 3 {
+		return map[string]Value{"error": "need function, maxAttempts, delay"}
+	}
+
+	// Get function name
+	funcName, ok := args[0].(string)
+	if !ok {
+		return map[string]Value{"error": "first arg must be function name"}
+	}
+
+	maxAttempts := 3
+	if len(args) > 1 {
+		maxAttempts = int(i.toInt(args[1]))
+	}
+
+	delay := 1000 // ms
+	if len(args) > 2 {
+		delay = int(i.toInt(args[2]))
+	}
+
+	// Get user function
+	userFunc, ok := i.ctx.Functions[funcName]
+	if !ok {
+		return map[string]Value{"error": "function not found"}
+	}
+
+	var lastErr error
+	for attempt := 1; attempt <= maxAttempts; attempt++ {
+		// Call the function
+		result, err := i.callUserFunc(userFunc, []Value{})
+		if err == nil {
+			return map[string]Value{
+				"success":  true,
+				"result":   result,
+				"attempts": attempt,
+			}
+		}
+		lastErr = err
+
+		if attempt < maxAttempts {
+			time.Sleep(time.Duration(delay) * time.Millisecond)
+		}
+	}
+
+	return map[string]Value{
+		"success": false,
+		"error":   lastErr.Error(),
+		"attempts": maxAttempts,
+	}
+}
+
+// Parallel - execute multiple operations (simplified)
+func (i *Interpreter) builtinParallel(args []Value) Value {
+	if len(args) == 0 {
+		return []Value{}
+	}
+
+	// For simplicity, just execute sequentially with goroutine-like behavior
+	// Real parallel execution would need more complex handling
+	results := make([]Value, len(args))
+
+	for idx, arg := range args {
+		if funcName, ok := arg.(string); ok {
+			if userFunc, exists := i.ctx.Functions[funcName]; exists {
+				result, _ := i.callUserFunc(userFunc, []Value{})
+				results[idx] = result
+			}
+		}
+	}
+
+	return results
+}
+
+// Timeout
+func (i *Interpreter) builtinTimeout(args []Value) Value {
+	if len(args) < 2 {
+		return map[string]Value{"error": "need function and timeout"}
+	}
+
+	funcName, ok := args[0].(string)
+	if !ok {
+		return map[string]Value{"error": "first arg must be function name"}
+	}
+
+	timeoutMs := i.toInt(args[1])
+
+	userFunc, ok := i.ctx.Functions[funcName]
+	if !ok {
+		return map[string]Value{"error": "function not found"}
+	}
+
+	done := make(chan Value, 1)
+	go func() {
+		result, _ := i.callUserFunc(userFunc, []Value{})
+		done <- result
+	}()
+
+	select {
+	case result := <-done:
+		return result
+	case <-time.After(time.Duration(timeoutMs) * time.Millisecond):
+		return map[string]Value{"error": "timeout", "timedOut": true}
+	}
+}
+
+// ============================================================================
+// Random Generation Functions
+// ============================================================================
+
+// Random Password
+func (i *Interpreter) builtinRandomPassword(args []Value) Value {
+	length := 16
+	if len(args) > 0 {
+		length = int(i.toInt(args[0]))
+	}
+
+	// Character sets
+	lower := "abcdefghijklmnopqrstuvwxyz"
+	upper := "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+	digits := "0123456789"
+	special := "!@#$%^&*()_+-=[]{}|;:,.<>?"
+
+	// Default: use all character sets
+	chars := lower + upper + digits + special
+	if len(args) > 1 {
+		if flags, ok := args[1].(string); ok {
+			chars = ""
+			if strings.Contains(flags, "l") {
+				chars += lower
+			}
+			if strings.Contains(flags, "u") {
+				chars += upper
+			}
+			if strings.Contains(flags, "d") {
+				chars += digits
+			}
+			if strings.Contains(flags, "s") {
+				chars += special
+			}
+			if chars == "" {
+				chars = lower + upper + digits
+			}
+		}
+	}
+
+	result := make([]byte, length)
+	rand.Read(result)
+	for idx := range result {
+		result[idx] = chars[int(result[idx])%len(chars)]
+	}
+
+	return string(result)
+}
+
+// Random Color
+func (i *Interpreter) builtinRandomColor(args []Value) Value {
+	format := "hex"
+	if len(args) > 0 {
+		if f, ok := args[0].(string); ok {
+			format = f
+		}
+	}
+
+	r := make([]byte, 3)
+	rand.Read(r)
+
+	switch format {
+	case "rgb":
+		return fmt.Sprintf("rgb(%d, %d, %d)", r[0], r[1], r[2])
+	case "rgba":
+		alpha := float64(r[0]) / 255.0
+		return fmt.Sprintf("rgba(%d, %d, %d, %.2f)", r[0], r[1], r[2], alpha)
+	case "hsl":
+		h := int(r[0]) * 360 / 256
+		s := 50 + int(r[1])%50
+		l := 40 + int(r[2])%30
+		return fmt.Sprintf("hsl(%d, %d%%, %d%%)", h, s, l)
+	default: // hex
+		return fmt.Sprintf("#%02X%02X%02X", r[0], r[1], r[2])
+	}
+}
+
+// Random Name
+func (i *Interpreter) builtinRandomName(args []Value) Value {
+	firstNames := []string{"James", "John", "Robert", "Michael", "William", "David", "Richard", "Joseph", "Thomas", "Charles",
+		"Mary", "Patricia", "Jennifer", "Linda", "Elizabeth", "Barbara", "Susan", "Jessica", "Sarah", "Karen"}
+
+	lastNames := []string{"Smith", "Johnson", "Williams", "Brown", "Jones", "Garcia", "Miller", "Davis", "Rodriguez", "Martinez",
+		"Hernandez", "Lopez", "Gonzalez", "Wilson", "Anderson", "Thomas", "Taylor", "Moore", "Jackson", "Martin"}
+
+	style := "full"
+	if len(args) > 0 {
+		if s, ok := args[0].(string); ok {
+			style = s
+		}
+	}
+
+	r := make([]byte, 4)
+	rand.Read(r)
+
+	first := firstNames[int(r[0])%len(firstNames)]
+	last := lastNames[int(r[1])%len(lastNames)]
+
+	switch style {
+	case "first":
+		return first
+	case "last":
+		return last
+	case "username":
+		return strings.ToLower(first + strings.ReplaceAll(last, " ", ""))
+	case "initials":
+		return string(first[0]) + string(last[0])
+	default: // full
+		return first + " " + last
+	}
+}
+
+// Random Token
+func (i *Interpreter) builtinRandomToken(args []Value) Value {
+	length := 32
+	if len(args) > 0 {
+		length = int(i.toInt(args[0]))
+	}
+
+	const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789"
+	result := make([]byte, length)
+	r := make([]byte, length)
+	rand.Read(r)
+
+	for idx := range result {
+		result[idx] = chars[int(r[idx])%len(chars)]
+	}
+
+	return string(result)
+}
+
+// ============================================================================
+// QR Code Functions
+// ============================================================================
+
+// QR Encode - returns QR code as string representation
+func (i *Interpreter) builtinQREncode(args []Value) Value {
+	if len(args) == 0 {
+		return ""
+	}
+
+	content, ok := args[0].(string)
+	if !ok {
+		return ""
+	}
+
+	// Create QR code
+	qr, err := qrcode.New(content, qrcode.Medium)
+	if err != nil {
+		return map[string]Value{"error": err.Error()}
+	}
+
+	// Return as string (ASCII art)
+	return qr.ToString(false)
+}
+
+// QR Data URL - returns QR code as data URL
+func (i *Interpreter) builtinQRDataURL(args []Value) Value {
+	if len(args) == 0 {
+		return ""
+	}
+
+	content, ok := args[0].(string)
+	if !ok {
+		return ""
+	}
+
+	size := 256
+	if len(args) > 1 {
+		size = int(i.toInt(args[1]))
+	}
+
+	// Create QR code
+	qr, err := qrcode.New(content, qrcode.Medium)
+	if err != nil {
+		return ""
+	}
+
+	// Generate PNG
+	var buf bytes.Buffer
+	if err := qr.Write(size, &buf); err != nil {
+		return ""
+	}
+
+	// Convert to base64 data URL
+	return "data:image/png;base64," + base64.StdEncoding.EncodeToString(buf.Bytes())
+}
+
+// ============================================================================
+// Cache Functions
+// ============================================================================
+
+// Simple in-memory cache
+var globalCache = make(map[string]cachedItem)
+
+type cachedItem struct {
+	value      Value
+	expiration time.Time
+}
+
+// Cache Set
+func (i *Interpreter) builtinCacheSet(args []Value) Value {
+	if len(args) < 2 {
+		return false
+	}
+
+	key, ok := args[0].(string)
+	if !ok {
+		return false
+	}
+
+	value := args[1]
+	expiration := time.Time{}
+
+	if len(args) > 2 {
+		ttl := i.toInt(args[2])
+		expiration = time.Now().Add(time.Duration(ttl) * time.Second)
+	}
+
+	globalCache[key] = cachedItem{
+		value:      value,
+		expiration: expiration,
+	}
+
+	return true
+}
+
+// Cache Get
+func (i *Interpreter) builtinCacheGet(args []Value) Value {
+	if len(args) == 0 {
+		return nil
+	}
+
+	key, ok := args[0].(string)
+	if !ok {
+		return nil
+	}
+
+	item, exists := globalCache[key]
+	if !exists {
+		return nil
+	}
+
+	// Check expiration
+	if !item.expiration.IsZero() && time.Now().After(item.expiration) {
+		delete(globalCache, key)
+		return nil
+	}
+
+	return item.value
+}
+
+// Cache Delete
+func (i *Interpreter) builtinCacheDel(args []Value) Value {
+	if len(args) == 0 {
+		return false
+	}
+
+	key, ok := args[0].(string)
+	if !ok {
+		return false
+	}
+
+	delete(globalCache, key)
+	return true
+}
+
+// Cache Has
+func (i *Interpreter) builtinCacheHas(args []Value) Value {
+	if len(args) == 0 {
+		return false
+	}
+
+	key, ok := args[0].(string)
+	if !ok {
+		return false
+	}
+
+	item, exists := globalCache[key]
+	if !exists {
+		return false
+	}
+
+	// Check expiration
+	if !item.expiration.IsZero() && time.Now().After(item.expiration) {
+		delete(globalCache, key)
+		return false
+	}
+
+	return true
+}
+
+// Cache Clear
+func (i *Interpreter) builtinCacheClear(args []Value) Value {
+	globalCache = make(map[string]cachedItem)
+	return true
+}
+
+// Cache Keys
+func (i *Interpreter) builtinCacheKeys(args []Value) Value {
+	now := time.Now()
+	result := []Value{}
+
+	for k, item := range globalCache {
+		// Skip expired items
+		if !item.expiration.IsZero() && now.After(item.expiration) {
+			continue
+		}
+		result = append(result, k)
+	}
+
+	return result
+}
+
+// ============================================================================
+// Helper Functions
+// ============================================================================
+
+func (i *Interpreter) convertToValue(v interface{}) Value {
+	switch val := v.(type) {
+	case nil:
+		return nil
+	case bool:
+		return val
+	case int:
+		return int64(val)
+	case int64:
+		return val
+	case float64:
+		return val
+	case string:
+		return val
+	case []interface{}:
+		result := make([]Value, len(val))
+		for idx, item := range val {
+			result[idx] = i.convertToValue(item)
+		}
+		return result
+	case map[string]interface{}:
+		result := make(map[string]Value)
+		for k, v := range val {
+			result[k] = i.convertToValue(v)
+		}
+		return result
+	default:
+		return fmt.Sprintf("%v", val)
+	}
+}
+
+func (i *Interpreter) valueToGo(v Value) interface{} {
+	switch val := v.(type) {
+	case nil:
+		return nil
+	case bool:
+		return val
+	case int64:
+		return val
+	case float64:
+		return val
+	case string:
+		return val
+	case []Value:
+		result := make([]interface{}, len(val))
+		for idx, item := range val {
+			result[idx] = i.valueToGo(item)
+		}
+		return result
+	case map[string]Value:
+		result := make(map[string]interface{})
+		for k, v := range val {
+			result[k] = i.valueToGo(v)
+		}
+		return result
+	default:
+		return fmt.Sprintf("%v", val)
+	}
 }
 
 // SetupBuiltins sets up built-in objects.
