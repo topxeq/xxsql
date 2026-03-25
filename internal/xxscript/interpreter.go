@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"compress/gzip"
 	"compress/zlib"
+	"context"
 	"crypto/aes"
 	"crypto/cipher"
 	"crypto/hmac"
@@ -52,7 +53,11 @@ import (
 	"golang.org/x/net/idna"
 
 	"github.com/BurntSushi/toml"
+	"github.com/gorilla/websocket"
+	"github.com/jung-kurt/gofpdf"
+	"github.com/redis/go-redis/v9"
 	"github.com/skip2/go-qrcode"
+	"github.com/xuri/excelize/v2"
 	"gopkg.in/yaml.v3"
 
 	"github.com/topxeq/xxsql/internal/storage"
@@ -20112,196 +20117,1396 @@ func (i *Interpreter) builtinMLWordFreq(args []Value) Value {
 	}
 }
 
-// WebSocket functions (require gorilla/websocket - stub implementation)
+// WebSocket functions using gorilla/websocket
+var wsConnections = make(map[string]*websocket.Conn)
+var wsConnectionsMutex sync.RWMutex
+
 func (i *Interpreter) builtinWSConnect(args []Value) Value {
 	if len(args) == 0 {
 		return map[string]Value{"error": "need URL"}
 	}
-	url, ok := args[0].(string)
+
+	wsURL, ok := args[0].(string)
 	if !ok {
 		return map[string]Value{"error": "URL must be string"}
 	}
+
+	// Generate connection ID
+	connID := fmt.Sprintf("ws_%d", time.Now().UnixNano())
+
+	// Connect to WebSocket
+	dialer := websocket.DefaultDialer
+	conn, _, err := dialer.Dial(wsURL, nil)
+	if err != nil {
+		return map[string]Value{
+			"error": err.Error(),
+			"url":   wsURL,
+		}
+	}
+
+	wsConnectionsMutex.Lock()
+	wsConnections[connID] = conn
+	wsConnectionsMutex.Unlock()
+
 	return map[string]Value{
-		"error":   "WebSocket support requires github.com/gorilla/websocket",
-		"hint":    "Add dependency and rebuild",
-		"url":     url,
+		"connected": true,
+		"id":        connID,
+		"url":       wsURL,
 	}
 }
 
 func (i *Interpreter) builtinWSSend(args []Value) Value {
-	return map[string]Value{"error": "WebSocket not available - requires gorilla/websocket dependency"}
+	if len(args) < 2 {
+		return map[string]Value{"error": "need connection ID and message"}
+	}
+
+	connID, ok := args[0].(string)
+	if !ok {
+		return map[string]Value{"error": "connection ID must be string"}
+	}
+
+	message, ok := args[1].(string)
+	if !ok {
+		return map[string]Value{"error": "message must be string"}
+	}
+
+	wsConnectionsMutex.RLock()
+	conn, exists := wsConnections[connID]
+	wsConnectionsMutex.RUnlock()
+
+	if !exists {
+		return map[string]Value{"error": "connection not found", "id": connID}
+	}
+
+	err := conn.WriteMessage(websocket.TextMessage, []byte(message))
+	if err != nil {
+		return map[string]Value{"error": err.Error(), "id": connID}
+	}
+
+	return map[string]Value{
+		"sent": true,
+		"id":   connID,
+	}
 }
 
 func (i *Interpreter) builtinWSReceive(args []Value) Value {
-	return map[string]Value{"error": "WebSocket not available - requires gorilla/websocket dependency"}
+	if len(args) == 0 {
+		return map[string]Value{"error": "need connection ID"}
+	}
+
+	connID, ok := args[0].(string)
+	if !ok {
+		return map[string]Value{"error": "connection ID must be string"}
+	}
+
+	timeout := 30 * time.Second
+	if len(args) > 1 {
+		if t, ok := args[1].(int); ok {
+			timeout = time.Duration(t) * time.Second
+		} else if t, ok := args[1].(float64); ok {
+			timeout = time.Duration(t) * time.Second
+		}
+	}
+
+	wsConnectionsMutex.RLock()
+	conn, exists := wsConnections[connID]
+	wsConnectionsMutex.RUnlock()
+
+	if !exists {
+		return map[string]Value{"error": "connection not found", "id": connID}
+	}
+
+	// Set read deadline
+	conn.SetReadDeadline(time.Now().Add(timeout))
+
+	_, message, err := conn.ReadMessage()
+	if err != nil {
+		return map[string]Value{"error": err.Error(), "id": connID}
+	}
+
+	return map[string]Value{
+		"received": true,
+		"message":  string(message),
+		"id":       connID,
+	}
 }
 
 func (i *Interpreter) builtinWSClose(args []Value) Value {
-	return map[string]Value{"error": "WebSocket not available - requires gorilla/websocket dependency"}
+	if len(args) == 0 {
+		return map[string]Value{"error": "need connection ID"}
+	}
+
+	connID, ok := args[0].(string)
+	if !ok {
+		return map[string]Value{"error": "connection ID must be string"}
+	}
+
+	wsConnectionsMutex.Lock()
+	defer wsConnectionsMutex.Unlock()
+
+	conn, exists := wsConnections[connID]
+	if !exists {
+		return map[string]Value{"error": "connection not found", "id": connID}
+	}
+
+	conn.Close()
+	delete(wsConnections, connID)
+
+	return map[string]Value{
+		"closed": true,
+		"id":     connID,
+	}
 }
 
 func (i *Interpreter) builtinWSIsConnected(args []Value) Value {
-	return map[string]Value{"error": "WebSocket not available - requires gorilla/websocket dependency", "connected": false}
+	if len(args) == 0 {
+		return map[string]Value{"error": "need connection ID"}
+	}
+
+	connID, ok := args[0].(string)
+	if !ok {
+		return map[string]Value{"error": "connection ID must be string"}
+	}
+
+	wsConnectionsMutex.RLock()
+	_, exists := wsConnections[connID]
+	wsConnectionsMutex.RUnlock()
+
+	return map[string]Value{
+		"connected": exists,
+		"id":        connID,
+	}
 }
 
-// Redis functions (require go-redis - stub implementation)
+// Redis functions using go-redis
+var redisClients = make(map[string]*redis.Client)
+var redisClientsMutex sync.RWMutex
+
 func (i *Interpreter) builtinRedisConnect(args []Value) Value {
 	if len(args) == 0 {
-		return map[string]Value{"error": "need connection string"}
+		return map[string]Value{"error": "need connection string or address"}
 	}
+
 	addr, ok := args[0].(string)
 	if !ok {
 		return map[string]Value{"error": "address must be string"}
 	}
+
+	// Generate client ID
+	clientID := fmt.Sprintf("redis_%d", time.Now().UnixNano())
+
+	// Parse connection string or use as address
+	opts := &redis.Options{
+		Addr: addr,
+	}
+
+	// Handle redis:// URL format
+	if strings.HasPrefix(addr, "redis://") || strings.HasPrefix(addr, "rediss://") {
+		parsedOpts, err := redis.ParseURL(addr)
+		if err != nil {
+			return map[string]Value{"error": err.Error()}
+		}
+		opts = parsedOpts
+	}
+
+	// Handle password from second argument
+	if len(args) > 1 {
+		if pwd, ok := args[1].(string); ok {
+			opts.Password = pwd
+		}
+	}
+
+	// Handle database from third argument
+	if len(args) > 2 {
+		if db, ok := args[2].(int); ok {
+			opts.DB = db
+		}
+	}
+
+	client := redis.NewClient(opts)
+
+	// Test connection
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	if err := client.Ping(ctx).Err(); err != nil {
+		return map[string]Value{"error": err.Error(), "addr": addr}
+	}
+
+	redisClientsMutex.Lock()
+	redisClients[clientID] = client
+	redisClientsMutex.Unlock()
+
 	return map[string]Value{
-		"error": "Redis support requires github.com/redis/go-redis/v9",
-		"hint":  "Add dependency and rebuild",
-		"addr":  addr,
+		"connected": true,
+		"id":        clientID,
+		"addr":      addr,
 	}
 }
 
+func getRedisClient(clientID string) (*redis.Client, bool) {
+	redisClientsMutex.RLock()
+	defer redisClientsMutex.RUnlock()
+	client, exists := redisClients[clientID]
+	return client, exists
+}
+
 func (i *Interpreter) builtinRedisGet(args []Value) Value {
-	return map[string]Value{"error": "Redis not available - requires go-redis dependency"}
+	if len(args) < 2 {
+		return map[string]Value{"error": "need client ID and key"}
+	}
+
+	clientID, _ := args[0].(string)
+	key, _ := args[1].(string)
+
+	client, exists := getRedisClient(clientID)
+	if !exists {
+		return map[string]Value{"error": "Redis client not found"}
+	}
+
+	ctx := context.Background()
+	val, err := client.Get(ctx, key).Result()
+	if err == redis.Nil {
+		return map[string]Value{"found": false, "key": key}
+	}
+	if err != nil {
+		return map[string]Value{"error": err.Error(), "key": key}
+	}
+
+	return map[string]Value{
+		"found": true,
+		"key":   key,
+		"value": val,
+	}
 }
 
 func (i *Interpreter) builtinRedisSet(args []Value) Value {
-	return map[string]Value{"error": "Redis not available - requires go-redis dependency"}
+	if len(args) < 3 {
+		return map[string]Value{"error": "need client ID, key, and value"}
+	}
+
+	clientID, _ := args[0].(string)
+	key, _ := args[1].(string)
+	value := fmt.Sprintf("%v", args[2])
+
+	client, exists := getRedisClient(clientID)
+	if !exists {
+		return map[string]Value{"error": "Redis client not found"}
+	}
+
+	ctx := context.Background()
+
+	// Handle optional expiration
+	var expiration time.Duration
+	if len(args) > 3 {
+		if exp, ok := args[3].(int); ok {
+			expiration = time.Duration(exp) * time.Second
+		} else if exp, ok := args[3].(float64); ok {
+			expiration = time.Duration(exp) * time.Second
+		}
+	}
+
+	err := client.Set(ctx, key, value, expiration).Err()
+	if err != nil {
+		return map[string]Value{"error": err.Error(), "key": key}
+	}
+
+	return map[string]Value{
+		"set":   true,
+		"key":   key,
+		"value": value,
+	}
 }
 
 func (i *Interpreter) builtinRedisDel(args []Value) Value {
-	return map[string]Value{"error": "Redis not available - requires go-redis dependency"}
+	if len(args) < 2 {
+		return map[string]Value{"error": "need client ID and key(s)"}
+	}
+
+	clientID, _ := args[0].(string)
+
+	client, exists := getRedisClient(clientID)
+	if !exists {
+		return map[string]Value{"error": "Redis client not found"}
+	}
+
+	ctx := context.Background()
+	var keys []string
+	for _, arg := range args[1:] {
+		if k, ok := arg.(string); ok {
+			keys = append(keys, k)
+		}
+	}
+
+	deleted, err := client.Del(ctx, keys...).Result()
+	if err != nil {
+		return map[string]Value{"error": err.Error()}
+	}
+
+	return map[string]Value{
+		"deleted": true,
+		"count":   deleted,
+	}
 }
 
 func (i *Interpreter) builtinRedisExists(args []Value) Value {
-	return map[string]Value{"error": "Redis not available - requires go-redis dependency"}
+	if len(args) < 2 {
+		return map[string]Value{"error": "need client ID and key(s)"}
+	}
+
+	clientID, _ := args[0].(string)
+
+	client, exists := getRedisClient(clientID)
+	if !exists {
+		return map[string]Value{"error": "Redis client not found"}
+	}
+
+	ctx := context.Background()
+	var keys []string
+	for _, arg := range args[1:] {
+		if k, ok := arg.(string); ok {
+			keys = append(keys, k)
+		}
+	}
+
+	count, err := client.Exists(ctx, keys...).Result()
+	if err != nil {
+		return map[string]Value{"error": err.Error()}
+	}
+
+	return map[string]Value{
+		"exists": count > 0,
+		"count":  count,
+	}
 }
 
 func (i *Interpreter) builtinRedisExpire(args []Value) Value {
-	return map[string]Value{"error": "Redis not available - requires go-redis dependency"}
+	if len(args) < 3 {
+		return map[string]Value{"error": "need client ID, key, and seconds"}
+	}
+
+	clientID, _ := args[0].(string)
+	key, _ := args[1].(string)
+	seconds := toFloat(args[2])
+
+	client, exists := getRedisClient(clientID)
+	if !exists {
+		return map[string]Value{"error": "Redis client not found"}
+	}
+
+	ctx := context.Background()
+	ok, err := client.Expire(ctx, key, time.Duration(seconds)*time.Second).Result()
+	if err != nil {
+		return map[string]Value{"error": err.Error()}
+	}
+
+	return map[string]Value{
+		"set":  ok,
+		"key":  key,
+		"ttl":  seconds,
+	}
 }
 
 func (i *Interpreter) builtinRedisIncr(args []Value) Value {
-	return map[string]Value{"error": "Redis not available - requires go-redis dependency"}
+	if len(args) < 2 {
+		return map[string]Value{"error": "need client ID and key"}
+	}
+
+	clientID, _ := args[0].(string)
+	key, _ := args[1].(string)
+
+	client, exists := getRedisClient(clientID)
+	if !exists {
+		return map[string]Value{"error": "Redis client not found"}
+	}
+
+	ctx := context.Background()
+	val, err := client.Incr(ctx, key).Result()
+	if err != nil {
+		return map[string]Value{"error": err.Error()}
+	}
+
+	return map[string]Value{
+		"key":   key,
+		"value": val,
+	}
 }
 
 func (i *Interpreter) builtinRedisDecr(args []Value) Value {
-	return map[string]Value{"error": "Redis not available - requires go-redis dependency"}
+	if len(args) < 2 {
+		return map[string]Value{"error": "need client ID and key"}
+	}
+
+	clientID, _ := args[0].(string)
+	key, _ := args[1].(string)
+
+	client, exists := getRedisClient(clientID)
+	if !exists {
+		return map[string]Value{"error": "Redis client not found"}
+	}
+
+	ctx := context.Background()
+	val, err := client.Decr(ctx, key).Result()
+	if err != nil {
+		return map[string]Value{"error": err.Error()}
+	}
+
+	return map[string]Value{
+		"key":   key,
+		"value": val,
+	}
 }
 
 func (i *Interpreter) builtinRedisLPush(args []Value) Value {
-	return map[string]Value{"error": "Redis not available - requires go-redis dependency"}
+	if len(args) < 3 {
+		return map[string]Value{"error": "need client ID, key, and value(s)"}
+	}
+
+	clientID, _ := args[0].(string)
+	key, _ := args[1].(string)
+
+	client, exists := getRedisClient(clientID)
+	if !exists {
+		return map[string]Value{"error": "Redis client not found"}
+	}
+
+	ctx := context.Background()
+	var values []interface{}
+	for _, arg := range args[2:] {
+		values = append(values, fmt.Sprintf("%v", arg))
+	}
+
+	val, err := client.LPush(ctx, key, values...).Result()
+	if err != nil {
+		return map[string]Value{"error": err.Error()}
+	}
+
+	return map[string]Value{
+		"key":   key,
+		"count": val,
+	}
 }
 
 func (i *Interpreter) builtinRedisRPush(args []Value) Value {
-	return map[string]Value{"error": "Redis not available - requires go-redis dependency"}
+	if len(args) < 3 {
+		return map[string]Value{"error": "need client ID, key, and value(s)"}
+	}
+
+	clientID, _ := args[0].(string)
+	key, _ := args[1].(string)
+
+	client, exists := getRedisClient(clientID)
+	if !exists {
+		return map[string]Value{"error": "Redis client not found"}
+	}
+
+	ctx := context.Background()
+	var values []interface{}
+	for _, arg := range args[2:] {
+		values = append(values, fmt.Sprintf("%v", arg))
+	}
+
+	val, err := client.RPush(ctx, key, values...).Result()
+	if err != nil {
+		return map[string]Value{"error": err.Error()}
+	}
+
+	return map[string]Value{
+		"key":   key,
+		"count": val,
+	}
 }
 
 func (i *Interpreter) builtinRedisLPop(args []Value) Value {
-	return map[string]Value{"error": "Redis not available - requires go-redis dependency"}
+	if len(args) < 2 {
+		return map[string]Value{"error": "need client ID and key"}
+	}
+
+	clientID, _ := args[0].(string)
+	key, _ := args[1].(string)
+
+	client, exists := getRedisClient(clientID)
+	if !exists {
+		return map[string]Value{"error": "Redis client not found"}
+	}
+
+	ctx := context.Background()
+	val, err := client.LPop(ctx, key).Result()
+	if err == redis.Nil {
+		return map[string]Value{"found": false, "key": key}
+	}
+	if err != nil {
+		return map[string]Value{"error": err.Error()}
+	}
+
+	return map[string]Value{
+		"found": true,
+		"key":   key,
+		"value": val,
+	}
 }
 
 func (i *Interpreter) builtinRedisRPop(args []Value) Value {
-	return map[string]Value{"error": "Redis not available - requires go-redis dependency"}
+	if len(args) < 2 {
+		return map[string]Value{"error": "need client ID and key"}
+	}
+
+	clientID, _ := args[0].(string)
+	key, _ := args[1].(string)
+
+	client, exists := getRedisClient(clientID)
+	if !exists {
+		return map[string]Value{"error": "Redis client not found"}
+	}
+
+	ctx := context.Background()
+	val, err := client.RPop(ctx, key).Result()
+	if err == redis.Nil {
+		return map[string]Value{"found": false, "key": key}
+	}
+	if err != nil {
+		return map[string]Value{"error": err.Error()}
+	}
+
+	return map[string]Value{
+		"found": true,
+		"key":   key,
+		"value": val,
+	}
 }
 
 func (i *Interpreter) builtinRedisHSet(args []Value) Value {
-	return map[string]Value{"error": "Redis not available - requires go-redis dependency"}
+	if len(args) < 4 {
+		return map[string]Value{"error": "need client ID, key, field, and value"}
+	}
+
+	clientID, _ := args[0].(string)
+	key, _ := args[1].(string)
+	field, _ := args[2].(string)
+	value := fmt.Sprintf("%v", args[3])
+
+	client, exists := getRedisClient(clientID)
+	if !exists {
+		return map[string]Value{"error": "Redis client not found"}
+	}
+
+	ctx := context.Background()
+	val, err := client.HSet(ctx, key, field, value).Result()
+	if err != nil {
+		return map[string]Value{"error": err.Error()}
+	}
+
+	return map[string]Value{
+		"set":    val > 0,
+		"key":    key,
+		"field":  field,
+		"value":  value,
+	}
 }
 
 func (i *Interpreter) builtinRedisHGet(args []Value) Value {
-	return map[string]Value{"error": "Redis not available - requires go-redis dependency"}
+	if len(args) < 3 {
+		return map[string]Value{"error": "need client ID, key, and field"}
+	}
+
+	clientID, _ := args[0].(string)
+	key, _ := args[1].(string)
+	field, _ := args[2].(string)
+
+	client, exists := getRedisClient(clientID)
+	if !exists {
+		return map[string]Value{"error": "Redis client not found"}
+	}
+
+	ctx := context.Background()
+	val, err := client.HGet(ctx, key, field).Result()
+	if err == redis.Nil {
+		return map[string]Value{"found": false, "key": key, "field": field}
+	}
+	if err != nil {
+		return map[string]Value{"error": err.Error()}
+	}
+
+	return map[string]Value{
+		"found": true,
+		"key":   key,
+		"field": field,
+		"value": val,
+	}
 }
 
 func (i *Interpreter) builtinRedisHDel(args []Value) Value {
-	return map[string]Value{"error": "Redis not available - requires go-redis dependency"}
+	if len(args) < 3 {
+		return map[string]Value{"error": "need client ID, key, and field(s)"}
+	}
+
+	clientID, _ := args[0].(string)
+	key, _ := args[1].(string)
+
+	client, exists := getRedisClient(clientID)
+	if !exists {
+		return map[string]Value{"error": "Redis client not found"}
+	}
+
+	ctx := context.Background()
+	var fields []string
+	for _, arg := range args[2:] {
+		if f, ok := arg.(string); ok {
+			fields = append(fields, f)
+		}
+	}
+
+	deleted, err := client.HDel(ctx, key, fields...).Result()
+	if err != nil {
+		return map[string]Value{"error": err.Error()}
+	}
+
+	return map[string]Value{
+		"deleted": deleted,
+		"key":     key,
+	}
 }
 
 func (i *Interpreter) builtinRedisHGetAll(args []Value) Value {
-	return map[string]Value{"error": "Redis not available - requires go-redis dependency"}
+	if len(args) < 2 {
+		return map[string]Value{"error": "need client ID and key"}
+	}
+
+	clientID, _ := args[0].(string)
+	key, _ := args[1].(string)
+
+	client, exists := getRedisClient(clientID)
+	if !exists {
+		return map[string]Value{"error": "Redis client not found"}
+	}
+
+	ctx := context.Background()
+	vals, err := client.HGetAll(ctx, key).Result()
+	if err != nil {
+		return map[string]Value{"error": err.Error()}
+	}
+
+	result := make(map[string]Value)
+	for k, v := range vals {
+		result[k] = v
+	}
+
+	return map[string]Value{
+		"key":   key,
+		"count": len(result),
+		"map":   result,
+	}
 }
 
 func (i *Interpreter) builtinRedisKeys(args []Value) Value {
-	return map[string]Value{"error": "Redis not available - requires go-redis dependency"}
+	if len(args) < 2 {
+		return map[string]Value{"error": "need client ID and pattern"}
+	}
+
+	clientID, _ := args[0].(string)
+	pattern, _ := args[1].(string)
+
+	client, exists := getRedisClient(clientID)
+	if !exists {
+		return map[string]Value{"error": "Redis client not found"}
+	}
+
+	ctx := context.Background()
+	keys, err := client.Keys(ctx, pattern).Result()
+	if err != nil {
+		return map[string]Value{"error": err.Error()}
+	}
+
+	result := make([]Value, len(keys))
+	for idx, k := range keys {
+		result[idx] = k
+	}
+
+	return map[string]Value{
+		"pattern": pattern,
+		"count":   len(keys),
+		"keys":    result,
+	}
 }
 
 func (i *Interpreter) builtinRedisTTL(args []Value) Value {
-	return map[string]Value{"error": "Redis not available - requires go-redis dependency"}
+	if len(args) < 2 {
+		return map[string]Value{"error": "need client ID and key"}
+	}
+
+	clientID, _ := args[0].(string)
+	key, _ := args[1].(string)
+
+	client, exists := getRedisClient(clientID)
+	if !exists {
+		return map[string]Value{"error": "Redis client not found"}
+	}
+
+	ctx := context.Background()
+	ttl, err := client.TTL(ctx, key).Result()
+	if err != nil {
+		return map[string]Value{"error": err.Error()}
+	}
+
+	return map[string]Value{
+		"key":     key,
+		"ttl":     ttl.Seconds(),
+		"hasTTL":  ttl > 0,
+		"noExpire": ttl == -1,
+	}
 }
 
-// PDF functions (require gofpdf - stub implementation)
+// PDF functions using gofpdf
+var pdfDocs = make(map[string]*gofpdf.Fpdf)
+var pdfDocsMutex sync.RWMutex
+
 func (i *Interpreter) builtinPDFCreate(args []Value) Value {
+	orientation := "P"  // Portrait
+	unit := "mm"
+	size := "A4"
+
+	if len(args) > 0 {
+		if o, ok := args[0].(string); ok {
+			orientation = o
+		}
+	}
+	if len(args) > 1 {
+		if s, ok := args[1].(string); ok {
+			size = s
+		}
+	}
+
+	docID := fmt.Sprintf("pdf_%d", time.Now().UnixNano())
+	pdf := gofpdf.New(orientation, unit, size, "")
+
+	pdfDocsMutex.Lock()
+	pdfDocs[docID] = pdf
+	pdfDocsMutex.Unlock()
+
 	return map[string]Value{
-		"error": "PDF support requires github.com/jung-kurt/gofpdf",
-		"hint":  "Add dependency and rebuild",
+		"created": true,
+		"id":      docID,
 	}
 }
 
 func (i *Interpreter) builtinPDFAddPage(args []Value) Value {
-	return map[string]Value{"error": "PDF not available - requires gofpdf dependency"}
-}
+	if len(args) == 0 {
+		return map[string]Value{"error": "need document ID"}
+	}
 
-func (i *Interpreter) builtinPDFAddText(args []Value) Value {
-	return map[string]Value{"error": "PDF not available - requires gofpdf dependency"}
+	docID, _ := args[0].(string)
+
+	pdfDocsMutex.RLock()
+	pdf, exists := pdfDocs[docID]
+	pdfDocsMutex.RUnlock()
+
+	if !exists {
+		return map[string]Value{"error": "PDF document not found"}
+	}
+
+	pdf.AddPage()
+
+	return map[string]Value{
+		"added": true,
+		"id":    docID,
+	}
 }
 
 func (i *Interpreter) builtinPDFSetFont(args []Value) Value {
-	return map[string]Value{"error": "PDF not available - requires gofpdf dependency"}
+	if len(args) < 3 {
+		return map[string]Value{"error": "need document ID, font family, and size"}
+	}
+
+	docID, _ := args[0].(string)
+	family, _ := args[1].(string)
+	size := toFloat(args[2])
+
+	pdfDocsMutex.RLock()
+	pdf, exists := pdfDocs[docID]
+	pdfDocsMutex.RUnlock()
+
+	if !exists {
+		return map[string]Value{"error": "PDF document not found"}
+	}
+
+	style := ""
+	if len(args) > 3 {
+		if s, ok := args[3].(string); ok {
+			style = s
+		}
+	}
+
+	pdf.SetFont(family, style, size)
+
+	return map[string]Value{
+		"set": true,
+		"id":  docID,
+	}
 }
 
-func (i *Interpreter) builtinPDFSave(args []Value) Value {
-	return map[string]Value{"error": "PDF not available - requires gofpdf dependency"}
+func (i *Interpreter) builtinPDFAddText(args []Value) Value {
+	if len(args) < 4 {
+		return map[string]Value{"error": "need document ID, x, y, and text"}
+	}
+
+	docID, _ := args[0].(string)
+	x := toFloat(args[1])
+	y := toFloat(args[2])
+	text, _ := args[3].(string)
+
+	pdfDocsMutex.RLock()
+	pdf, exists := pdfDocs[docID]
+	pdfDocsMutex.RUnlock()
+
+	if !exists {
+		return map[string]Value{"error": "PDF document not found"}
+	}
+
+	pdf.Text(x, y, text)
+
+	return map[string]Value{
+		"added": true,
+		"id":    docID,
+	}
 }
 
 func (i *Interpreter) builtinPDFCell(args []Value) Value {
-	return map[string]Value{"error": "PDF not available - requires gofpdf dependency"}
+	if len(args) < 5 {
+		return map[string]Value{"error": "need document ID, width, height, text, border"}
+	}
+
+	docID, _ := args[0].(string)
+	w := toFloat(args[1])
+	h := toFloat(args[2])
+	text, _ := args[3].(string)
+	border, _ := args[4].(int)
+
+	pdfDocsMutex.RLock()
+	pdf, exists := pdfDocs[docID]
+	pdfDocsMutex.RUnlock()
+
+	if !exists {
+		return map[string]Value{"error": "PDF document not found"}
+	}
+
+	align := ""
+	if len(args) > 5 {
+		if a, ok := args[5].(string); ok {
+			align = a
+		}
+	}
+
+	pdf.CellFormat(w, h, text, fmt.Sprintf("%d", border), 0, align, false, 0, "")
+
+	return map[string]Value{
+		"added": true,
+		"id":    docID,
+	}
 }
 
-// Excel functions (require excelize - stub implementation)
-func (i *Interpreter) builtinExcelCreate(args []Value) Value {
+func (i *Interpreter) builtinPDFSave(args []Value) Value {
+	if len(args) < 2 {
+		return map[string]Value{"error": "need document ID and file path"}
+	}
+
+	docID, _ := args[0].(string)
+	filePath, _ := args[1].(string)
+
+	pdfDocsMutex.RLock()
+	pdf, exists := pdfDocs[docID]
+	pdfDocsMutex.RUnlock()
+
+	if !exists {
+		return map[string]Value{"error": "PDF document not found"}
+	}
+
+	err := pdf.OutputFileAndClose(filePath)
+	if err != nil {
+		return map[string]Value{"error": err.Error()}
+	}
+
+	// Clean up
+	pdfDocsMutex.Lock()
+	delete(pdfDocs, docID)
+	pdfDocsMutex.Unlock()
+
 	return map[string]Value{
-		"error": "Excel support requires github.com/xuri/excelize/v2",
-		"hint":  "Add dependency and rebuild",
+		"saved":  true,
+		"id":     docID,
+		"path":   filePath,
+	}
+}
+
+// Excel functions using excelize
+var excelFiles = make(map[string]*excelize.File)
+var excelFilesMutex sync.RWMutex
+
+func (i *Interpreter) builtinExcelCreate(args []Value) Value {
+	docID := fmt.Sprintf("excel_%d", time.Now().UnixNano())
+	f := excelize.NewFile()
+
+	excelFilesMutex.Lock()
+	excelFiles[docID] = f
+	excelFilesMutex.Unlock()
+
+	return map[string]Value{
+		"created": true,
+		"id":      docID,
 	}
 }
 
 func (i *Interpreter) builtinExcelOpen(args []Value) Value {
-	return map[string]Value{"error": "Excel not available - requires excelize dependency"}
+	if len(args) == 0 {
+		return map[string]Value{"error": "need file path"}
+	}
+
+	filePath, _ := args[0].(string)
+
+	f, err := excelize.OpenFile(filePath)
+	if err != nil {
+		return map[string]Value{"error": err.Error()}
+	}
+
+	docID := fmt.Sprintf("excel_%d", time.Now().UnixNano())
+
+	excelFilesMutex.Lock()
+	excelFiles[docID] = f
+	excelFilesMutex.Unlock()
+
+	return map[string]Value{
+		"opened": true,
+		"id":     docID,
+		"path":   filePath,
+	}
 }
 
 func (i *Interpreter) builtinExcelSetCell(args []Value) Value {
-	return map[string]Value{"error": "Excel not available - requires excelize dependency"}
+	if len(args) < 4 {
+		return map[string]Value{"error": "need document ID, sheet, cell, and value"}
+	}
+
+	docID, _ := args[0].(string)
+	sheet, _ := args[1].(string)
+	cell, _ := args[2].(string)
+	value := args[3]
+
+	excelFilesMutex.RLock()
+	f, exists := excelFiles[docID]
+	excelFilesMutex.RUnlock()
+
+	if !exists {
+		return map[string]Value{"error": "Excel document not found"}
+	}
+
+	var err error
+	switch v := value.(type) {
+	case int:
+		err = f.SetCellValue(sheet, cell, v)
+	case float64:
+		err = f.SetCellValue(sheet, cell, v)
+	case string:
+		err = f.SetCellValue(sheet, cell, v)
+	case bool:
+		err = f.SetCellValue(sheet, cell, v)
+	default:
+		err = f.SetCellValue(sheet, cell, fmt.Sprintf("%v", v))
+	}
+
+	if err != nil {
+		return map[string]Value{"error": err.Error()}
+	}
+
+	return map[string]Value{
+		"set":   true,
+		"id":    docID,
+		"sheet": sheet,
+		"cell":  cell,
+	}
 }
 
 func (i *Interpreter) builtinExcelGetCell(args []Value) Value {
-	return map[string]Value{"error": "Excel not available - requires excelize dependency"}
+	if len(args) < 3 {
+		return map[string]Value{"error": "need document ID, sheet, and cell"}
+	}
+
+	docID, _ := args[0].(string)
+	sheet, _ := args[1].(string)
+	cell, _ := args[2].(string)
+
+	excelFilesMutex.RLock()
+	f, exists := excelFiles[docID]
+	excelFilesMutex.RUnlock()
+
+	if !exists {
+		return map[string]Value{"error": "Excel document not found"}
+	}
+
+	value, err := f.GetCellValue(sheet, cell)
+	if err != nil {
+		return map[string]Value{"error": err.Error()}
+	}
+
+	return map[string]Value{
+		"found": true,
+		"id":    docID,
+		"sheet": sheet,
+		"cell":  cell,
+		"value": value,
+	}
 }
 
 func (i *Interpreter) builtinExcelNewSheet(args []Value) Value {
-	return map[string]Value{"error": "Excel not available - requires excelize dependency"}
+	if len(args) < 2 {
+		return map[string]Value{"error": "need document ID and sheet name"}
+	}
+
+	docID, _ := args[0].(string)
+	sheetName, _ := args[1].(string)
+
+	excelFilesMutex.RLock()
+	f, exists := excelFiles[docID]
+	excelFilesMutex.RUnlock()
+
+	if !exists {
+		return map[string]Value{"error": "Excel document not found"}
+	}
+
+	index, err := f.NewSheet(sheetName)
+	if err != nil {
+		return map[string]Value{"error": err.Error()}
+	}
+
+	return map[string]Value{
+		"created": true,
+		"id":      docID,
+		"sheet":   sheetName,
+		"index":   index,
+	}
 }
 
 func (i *Interpreter) builtinExcelSave(args []Value) Value {
-	return map[string]Value{"error": "Excel not available - requires excelize dependency"}
+	if len(args) < 2 {
+		return map[string]Value{"error": "need document ID and file path"}
+	}
+
+	docID, _ := args[0].(string)
+	filePath, _ := args[1].(string)
+
+	excelFilesMutex.RLock()
+	f, exists := excelFiles[docID]
+	excelFilesMutex.RUnlock()
+
+	if !exists {
+		return map[string]Value{"error": "Excel document not found"}
+	}
+
+	err := f.SaveAs(filePath)
+	if err != nil {
+		return map[string]Value{"error": err.Error()}
+	}
+
+	return map[string]Value{
+		"saved": true,
+		"id":    docID,
+		"path":  filePath,
+	}
 }
 
 func (i *Interpreter) builtinExcelClose(args []Value) Value {
-	return map[string]Value{"error": "Excel not available - requires excelize dependency"}
+	if len(args) == 0 {
+		return map[string]Value{"error": "need document ID"}
+	}
+
+	docID, _ := args[0].(string)
+
+	excelFilesMutex.Lock()
+	defer excelFilesMutex.Unlock()
+
+	f, exists := excelFiles[docID]
+	if !exists {
+		return map[string]Value{"error": "Excel document not found"}
+	}
+
+	f.Close()
+	delete(excelFiles, docID)
+
+	return map[string]Value{
+		"closed": true,
+		"id":     docID,
+	}
 }
 
-// Chart functions (require go-chart - stub implementation)
+// Chart functions - basic SVG generation (go-chart has issues with proxy)
 func (i *Interpreter) builtinChartLine(args []Value) Value {
+	if len(args) < 2 {
+		return map[string]Value{"error": "need title and data array"}
+	}
+
+	title, _ := args[0].(string)
+
+	// Get data points
+	var points []map[string]Value
+	if arr, ok := args[1].([]Value); ok {
+		for _, v := range arr {
+			if m, ok := v.(map[string]Value); ok {
+				points = append(points, m)
+			}
+		}
+	}
+
+	if len(points) == 0 {
+		return map[string]Value{"error": "no data points provided"}
+	}
+
+	// Generate simple SVG line chart
+	svg := generateLineChartSVG(title, points)
+
 	return map[string]Value{
-		"error": "Chart support requires github.com/wcharczuk/go-chart/v2",
-		"hint":  "Add dependency and rebuild",
+		"created": true,
+		"svg":     svg,
+		"type":    "line",
 	}
 }
 
 func (i *Interpreter) builtinChartBar(args []Value) Value {
-	return map[string]Value{"error": "Chart not available - requires go-chart dependency"}
+	if len(args) < 2 {
+		return map[string]Value{"error": "need title and data array"}
+	}
+
+	title, _ := args[0].(string)
+
+	// Get data points
+	var points []map[string]Value
+	if arr, ok := args[1].([]Value); ok {
+		for _, v := range arr {
+			if m, ok := v.(map[string]Value); ok {
+				points = append(points, m)
+			}
+		}
+	}
+
+	if len(points) == 0 {
+		return map[string]Value{"error": "no data points provided"}
+	}
+
+	// Generate simple SVG bar chart
+	svg := generateBarChartSVG(title, points)
+
+	return map[string]Value{
+		"created": true,
+		"svg":     svg,
+		"type":    "bar",
+	}
 }
 
 func (i *Interpreter) builtinChartPie(args []Value) Value {
-	return map[string]Value{"error": "Chart not available - requires go-chart dependency"}
+	if len(args) < 2 {
+		return map[string]Value{"error": "need title and data array"}
+	}
+
+	title, _ := args[0].(string)
+
+	// Get data points
+	var points []map[string]Value
+	if arr, ok := args[1].([]Value); ok {
+		for _, v := range arr {
+			if m, ok := v.(map[string]Value); ok {
+				points = append(points, m)
+			}
+		}
+	}
+
+	if len(points) == 0 {
+		return map[string]Value{"error": "no data points provided"}
+	}
+
+	// Generate simple SVG pie chart
+	svg := generatePieChartSVG(title, points)
+
+	return map[string]Value{
+		"created": true,
+		"svg":     svg,
+		"type":    "pie",
+	}
+}
+
+// Helper functions for SVG chart generation
+func generateLineChartSVG(title string, points []map[string]Value) string {
+	width := 600
+	height := 400
+	padding := 60
+
+	// Find max value
+	maxVal := 0.0
+	for _, p := range points {
+		if v, ok := p["value"].(float64); ok && v > maxVal {
+			maxVal = v
+		}
+		if v, ok := p["value"].(int); ok && float64(v) > maxVal {
+			maxVal = float64(v)
+		}
+	}
+	if maxVal == 0 {
+		maxVal = 1
+	}
+
+	var sb strings.Builder
+	sb.WriteString(fmt.Sprintf(`<svg xmlns="http://www.w3.org/2000/svg" width="%d" height="%d">`, width, height))
+	sb.WriteString(fmt.Sprintf(`<text x="%d" y="30" text-anchor="middle" font-size="18" font-weight="bold">%s</text>`, width/2, title))
+
+	// Draw axes
+	sb.WriteString(fmt.Sprintf(`<line x1="%d" y1="%d" x2="%d" y2="%d" stroke="black" stroke-width="2"/>`,
+		padding, height-padding, width-padding, height-padding))
+	sb.WriteString(fmt.Sprintf(`<line x1="%d" y1="%d" x2="%d" y2="%d" stroke="black" stroke-width="2"/>`,
+		padding, height-padding, padding, padding))
+
+	// Draw line
+	if len(points) > 1 {
+		var pathParts []string
+		for idx, p := range points {
+			x := padding + (width-2*padding)*idx/(len(points)-1)
+			val := toFloat(p["value"])
+			y := height - padding - int((val/maxVal)*float64(height-2*padding))
+			if idx == 0 {
+				pathParts = append(pathParts, fmt.Sprintf("M %d %d", x, y))
+			} else {
+				pathParts = append(pathParts, fmt.Sprintf("L %d %d", x, y))
+			}
+		}
+		sb.WriteString(fmt.Sprintf(`<path d="%s" fill="none" stroke="blue" stroke-width="2"/>`, strings.Join(pathParts, " ")))
+	}
+
+	// Draw points and labels
+	for idx, p := range points {
+		x := padding + (width-2*padding)*idx/(max(len(points)-1, 1))
+		val := toFloat(p["value"])
+		y := height - padding - int((val/maxVal)*float64(height-2*padding))
+		sb.WriteString(fmt.Sprintf(`<circle cx="%d" cy="%d" r="4" fill="blue"/>`, x, y))
+		if label, ok := p["label"].(string); ok {
+			sb.WriteString(fmt.Sprintf(`<text x="%d" y="%d" text-anchor="middle" font-size="10">%s</text>`, x, height-padding+20, label))
+		}
+	}
+
+	sb.WriteString(`</svg>`)
+	return sb.String()
+}
+
+func generateBarChartSVG(title string, points []map[string]Value) string {
+	width := 600
+	height := 400
+	padding := 60
+
+	// Find max value
+	maxVal := 0.0
+	for _, p := range points {
+		if v, ok := p["value"].(float64); ok && v > maxVal {
+			maxVal = v
+		}
+		if v, ok := p["value"].(int); ok && float64(v) > maxVal {
+			maxVal = float64(v)
+		}
+	}
+	if maxVal == 0 {
+		maxVal = 1
+	}
+
+	barWidth := (width - 2*padding) / len(points)
+
+	var sb strings.Builder
+	sb.WriteString(fmt.Sprintf(`<svg xmlns="http://www.w3.org/2000/svg" width="%d" height="%d">`, width, height))
+	sb.WriteString(fmt.Sprintf(`<text x="%d" y="30" text-anchor="middle" font-size="18" font-weight="bold">%s</text>`, width/2, title))
+
+	// Draw axes
+	sb.WriteString(fmt.Sprintf(`<line x1="%d" y1="%d" x2="%d" y2="%d" stroke="black" stroke-width="2"/>`,
+		padding, height-padding, width-padding, height-padding))
+	sb.WriteString(fmt.Sprintf(`<line x1="%d" y1="%d" x2="%d" y2="%d" stroke="black" stroke-width="2"/>`,
+		padding, height-padding, padding, padding))
+
+	// Draw bars
+	colors := []string{"#4CAF50", "#2196F3", "#FF9800", "#9C27B0", "#F44336"}
+	for idx, p := range points {
+		x := padding + idx*barWidth + barWidth/4
+		val := toFloat(p["value"])
+		barHeight := int((val / maxVal) * float64(height-2*padding))
+		y := height - padding - barHeight
+		color := colors[idx%len(colors)]
+		sb.WriteString(fmt.Sprintf(`<rect x="%d" y="%d" width="%d" height="%d" fill="%s"/>`,
+			x, y, barWidth/2, barHeight, color))
+		if label, ok := p["label"].(string); ok {
+			sb.WriteString(fmt.Sprintf(`<text x="%d" y="%d" text-anchor="middle" font-size="10">%s</text>`,
+				x+barWidth/4, height-padding+20, label))
+		}
+	}
+
+	sb.WriteString(`</svg>`)
+	return sb.String()
+}
+
+func generatePieChartSVG(title string, points []map[string]Value) string {
+	width := 500
+	height := 400
+	cx := 200
+	cy := 200
+	radius := 150
+
+	// Calculate total
+	total := 0.0
+	for _, p := range points {
+		total += toFloat(p["value"])
+	}
+	if total == 0 {
+		total = 1
+	}
+
+	var sb strings.Builder
+	sb.WriteString(fmt.Sprintf(`<svg xmlns="http://www.w3.org/2000/svg" width="%d" height="%d">`, width, height))
+	sb.WriteString(fmt.Sprintf(`<text x="%d" y="30" text-anchor="middle" font-size="18" font-weight="bold">%s</text>`, width/2, title))
+
+	// Draw pie slices
+	startAngle := 0.0
+	colors := []string{"#4CAF50", "#2196F3", "#FF9800", "#9C27B0", "#F44336", "#00BCD4", "#FFEB3B"}
+
+	for idx, p := range points {
+		val := toFloat(p["value"])
+		angle := (val / total) * 360
+		endAngle := startAngle + angle
+
+		// Calculate arc path
+		startRad := startAngle * math.Pi / 180
+		endRad := endAngle * math.Pi / 180
+
+		radiusF := float64(radius)
+		x1 := float64(cx) + radiusF*math.Cos(startRad)
+		y1 := float64(cy) + radiusF*math.Sin(startRad)
+		x2 := float64(cx) + radiusF*math.Cos(endRad)
+		y2 := float64(cy) + radiusF*math.Sin(endRad)
+
+		largeArc := 0
+		if angle > 180 {
+			largeArc = 1
+		}
+
+		color := colors[idx%len(colors)]
+		sb.WriteString(fmt.Sprintf(`<path d="M %d %d L %.1f %.1f A %d %d 0 %d 1 %.1f %.1f Z" fill="%s"/>`,
+			cx, cy, x1, y1, radius, radius, largeArc, x2, y2, color))
+
+		startAngle = endAngle
+	}
+
+	// Draw legend
+	legendY := 50
+	for idx, p := range points {
+		color := colors[idx%len(colors)]
+		label, _ := p["label"].(string)
+		value := toFloat(p["value"])
+		percent := (value / total) * 100
+		sb.WriteString(fmt.Sprintf(`<rect x="380" y="%d" width="15" height="15" fill="%s"/>`, legendY, color))
+		sb.WriteString(fmt.Sprintf(`<text x="400" y="%d" font-size="12">%s (%.1f%%)</text>`, legendY+12, label, percent))
+		legendY += 25
+	}
+
+	sb.WriteString(`</svg>`)
+	return sb.String()
 }
 
 // Git functions (using exec)
