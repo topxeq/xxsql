@@ -1093,6 +1093,53 @@ func (i *Interpreter) callBuiltin(name string, args []Value) (Value, bool) {
 		return i.builtinValues(args), true
 	case "range":
 		return i.builtinRange(args), true
+	// Error handling
+	case "error":
+		return i.builtinError(args), true
+	case "isError":
+		return i.builtinIsError(args), true
+	case "errorMessage":
+		return i.builtinErrorMessage(args), true
+	case "errorWrap":
+		return i.builtinErrorWrap(args), true
+	case "throw":
+		return i.builtinThrow(args), true
+	case "assert":
+		return i.builtinAssert(args), true
+	case "assertEqual":
+		return i.builtinAssertEqual(args), true
+	case "assertNotEqual":
+		return i.builtinAssertNotEqual(args), true
+	case "assertNil":
+		return i.builtinAssertNil(args), true
+	case "assertNotNil":
+		return i.builtinAssertNotNil(args), true
+	case "assertTrue":
+		return i.builtinAssertTrue(args), true
+	case "assertFalse":
+		return i.builtinAssertFalse(args), true
+	case "ok":
+		return i.builtinOk(args), true
+	case "fail":
+		return i.builtinFail(args), true
+	case "must":
+		return i.builtinMust(args), true
+	case "recover":
+		return i.builtinRecover(args), true
+	case "panic":
+		return i.builtinPanic(args), true
+	case "defaultOnError":
+		return i.builtinDefaultOnError(args), true
+	case "tryGet":
+		return i.builtinTryGet(args), true
+	case "tryParse":
+		return i.builtinTryParse(args), true
+	case "safeCall":
+		return i.builtinSafeCall(args), true
+	case "errorFromResult":
+		return i.builtinErrorFromResult(args), true
+	case "resultOrError":
+		return i.builtinResultOrError(args), true
 	// String manipulation
 	case "split":
 		return i.builtinSplit(args), true
@@ -2023,6 +2070,782 @@ func (i *Interpreter) builtinRange(args []Value) Value {
 		result[i] = i
 	}
 	return result
+}
+
+// ============================================================================
+// Error Handling Functions
+// ============================================================================
+
+// ErrorValue is a special type for error values
+type ErrorValue struct {
+	Message string
+	Type    string
+	Cause   error
+}
+
+// builtinError creates an error value
+func (i *Interpreter) builtinError(args []Value) Value {
+	if len(args) == 0 {
+		return map[string]Value{
+			"error":  true,
+			"message": "",
+			"type":   "error",
+		}
+	}
+
+	msg := ""
+	errType := "error"
+
+	switch v := args[0].(type) {
+	case string:
+		msg = v
+	case map[string]Value:
+		if m, ok := v["message"].(string); ok {
+			msg = m
+		}
+		if t, ok := v["type"].(string); ok {
+			errType = t
+		}
+	default:
+		msg = fmt.Sprintf("%v", args[0])
+	}
+
+	// Check for additional type argument
+	if len(args) > 1 {
+		if t, ok := args[1].(string); ok {
+			errType = t
+		}
+	}
+
+	return map[string]Value{
+		"error":   true,
+		"message": msg,
+		"type":    errType,
+	}
+}
+
+// builtinIsError checks if a value is an error
+func (i *Interpreter) builtinIsError(args []Value) Value {
+	if len(args) == 0 {
+		return false
+	}
+
+	switch v := args[0].(type) {
+	case map[string]Value:
+		if err, ok := v["error"]; ok {
+			if b, ok := err.(bool); ok && b {
+				return true
+			}
+		}
+	case error:
+		return true
+	case string:
+		// Check if it looks like an error message
+		return strings.HasPrefix(v, "error:") || strings.HasPrefix(v, "Error:")
+	}
+	return false
+}
+
+// builtinErrorMessage extracts the error message
+func (i *Interpreter) builtinErrorMessage(args []Value) Value {
+	if len(args) == 0 {
+		return ""
+	}
+
+	switch v := args[0].(type) {
+	case map[string]Value:
+		if msg, ok := v["message"].(string); ok {
+			return msg
+		}
+		if err, ok := v["error"].(string); ok {
+			return err
+		}
+	case error:
+		return v.Error()
+	case string:
+		return v
+	}
+	return fmt.Sprintf("%v", args[0])
+}
+
+// builtinErrorWrap wraps an error with additional context
+func (i *Interpreter) builtinErrorWrap(args []Value) Value {
+	if len(args) < 2 {
+		return args[0]
+	}
+
+	origMsg := ""
+	errType := "error"
+
+	switch v := args[0].(type) {
+	case map[string]Value:
+		if msg, ok := v["message"].(string); ok {
+			origMsg = msg
+		}
+		if t, ok := v["type"].(string); ok {
+			errType = t
+		}
+	case string:
+		origMsg = v
+	case error:
+		origMsg = v.Error()
+	default:
+		origMsg = fmt.Sprintf("%v", args[0])
+	}
+
+	wrapMsg := ""
+	switch v := args[1].(type) {
+	case string:
+		wrapMsg = v
+	default:
+		wrapMsg = fmt.Sprintf("%v", v)
+	}
+
+	return map[string]Value{
+		"error":    true,
+		"message":  wrapMsg + ": " + origMsg,
+		"type":     errType,
+		"original": args[0],
+	}
+}
+
+// builtinThrow throws an error (returns error object)
+func (i *Interpreter) builtinThrow(args []Value) Value {
+	if len(args) == 0 {
+		return map[string]Value{
+			"error":   true,
+			"message": "throw called",
+			"type":    "throw",
+		}
+	}
+
+	msg := ""
+	errType := "throw"
+
+	switch v := args[0].(type) {
+	case string:
+		msg = v
+	case map[string]Value:
+		if m, ok := v["message"].(string); ok {
+			msg = m
+		}
+		if t, ok := v["type"].(string); ok {
+			errType = t
+		}
+	default:
+		msg = fmt.Sprintf("%v", args[0])
+	}
+
+	return map[string]Value{
+		"error":   true,
+		"message": msg,
+		"type":    errType,
+	}
+}
+
+// builtinAssert asserts a condition, throws if false
+func (i *Interpreter) builtinAssert(args []Value) Value {
+	if len(args) == 0 {
+		return map[string]Value{
+			"error":   true,
+			"message": "assertion failed: no condition provided",
+			"type":    "assert",
+		}
+	}
+
+	condition := i.toBool(args[0])
+	if condition {
+		return true
+	}
+
+	msg := "assertion failed"
+	if len(args) > 1 {
+		if m, ok := args[1].(string); ok {
+			msg = m
+		}
+	}
+
+	return map[string]Value{
+		"error":   true,
+		"message": msg,
+		"type":    "assert",
+	}
+}
+
+// builtinAssertEqual asserts two values are equal
+func (i *Interpreter) builtinAssertEqual(args []Value) Value {
+	if len(args) < 2 {
+		return map[string]Value{
+			"error":   true,
+			"message": "assertEqual requires two arguments",
+			"type":    "assert",
+		}
+	}
+
+	if i.isEqual(args[0], args[1]) {
+		return true
+	}
+
+	msg := fmt.Sprintf("assertEqual failed: %v != %v", args[0], args[1])
+	if len(args) > 2 {
+		if m, ok := args[2].(string); ok {
+			msg = m
+		}
+	}
+
+	return map[string]Value{
+		"error":   true,
+		"message": msg,
+		"type":    "assert",
+	}
+}
+
+// builtinAssertNotEqual asserts two values are not equal
+func (i *Interpreter) builtinAssertNotEqual(args []Value) Value {
+	if len(args) < 2 {
+		return map[string]Value{
+			"error":   true,
+			"message": "assertNotEqual requires two arguments",
+			"type":    "assert",
+		}
+	}
+
+	if !i.isEqual(args[0], args[1]) {
+		return true
+	}
+
+	msg := fmt.Sprintf("assertNotEqual failed: %v == %v", args[0], args[1])
+	if len(args) > 2 {
+		if m, ok := args[2].(string); ok {
+			msg = m
+		}
+	}
+
+	return map[string]Value{
+		"error":   true,
+		"message": msg,
+		"type":    "assert",
+	}
+}
+
+// builtinAssertNil asserts value is nil
+func (i *Interpreter) builtinAssertNil(args []Value) Value {
+	if len(args) == 0 {
+		return true
+	}
+
+	if args[0] == nil {
+		return true
+	}
+
+	msg := fmt.Sprintf("assertNil failed: %v is not nil", args[0])
+	if len(args) > 1 {
+		if m, ok := args[1].(string); ok {
+			msg = m
+		}
+	}
+
+	return map[string]Value{
+		"error":   true,
+		"message": msg,
+		"type":    "assert",
+	}
+}
+
+// builtinAssertNotNil asserts value is not nil
+func (i *Interpreter) builtinAssertNotNil(args []Value) Value {
+	if len(args) == 0 {
+		return map[string]Value{
+			"error":   true,
+			"message": "assertNotNil failed: value is nil",
+			"type":    "assert",
+		}
+	}
+
+	if args[0] != nil {
+		return true
+	}
+
+	msg := "assertNotNil failed: value is nil"
+	if len(args) > 1 {
+		if m, ok := args[1].(string); ok {
+			msg = m
+		}
+	}
+
+	return map[string]Value{
+		"error":   true,
+		"message": msg,
+		"type":    "assert",
+	}
+}
+
+// builtinAssertTrue asserts value is true
+func (i *Interpreter) builtinAssertTrue(args []Value) Value {
+	if len(args) == 0 {
+		return map[string]Value{
+			"error":   true,
+			"message": "assertTrue failed: no value provided",
+			"type":    "assert",
+		}
+	}
+
+	if i.toBool(args[0]) {
+		return true
+	}
+
+	msg := fmt.Sprintf("assertTrue failed: %v is not true", args[0])
+	if len(args) > 1 {
+		if m, ok := args[1].(string); ok {
+			msg = m
+		}
+	}
+
+	return map[string]Value{
+		"error":   true,
+		"message": msg,
+		"type":    "assert",
+	}
+}
+
+// builtinAssertFalse asserts value is false
+func (i *Interpreter) builtinAssertFalse(args []Value) Value {
+	if len(args) == 0 {
+		return true
+	}
+
+	if !i.toBool(args[0]) {
+		return true
+	}
+
+	msg := fmt.Sprintf("assertFalse failed: %v is not false", args[0])
+	if len(args) > 1 {
+		if m, ok := args[1].(string); ok {
+			msg = m
+		}
+	}
+
+	return map[string]Value{
+		"error":   true,
+		"message": msg,
+		"type":    "assert",
+	}
+}
+
+// builtinOk checks if a result is ok (not an error)
+func (i *Interpreter) builtinOk(args []Value) Value {
+	if len(args) == 0 {
+		return true
+	}
+
+	// Check if it's an error object
+	if m, ok := args[0].(map[string]Value); ok {
+		if err, ok := m["error"]; ok {
+			if b, ok := err.(bool); ok && b {
+				return false
+			}
+		}
+	}
+
+	return true
+}
+
+// builtinFail checks if a result is an error
+func (i *Interpreter) builtinFail(args []Value) Value {
+	if len(args) == 0 {
+		return false
+	}
+
+	// Check if it's an error object
+	if m, ok := args[0].(map[string]Value); ok {
+		if err, ok := m["error"]; ok {
+			if b, ok := err.(bool); ok && b {
+				return true
+			}
+		}
+	}
+
+	return false
+}
+
+// builtinMust returns the value or throws if it's an error
+func (i *Interpreter) builtinMust(args []Value) Value {
+	if len(args) == 0 {
+		return map[string]Value{
+			"error":   true,
+			"message": "must: no value provided",
+			"type":    "must",
+		}
+	}
+
+	// Check if it's an error object
+	if m, ok := args[0].(map[string]Value); ok {
+		if err, ok := m["error"]; ok {
+			if b, ok := err.(bool); ok && b {
+				return map[string]Value{
+					"error":   true,
+					"message": "must: " + i.builtinErrorMessage(args).([]interface{})[0].(string),
+					"type":    "must",
+				}
+			}
+		}
+	}
+
+	return args[0]
+}
+
+// builtinRecover recovers from an error, returning a default value
+func (i *Interpreter) builtinRecover(args []Value) Value {
+	if len(args) < 2 {
+		return args[0]
+	}
+
+	// Check if first arg is an error
+	if m, ok := args[0].(map[string]Value); ok {
+		if err, ok := m["error"]; ok {
+			if b, ok := err.(bool); ok && b {
+				return args[1] // Return default value
+			}
+		}
+	}
+
+	return args[0] // Return original value if not an error
+}
+
+// builtinPanic creates a panic error
+func (i *Interpreter) builtinPanic(args []Value) Value {
+	if len(args) == 0 {
+		return map[string]Value{
+			"error":   true,
+			"message": "panic",
+			"type":    "panic",
+		}
+	}
+
+	msg := ""
+	switch v := args[0].(type) {
+	case string:
+		msg = v
+	default:
+		msg = fmt.Sprintf("%v", v)
+	}
+
+	return map[string]Value{
+		"error":   true,
+		"message": msg,
+		"type":    "panic",
+	}
+}
+
+// builtinDefaultOnError returns a default value if the result is an error
+func (i *Interpreter) builtinDefaultOnError(args []Value) Value {
+	if len(args) < 2 {
+		return args[0]
+	}
+
+	// Check if first arg is an error
+	if m, ok := args[0].(map[string]Value); ok {
+		if err, ok := m["error"]; ok {
+			if b, ok := err.(bool); ok && b {
+				return args[1]
+			}
+		}
+	}
+
+	return args[0]
+}
+
+// builtinTryGet safely gets a value from an object/array
+func (i *Interpreter) builtinTryGet(args []Value) Value {
+	if len(args) < 2 {
+		return nil
+	}
+
+	switch obj := args[0].(type) {
+	case map[string]Value:
+		key, ok := args[1].(string)
+		if !ok {
+			return nil
+		}
+		if val, ok := obj[key]; ok {
+			return val
+		}
+	case []Value:
+		idx := i.toInt(args[1])
+		if idx >= 0 && idx < len(obj) {
+			return obj[idx]
+		}
+	}
+
+	// Return default if provided
+	if len(args) > 2 {
+		return args[2]
+	}
+	return nil
+}
+
+// builtinTryParse tries to parse a value, returns default on failure
+func (i *Interpreter) builtinTryParse(args []Value) Value {
+	if len(args) < 2 {
+		return nil
+	}
+
+	parseType, ok := args[1].(string)
+	if !ok {
+		return args[0]
+	}
+
+	var result Value = args[0]
+	var err error
+
+	switch parseType {
+	case "int":
+		result, err = strconv.Atoi(fmt.Sprintf("%v", args[0]))
+	case "float":
+		result, err = strconv.ParseFloat(fmt.Sprintf("%v", args[0]), 64)
+	case "bool":
+		result, err = strconv.ParseBool(fmt.Sprintf("%v", args[0]))
+	case "json":
+		var parsed interface{}
+		if s, ok := args[0].(string); ok {
+			err = json.Unmarshal([]byte(s), &parsed)
+			if err == nil {
+				result = convertJSONToValue(parsed)
+			}
+		} else {
+			return args[0]
+		}
+	default:
+		return args[0]
+	}
+
+	if err != nil {
+		// Return default if provided
+		if len(args) > 2 {
+			return args[2]
+		}
+		return nil
+	}
+
+	return result
+}
+
+// builtinSafeCall safely calls a function, catching errors
+func (i *Interpreter) builtinSafeCall(args []Value) Value {
+	if len(args) == 0 {
+		return map[string]Value{
+			"error":   true,
+			"message": "safeCall: no function name provided",
+			"type":    "safeCall",
+		}
+	}
+
+	funcName, ok := args[0].(string)
+	if !ok {
+		return map[string]Value{
+			"error":   true,
+			"message": "safeCall: function name must be a string",
+			"type":    "safeCall",
+		}
+	}
+
+	// Get call arguments
+	callArgs := []Value{}
+	if len(args) > 1 {
+		callArgs = args[1:]
+	}
+
+	// Try to call the function
+	defer func() {
+		if r := recover(); r != nil {
+			// Handle panic - but we can't modify the return value here
+		}
+	}()
+
+	result, handled := i.callBuiltin(funcName, callArgs)
+	if !handled {
+		return map[string]Value{
+			"error":   true,
+			"message": fmt.Sprintf("safeCall: unknown function '%s'", funcName),
+			"type":    "safeCall",
+		}
+	}
+
+	// Check if result is an error
+	if m, ok := result.(map[string]Value); ok {
+		if err, ok := m["error"]; ok {
+			if b, ok := err.(bool); ok && b {
+				// Return default if provided (already in callArgs as last arg)
+				return result
+			}
+		}
+	}
+
+	return result
+}
+
+// builtinErrorFromResult extracts error info from a result
+func (i *Interpreter) builtinErrorFromResult(args []Value) Value {
+	if len(args) == 0 {
+		return map[string]Value{
+			"hasError": false,
+			"message":  "",
+			"type":     "",
+		}
+	}
+
+	if m, ok := args[0].(map[string]Value); ok {
+		if err, ok := m["error"]; ok {
+			if b, ok := err.(bool); ok && b {
+				msg := ""
+				errType := ""
+				if m, ok := m["message"].(string); ok {
+					msg = m
+				}
+				if t, ok := m["type"].(string); ok {
+					errType = t
+				}
+				return map[string]Value{
+					"hasError": true,
+					"message":  msg,
+					"type":     errType,
+				}
+			}
+		}
+	}
+
+	return map[string]Value{
+		"hasError": false,
+		"message":  "",
+		"type":     "",
+	}
+}
+
+// builtinResultOrError returns a result object with value or error
+func (i *Interpreter) builtinResultOrError(args []Value) Value {
+	if len(args) == 0 {
+		return map[string]Value{
+			"ok":    true,
+			"value": nil,
+			"error": nil,
+		}
+	}
+
+	// Check if it's an error
+	if m, ok := args[0].(map[string]Value); ok {
+		if err, ok := m["error"]; ok {
+			if b, ok := err.(bool); ok && b {
+				return map[string]Value{
+					"ok":    false,
+					"value": nil,
+					"error": m,
+				}
+			}
+		}
+	}
+
+	return map[string]Value{
+		"ok":    true,
+		"value": args[0],
+		"error": nil,
+	}
+}
+
+// Helper functions for error handling
+
+func (i *Interpreter) toBool(v Value) bool {
+	switch val := v.(type) {
+	case bool:
+		return val
+	case int:
+		return val != 0
+	case int64:
+		return val != 0
+	case float64:
+		return val != 0
+	case string:
+		return val != "" && val != "false" && val != "0"
+	case nil:
+		return false
+	default:
+		return true
+	}
+}
+
+func (i *Interpreter) isEqual(a, b Value) bool {
+	// Handle nil cases
+	if a == nil && b == nil {
+		return true
+	}
+	if a == nil || b == nil {
+		return false
+	}
+
+	// Try type-specific comparisons
+	switch aVal := a.(type) {
+	case bool:
+		if bVal, ok := b.(bool); ok {
+			return aVal == bVal
+		}
+	case int:
+		switch bVal := b.(type) {
+		case int:
+			return aVal == bVal
+		case int64:
+			return int64(aVal) == bVal
+		case float64:
+			return float64(aVal) == bVal
+		}
+	case int64:
+		switch bVal := b.(type) {
+		case int:
+			return aVal == int64(bVal)
+		case int64:
+			return aVal == bVal
+		case float64:
+			return float64(aVal) == bVal
+		}
+	case float64:
+		switch bVal := b.(type) {
+		case int:
+			return aVal == float64(bVal)
+		case int64:
+			return aVal == float64(bVal)
+		case float64:
+			return aVal == bVal
+		}
+	case string:
+		if bVal, ok := b.(string); ok {
+			return aVal == bVal
+		}
+	case []Value:
+		if bVal, ok := b.([]Value); ok {
+			if len(aVal) != len(bVal) {
+				return false
+			}
+			for idx := range aVal {
+				if !i.isEqual(aVal[idx], bVal[idx]) {
+					return false
+				}
+			}
+			return true
+		}
+	case map[string]Value:
+		if bVal, ok := b.(map[string]Value); ok {
+			if len(aVal) != len(bVal) {
+				return false
+			}
+			for k, v := range aVal {
+				if bV, ok := bVal[k]; !ok || !i.isEqual(v, bV) {
+					return false
+				}
+			}
+			return true
+		}
+	}
+
+	// Fallback to string comparison
+	return fmt.Sprintf("%v", a) == fmt.Sprintf("%v", b)
 }
 
 // ============================================================================
