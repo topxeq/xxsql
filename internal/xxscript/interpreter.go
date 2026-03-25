@@ -29,6 +29,7 @@ import (
 	"reflect"
 	"runtime"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 	"unicode"
@@ -1555,6 +1556,44 @@ func (i *Interpreter) callBuiltin(name string, args []Value) (Value, bool) {
 		return i.builtinJSONDecode(args), true
 	case "jsonPretty":
 		return i.builtinJSONPretty(args), true
+	case "jsonMinify":
+		return i.builtinJSONMinify(args), true
+	case "jsonGet":
+		return i.builtinJSONGet(args), true
+	case "jsonSet":
+		return i.builtinJSONSet(args), true
+	case "jsonDelete":
+		return i.builtinJSONDelete(args), true
+	case "jsonHas":
+		return i.builtinJSONHas(args), true
+	case "jsonKeys":
+		return i.builtinJSONKeys(args), true
+	case "jsonValues":
+		return i.builtinJSONValues(args), true
+	case "jsonType":
+		return i.builtinJSONType(args), true
+	case "jsonMerge":
+		return i.builtinJSONMerge(args), true
+	case "jsonDeepMerge":
+		return i.builtinJSONDeepMerge(args), true
+	case "jsonArrayLength":
+		return i.builtinJSONArrayLength(args), true
+	case "jsonArrayAppend":
+		return i.builtinJSONArrayAppend(args), true
+	case "jsonArrayPrepend":
+		return i.builtinJSONArrayPrepend(args), true
+	case "jsonArrayFlatten":
+		return i.builtinJSONArrayFlatten(args), true
+	case "jsonObjectFromArrays":
+		return i.builtinJSONObjectFromArrays(args), true
+	case "jsonValidate":
+		return i.builtinJSONValidate(args), true
+	case "jsonOmit":
+		return i.builtinJSONOmit(args), true
+	case "jsonPick":
+		return i.builtinJSONPick(args), true
+	case "jsonTransform":
+		return i.builtinJSONTransform(args), true
 	// OS - Environment variables
 	case "env":
 		return i.builtinEnv(args), true
@@ -6366,6 +6405,889 @@ func convertJSONValue(v interface{}) Value {
 		return m
 	default:
 		return fmt.Sprintf("%v", val)
+	}
+}
+
+// ============================================================================
+// JSON Processing Functions
+// ============================================================================
+
+// builtinJSONMinify minifies a JSON string
+func (i *Interpreter) builtinJSONMinify(args []Value) Value {
+	if len(args) == 0 {
+		return ""
+	}
+
+	var obj interface{}
+	switch v := args[0].(type) {
+	case string:
+		if err := json.Unmarshal([]byte(v), &obj); err != nil {
+			return map[string]Value{"success": false, "error": err.Error()}
+		}
+	default:
+		obj = v
+	}
+
+	data, err := json.Marshal(obj)
+	if err != nil {
+		return map[string]Value{"success": false, "error": err.Error()}
+	}
+	return string(data)
+}
+
+// builtinJSONGet gets a value from JSON by path (e.g., "data.user.name" or "items[0].id")
+func (i *Interpreter) builtinJSONGet(args []Value) Value {
+	if len(args) < 2 {
+		return nil
+	}
+
+	// Parse the JSON or use the object directly
+	var obj interface{}
+	switch v := args[0].(type) {
+	case string:
+		if err := json.Unmarshal([]byte(v), &obj); err != nil {
+			return nil
+		}
+	default:
+		obj = v
+	}
+
+	path, ok := args[1].(string)
+	if !ok {
+		return nil
+	}
+
+	result := getJSONByPath(obj, path)
+	return result
+}
+
+// getJSONByPath navigates through JSON using a path like "data.user.name" or "items[0].id"
+func getJSONByPath(obj interface{}, path string) Value {
+	parts := parseJSONPath(path)
+	current := obj
+
+	for _, part := range parts {
+		if current == nil {
+			return nil
+		}
+
+		switch v := current.(type) {
+		case map[string]interface{}:
+			if val, ok := v[part.key]; ok {
+				current = val
+			} else {
+				return nil
+			}
+		case []interface{}:
+			if part.index >= 0 && part.index < len(v) {
+				current = v[part.index]
+			} else {
+				return nil
+			}
+		case map[string]Value:
+			if val, ok := v[part.key]; ok {
+				return val
+			}
+			return nil
+		case []Value:
+			if part.index >= 0 && part.index < len(v) {
+				return v[part.index]
+			}
+			return nil
+		default:
+			return nil
+		}
+	}
+
+	return convertJSONToValue(current)
+}
+
+type pathPart struct {
+	key   string
+	index int
+}
+
+func parseJSONPath(path string) []pathPart {
+	var parts []pathPart
+	current := ""
+	inBracket := false
+	bracketContent := ""
+
+	for _, ch := range path {
+		switch ch {
+		case '.':
+			if inBracket {
+				bracketContent += string(ch)
+			} else if current != "" {
+				parts = append(parts, pathPart{key: current})
+				current = ""
+			}
+		case '[':
+			if current != "" {
+				parts = append(parts, pathPart{key: current})
+				current = ""
+			}
+			inBracket = true
+			bracketContent = ""
+		case ']':
+			if inBracket {
+				// Parse index
+				idx := 0
+				for _, c := range bracketContent {
+					if c >= '0' && c <= '9' {
+						idx = idx*10 + int(c-'0')
+					}
+				}
+				parts = append(parts, pathPart{index: idx})
+				inBracket = false
+			}
+		default:
+			if inBracket {
+				bracketContent += string(ch)
+			} else {
+				current += string(ch)
+			}
+		}
+	}
+
+	if current != "" {
+		parts = append(parts, pathPart{key: current})
+	}
+
+	return parts
+}
+
+// builtinJSONSet sets a value in JSON by path
+func (i *Interpreter) builtinJSONSet(args []Value) Value {
+	if len(args) < 3 {
+		return map[string]Value{"success": false, "error": "requires json, path, and value"}
+	}
+
+	// Parse the JSON or use the object directly
+	var obj interface{}
+	switch v := args[0].(type) {
+	case string:
+		if err := json.Unmarshal([]byte(v), &obj); err != nil {
+			return map[string]Value{"success": false, "error": err.Error()}
+		}
+	default:
+		obj = v
+	}
+
+	path, ok := args[1].(string)
+	if !ok {
+		return map[string]Value{"success": false, "error": "path must be a string"}
+	}
+
+	value := args[2]
+
+	// Set the value
+	result := setJSONByPath(obj, path, value)
+	return result
+}
+
+func setJSONByPath(obj interface{}, path string, value Value) Value {
+	parts := parseJSONPath(path)
+	if len(parts) == 0 {
+		return value
+	}
+
+	// If obj is nil or not a map/array, create a new map
+	var root interface{}
+	switch v := obj.(type) {
+	case map[string]interface{}:
+		root = v
+	case map[string]Value:
+		// Convert to map[string]interface{}
+		newMap := make(map[string]interface{})
+		for k, val := range v {
+			newMap[k] = val
+		}
+		root = newMap
+	default:
+		root = make(map[string]interface{})
+	}
+
+	// Navigate and set
+	current := root
+	for i := 0; i < len(parts)-1; i++ {
+		part := parts[i]
+		var next interface{}
+
+		switch v := current.(type) {
+		case map[string]interface{}:
+			if val, ok := v[part.key]; ok {
+				next = val
+			} else {
+				// Create next level based on next part
+				if parts[i+1].index >= 0 {
+					next = make([]interface{}, 0)
+				} else {
+					next = make(map[string]interface{})
+				}
+				v[part.key] = next
+			}
+		case []interface{}:
+			if part.index >= 0 && part.index < len(v) {
+				next = v[part.index]
+			} else if part.index >= len(v) {
+				// Extend array
+				for len(v) <= part.index {
+					v = append(v, nil)
+				}
+				current = v
+				if parts[i+1].index >= 0 {
+					next = make([]interface{}, 0)
+				} else {
+					next = make(map[string]interface{})
+				}
+				v[part.index] = next
+			} else {
+				return map[string]Value{"success": false, "error": "invalid array index"}
+			}
+		}
+		current = next
+	}
+
+	// Set the final value
+	lastPart := parts[len(parts)-1]
+	switch v := current.(type) {
+	case map[string]interface{}:
+		v[lastPart.key] = value
+	case []interface{}:
+		if lastPart.index >= 0 && lastPart.index < len(v) {
+			v[lastPart.index] = value
+		}
+	}
+
+	return convertJSONToValue(root)
+}
+
+// builtinJSONDelete deletes a value from JSON by path
+func (i *Interpreter) builtinJSONDelete(args []Value) Value {
+	if len(args) < 2 {
+		return map[string]Value{"success": false, "error": "requires json and path"}
+	}
+
+	var obj interface{}
+	switch v := args[0].(type) {
+	case string:
+		if err := json.Unmarshal([]byte(v), &obj); err != nil {
+			return map[string]Value{"success": false, "error": err.Error()}
+		}
+	default:
+		obj = v
+	}
+
+	path, ok := args[1].(string)
+	if !ok {
+		return map[string]Value{"success": false, "error": "path must be a string"}
+	}
+
+	result := deleteJSONByPath(obj, path)
+	return result
+}
+
+func deleteJSONByPath(obj interface{}, path string) Value {
+	parts := parseJSONPath(path)
+	if len(parts) == 0 {
+		return obj
+	}
+
+	// Navigate to parent
+	current := obj
+	for i := 0; i < len(parts)-1; i++ {
+		part := parts[i]
+		switch v := current.(type) {
+		case map[string]interface{}:
+			if val, ok := v[part.key]; ok {
+				current = val
+			} else {
+				return convertJSONToValue(obj)
+			}
+		case []interface{}:
+			if part.index >= 0 && part.index < len(v) {
+				current = v[part.index]
+			} else {
+				return convertJSONToValue(obj)
+			}
+		default:
+			return convertJSONToValue(obj)
+		}
+	}
+
+	// Delete the key/index
+	lastPart := parts[len(parts)-1]
+	switch v := current.(type) {
+	case map[string]interface{}:
+		delete(v, lastPart.key)
+	case []interface{}:
+		if lastPart.index >= 0 && lastPart.index < len(v) {
+			v = append(v[:lastPart.index], v[lastPart.index+1:]...)
+			// Update parent - this is tricky, so we return as is
+		}
+	}
+
+	return convertJSONToValue(obj)
+}
+
+// builtinJSONHas checks if a path exists in JSON
+func (i *Interpreter) builtinJSONHas(args []Value) Value {
+	if len(args) < 2 {
+		return false
+	}
+
+	var obj interface{}
+	switch v := args[0].(type) {
+	case string:
+		if err := json.Unmarshal([]byte(v), &obj); err != nil {
+			return false
+		}
+	default:
+		obj = v
+	}
+
+	path, ok := args[1].(string)
+	if !ok {
+		return false
+	}
+
+	result := getJSONByPath(obj, path)
+	return result != nil
+}
+
+// builtinJSONKeys gets all keys from a JSON object
+func (i *Interpreter) builtinJSONKeys(args []Value) Value {
+	if len(args) == 0 {
+		return []Value{}
+	}
+
+	var obj interface{}
+	switch v := args[0].(type) {
+	case string:
+		if err := json.Unmarshal([]byte(v), &obj); err != nil {
+			return []Value{}
+		}
+	default:
+		obj = v
+	}
+
+	switch v := obj.(type) {
+	case map[string]interface{}:
+		keys := make([]Value, 0, len(v))
+		for k := range v {
+			keys = append(keys, k)
+		}
+		return keys
+	case map[string]Value:
+		keys := make([]Value, 0, len(v))
+		for k := range v {
+			keys = append(keys, k)
+		}
+		return keys
+	default:
+		return []Value{}
+	}
+}
+
+// builtinJSONValues gets all values from a JSON object
+func (i *Interpreter) builtinJSONValues(args []Value) Value {
+	if len(args) == 0 {
+		return []Value{}
+	}
+
+	var obj interface{}
+	switch v := args[0].(type) {
+	case string:
+		if err := json.Unmarshal([]byte(v), &obj); err != nil {
+			return []Value{}
+		}
+	default:
+		obj = v
+	}
+
+	switch v := obj.(type) {
+	case map[string]interface{}:
+		values := make([]Value, 0, len(v))
+		for _, val := range v {
+			values = append(values, convertJSONToValue(val))
+		}
+		return values
+	case map[string]Value:
+		values := make([]Value, 0, len(v))
+		for _, val := range v {
+			values = append(values, val)
+		}
+		return values
+	default:
+		return []Value{}
+	}
+}
+
+// builtinJSONType returns the type of a JSON value
+func (i *Interpreter) builtinJSONType(args []Value) Value {
+	if len(args) == 0 {
+		return "null"
+	}
+
+	var obj interface{}
+	switch v := args[0].(type) {
+	case string:
+		// Try to parse as JSON
+		if err := json.Unmarshal([]byte(v), &obj); err != nil {
+			return "string"
+		}
+	default:
+		obj = v
+	}
+
+	switch v := obj.(type) {
+	case nil:
+		return "null"
+	case bool:
+		return "boolean"
+	case float64:
+		return "number"
+	case string:
+		return "string"
+	case []interface{}, []Value:
+		return "array"
+	case map[string]interface{}, map[string]Value:
+		return "object"
+	default:
+		return fmt.Sprintf("%T", v)
+	}
+}
+
+// builtinJSONMerge merges multiple JSON objects
+func (i *Interpreter) builtinJSONMerge(args []Value) Value {
+	if len(args) == 0 {
+		return map[string]Value{}
+	}
+
+	result := make(map[string]interface{})
+
+	for _, arg := range args {
+		var obj interface{}
+		switch v := arg.(type) {
+		case string:
+			if err := json.Unmarshal([]byte(v), &obj); err != nil {
+				continue
+			}
+		default:
+			obj = v
+		}
+
+		switch v := obj.(type) {
+		case map[string]interface{}:
+			for k, val := range v {
+				result[k] = val
+			}
+		case map[string]Value:
+			for k, val := range v {
+				result[k] = val
+			}
+		}
+	}
+
+	return convertJSONToValue(result)
+}
+
+// builtinJSONDeepMerge deeply merges multiple JSON objects
+func (i *Interpreter) builtinJSONDeepMerge(args []Value) Value {
+	if len(args) == 0 {
+		return map[string]Value{}
+	}
+
+	var result interface{}
+
+	for _, arg := range args {
+		var obj interface{}
+		switch v := arg.(type) {
+		case string:
+			if err := json.Unmarshal([]byte(v), &obj); err != nil {
+				continue
+			}
+		default:
+			obj = v
+		}
+
+		result = deepMergeJSON(result, obj)
+	}
+
+	return convertJSONToValue(result)
+}
+
+func deepMergeJSON(base, overlay interface{}) interface{} {
+	if base == nil {
+		return overlay
+	}
+	if overlay == nil {
+		return base
+	}
+
+	baseMap, baseIsMap := base.(map[string]interface{})
+	overlayMap, overlayIsMap := overlay.(map[string]interface{})
+
+	if baseIsMap && overlayIsMap {
+		result := make(map[string]interface{})
+		for k, v := range baseMap {
+			result[k] = v
+		}
+		for k, v := range overlayMap {
+			if existing, ok := result[k]; ok {
+				result[k] = deepMergeJSON(existing, v)
+			} else {
+				result[k] = v
+			}
+		}
+		return result
+	}
+
+	// If not both maps, overlay wins
+	return overlay
+}
+
+// builtinJSONArrayLength returns the length of a JSON array
+func (i *Interpreter) builtinJSONArrayLength(args []Value) Value {
+	if len(args) == 0 {
+		return int64(0)
+	}
+
+	var obj interface{}
+	switch v := args[0].(type) {
+	case string:
+		if err := json.Unmarshal([]byte(v), &obj); err != nil {
+			return int64(0)
+		}
+	default:
+		obj = v
+	}
+
+	switch v := obj.(type) {
+	case []interface{}:
+		return int64(len(v))
+	case []Value:
+		return int64(len(v))
+	default:
+		return int64(0)
+	}
+}
+
+// builtinJSONArrayAppend appends values to a JSON array
+func (i *Interpreter) builtinJSONArrayAppend(args []Value) Value {
+	if len(args) < 2 {
+		return map[string]Value{"success": false, "error": "requires array and value"}
+	}
+
+	var arr []interface{}
+	switch v := args[0].(type) {
+	case string:
+		if err := json.Unmarshal([]byte(v), &arr); err != nil {
+			return map[string]Value{"success": false, "error": err.Error()}
+		}
+	case []interface{}:
+		arr = v
+	case []Value:
+		arr = make([]interface{}, len(v))
+		for i, val := range v {
+			arr[i] = val
+		}
+	default:
+		return map[string]Value{"success": false, "error": "first argument must be an array"}
+	}
+
+	// Append all additional arguments
+	for _, val := range args[1:] {
+		arr = append(arr, val)
+	}
+
+	return convertJSONToValue(arr)
+}
+
+// builtinJSONArrayPrepend prepends values to a JSON array
+func (i *Interpreter) builtinJSONArrayPrepend(args []Value) Value {
+	if len(args) < 2 {
+		return map[string]Value{"success": false, "error": "requires array and value"}
+	}
+
+	var arr []interface{}
+	switch v := args[0].(type) {
+	case string:
+		if err := json.Unmarshal([]byte(v), &arr); err != nil {
+			return map[string]Value{"success": false, "error": err.Error()}
+		}
+	case []interface{}:
+		arr = v
+	case []Value:
+		arr = make([]interface{}, len(v))
+		for i, val := range v {
+			arr[i] = val
+		}
+	default:
+		return map[string]Value{"success": false, "error": "first argument must be an array"}
+	}
+
+	// Prepend all additional arguments
+	newArr := make([]interface{}, 0, len(arr)+len(args)-1)
+	for _, val := range args[1:] {
+		newArr = append(newArr, val)
+	}
+	newArr = append(newArr, arr...)
+
+	return convertJSONToValue(newArr)
+}
+
+// builtinJSONArrayFlatten flattens nested arrays
+func (i *Interpreter) builtinJSONArrayFlatten(args []Value) Value {
+	if len(args) == 0 {
+		return []Value{}
+	}
+
+	var obj interface{}
+	switch v := args[0].(type) {
+	case string:
+		if err := json.Unmarshal([]byte(v), &obj); err != nil {
+			return []Value{}
+		}
+	default:
+		obj = v
+	}
+
+	result := flattenJSON(obj)
+	return result
+}
+
+func flattenJSON(obj interface{}) []Value {
+	var result []Value
+
+	switch v := obj.(type) {
+	case []interface{}:
+		for _, item := range v {
+			result = append(result, flattenJSON(item)...)
+		}
+	case []Value:
+		for _, item := range v {
+			result = append(result, flattenJSON(item)...)
+		}
+	default:
+		result = append(result, convertJSONToValue(obj))
+	}
+
+	return result
+}
+
+// builtinJSONObjectFromArrays creates an object from keys and values arrays
+func (i *Interpreter) builtinJSONObjectFromArrays(args []Value) Value {
+	if len(args) < 2 {
+		return map[string]Value{}
+	}
+
+	var keys []interface{}
+	var values []interface{}
+
+	switch v := args[0].(type) {
+	case string:
+		if err := json.Unmarshal([]byte(v), &keys); err != nil {
+			return map[string]Value{}
+		}
+	case []interface{}:
+		keys = v
+	case []Value:
+		keys = make([]interface{}, len(v))
+		for i, val := range v {
+			keys[i] = val
+		}
+	}
+
+	switch v := args[1].(type) {
+	case string:
+		if err := json.Unmarshal([]byte(v), &values); err != nil {
+			return map[string]Value{}
+		}
+	case []interface{}:
+		values = v
+	case []Value:
+		values = make([]interface{}, len(v))
+		for i, val := range v {
+			values[i] = val
+		}
+	}
+
+	result := make(map[string]interface{})
+	for i := 0; i < len(keys) && i < len(values); i++ {
+		if key, ok := keys[i].(string); ok {
+			result[key] = values[i]
+		}
+	}
+
+	return convertJSONToValue(result)
+}
+
+// builtinJSONValidate validates a JSON string
+func (i *Interpreter) builtinJSONValidate(args []Value) Value {
+	if len(args) == 0 {
+		return map[string]Value{"valid": false, "error": "no input"}
+	}
+
+	jsonStr, ok := args[0].(string)
+	if !ok {
+		return map[string]Value{"valid": false, "error": "input must be a string"}
+	}
+
+	var obj interface{}
+	err := json.Unmarshal([]byte(jsonStr), &obj)
+	if err != nil {
+		return map[string]Value{"valid": false, "error": err.Error()}
+	}
+
+	return map[string]Value{"valid": true}
+}
+
+// builtinJSONOmit creates a new object omitting specified keys
+func (i *Interpreter) builtinJSONOmit(args []Value) Value {
+	if len(args) < 2 {
+		return map[string]Value{}
+	}
+
+	var obj interface{}
+	switch v := args[0].(type) {
+	case string:
+		if err := json.Unmarshal([]byte(v), &obj); err != nil {
+			return map[string]Value{}
+		}
+	default:
+		obj = v
+	}
+
+	// Get keys to omit
+	omitKeys := make(map[string]bool)
+	for _, arg := range args[1:] {
+		if key, ok := arg.(string); ok {
+			omitKeys[key] = true
+		}
+	}
+
+	objMap, ok := obj.(map[string]interface{})
+	if !ok {
+		return convertJSONToValue(obj)
+	}
+
+	result := make(map[string]interface{})
+	for k, v := range objMap {
+		if !omitKeys[k] {
+			result[k] = v
+		}
+	}
+
+	return convertJSONToValue(result)
+}
+
+// builtinJSONPick creates a new object with only specified keys
+func (i *Interpreter) builtinJSONPick(args []Value) Value {
+	if len(args) < 2 {
+		return map[string]Value{}
+	}
+
+	var obj interface{}
+	switch v := args[0].(type) {
+	case string:
+		if err := json.Unmarshal([]byte(v), &obj); err != nil {
+			return map[string]Value{}
+		}
+	default:
+		obj = v
+	}
+
+	// Get keys to pick
+	pickKeys := make(map[string]bool)
+	for _, arg := range args[1:] {
+		if key, ok := arg.(string); ok {
+			pickKeys[key] = true
+		}
+	}
+
+	objMap, ok := obj.(map[string]interface{})
+	if !ok {
+		return convertJSONToValue(obj)
+	}
+
+	result := make(map[string]interface{})
+	for k, v := range objMap {
+		if pickKeys[k] {
+			result[k] = v
+		}
+	}
+
+	return convertJSONToValue(result)
+}
+
+// builtinJSONTransform transforms values in a JSON object using a function
+func (i *Interpreter) builtinJSONTransform(args []Value) Value {
+	if len(args) < 2 {
+		return map[string]Value{"success": false, "error": "requires json and transform type"}
+	}
+
+	var obj interface{}
+	switch v := args[0].(type) {
+	case string:
+		if err := json.Unmarshal([]byte(v), &obj); err != nil {
+			return map[string]Value{"success": false, "error": err.Error()}
+		}
+	default:
+		obj = v
+	}
+
+	transformType, ok := args[1].(string)
+	if !ok {
+		return map[string]Value{"success": false, "error": "transform type must be a string"}
+	}
+
+	result := transformJSON(obj, transformType)
+	return result
+}
+
+func transformJSON(obj interface{}, transformType string) Value {
+	switch v := obj.(type) {
+	case map[string]interface{}:
+		result := make(map[string]Value)
+		for k, val := range v {
+			result[k] = transformJSON(val, transformType)
+		}
+		return result
+	case []interface{}:
+		result := make([]Value, len(v))
+		for i, val := range v {
+			result[i] = transformJSON(val, transformType)
+		}
+		return result
+	case string:
+		switch transformType {
+		case "upper", "uppercase":
+			return strings.ToUpper(v)
+		case "lower", "lowercase":
+			return strings.ToLower(v)
+		case "trim":
+			return strings.TrimSpace(v)
+		case "number":
+			if f, err := strconv.ParseFloat(v, 64); err == nil {
+				return f
+			}
+			return v
+		default:
+			return v
+		}
+	case float64:
+		switch transformType {
+		case "int":
+			return int64(v)
+		case "string":
+			return fmt.Sprintf("%v", v)
+		default:
+			return v
+		}
+	default:
+		return convertJSONToValue(obj)
 	}
 }
 
