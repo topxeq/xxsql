@@ -1446,6 +1446,105 @@ func (i *Interpreter) callBuiltin(name string, args []Value) (Value, bool) {
 		return i.builtinUnion(args), true
 	case "difference":
 		return i.builtinDifference(args), true
+	// Advanced array functions
+	case "rotate":
+		return i.builtinRotate(args), true
+	case "slide":
+		return i.builtinSlide(args), true
+	case "window":
+		return i.builtinWindow(args), true
+	case "pairwise":
+		return i.builtinPairwise(args), true
+	case "transpose":
+		return i.builtinTranspose(args), true
+	case "fill":
+		return i.builtinFill(args), true
+	case "fillRange":
+		return i.builtinFillRange(args), true
+	case "insertAt":
+		return i.builtinInsertAt(args), true
+	case "removeAt":
+		return i.builtinRemoveAt(args), true
+	case "removeFirst":
+		return i.builtinRemoveFirst(args), true
+	case "removeLast":
+		return i.builtinRemoveLast(args), true
+	case "removeAll":
+		return i.builtinRemoveAll(args), true
+	case "replaceAt":
+		return i.builtinReplaceAt(args), true
+	case "swap":
+		return i.builtinSwap(args), true
+	case "move":
+		return i.builtinMove(args), true
+	case "compact":
+		return i.builtinCompact(args), true
+	case "compactFlat":
+		return i.builtinCompactFlat(args), true
+	case "uniqBy":
+		return i.builtinUniqBy(args), true
+	case "differenceBy":
+		return i.builtinDifferenceBy(args), true
+	case "intersectionBy":
+		return i.builtinIntersectionBy(args), true
+	case "unionBy":
+		return i.builtinUnionBy(args), true
+	case "findIndex":
+		return i.builtinFindIndex(args), true
+	case "findLastIndex":
+		return i.builtinFindLastIndex(args), true
+	case "indicesOf":
+		return i.builtinIndicesOf(args), true
+	case "indexOfAll":
+		return i.builtinIndexOfAll(args), true
+	case "takeWhile":
+		return i.builtinTakeWhile(args), true
+	case "dropWhile":
+		return i.builtinDropWhile(args), true
+	case "span":
+		return i.builtinSpan(args), true
+	case "breakList":
+		return i.builtinBreakList(args), true
+	case "splitAt":
+		return i.builtinSplitAt(args), true
+	case "splitWhen":
+		return i.builtinSplitWhen(args), true
+	case "aperture":
+		return i.builtinAperture(args), true
+	case "xprod":
+		return i.builtinXprod(args), true
+	case "fromPairs":
+		return i.builtinFromPairs(args), true
+	case "toPairs":
+		return i.builtinToPairs(args), true
+	case "rangeStep":
+		return i.builtinRangeStep(args), true
+	case "repeatAll":
+		return i.builtinRepeatAll(args), true
+	case "cycle":
+		return i.builtinCycle(args), true
+	case "iterate":
+		return i.builtinIterate(args), true
+	case "prependAll":
+		return i.builtinPrependAll(args), true
+	case "appendAll":
+		return i.builtinAppendAll(args), true
+	case "intersperse":
+		return i.builtinIntersperse(args), true
+	case "intercalate":
+		return i.builtinIntercalate(args), true
+	case "subsequences":
+		return i.builtinSubsequences(args), true
+	case "permutations":
+		return i.builtinPermutations(args), true
+	case "mode":
+		return i.builtinMode(args), true
+	case "stdDev":
+		return i.builtinStdDev(args), true
+	case "minBy":
+		return i.builtinMinBy(args), true
+	case "maxBy":
+		return i.builtinMaxBy(args), true
 	// Crypto/Hash functions
 	case "md5":
 		return i.builtinMD5(args), true
@@ -5832,6 +5931,1248 @@ func (i *Interpreter) builtinDifference(args []Value) Value {
 		}
 	}
 	return result
+}
+
+// ============================================================================
+// Advanced Array Functions
+// ============================================================================
+
+// builtinRotate rotates array by n positions (positive = right, negative = left)
+func (i *Interpreter) builtinRotate(args []Value) Value {
+	if len(args) < 2 {
+		return args[0]
+	}
+
+	arr, ok := args[0].([]Value)
+	if !ok || len(arr) == 0 {
+		return arr
+	}
+
+	n := int(i.toInt(args[1]))
+	n = n % len(arr)
+	if n < 0 {
+		n += len(arr)
+	}
+
+	// Rotate right by n
+	result := make([]Value, len(arr))
+	for i, v := range arr {
+		newIdx := (i + n) % len(arr)
+		result[newIdx] = v
+	}
+	return result
+}
+
+// builtinSlide slides a window over array
+func (i *Interpreter) builtinSlide(args []Value) Value {
+	if len(args) < 2 {
+		return []Value{}
+	}
+
+	arr, ok := args[0].([]Value)
+	if !ok {
+		return []Value{}
+	}
+
+	windowSize := int(i.toInt(args[1]))
+	if windowSize <= 0 || windowSize > len(arr) {
+		return []Value{}
+	}
+
+	result := []Value{}
+	for i := 0; i <= len(arr)-windowSize; i++ {
+		result = append(result, arr[i:i+windowSize])
+	}
+	return result
+}
+
+// builtinWindow returns sliding windows (alias for slide)
+func (i *Interpreter) builtinWindow(args []Value) Value {
+	return i.builtinSlide(args)
+}
+
+// builtinPairwise returns pairs of adjacent elements
+func (i *Interpreter) builtinPairwise(args []Value) Value {
+	arr, ok := args[0].([]Value)
+	if !ok || len(arr) < 2 {
+		return []Value{}
+	}
+
+	result := []Value{}
+	for i := 0; i < len(arr)-1; i++ {
+		result = append(result, []Value{arr[i], arr[i+1]})
+	}
+	return result
+}
+
+// builtinTranspose transposes 2D array (rows to columns)
+func (i *Interpreter) builtinTranspose(args []Value) Value {
+	arr, ok := args[0].([]Value)
+	if !ok || len(arr) == 0 {
+		return []Value{}
+	}
+
+	// Find max row length
+	maxLen := 0
+	for _, row := range arr {
+		if r, ok := row.([]Value); ok && len(r) > maxLen {
+			maxLen = len(r)
+		}
+	}
+
+	if maxLen == 0 {
+		return []Value{}
+	}
+
+	// Transpose
+	result := make([]Value, maxLen)
+	for i := 0; i < maxLen; i++ {
+		col := []Value{}
+		for _, row := range arr {
+			if r, ok := row.([]Value); ok && i < len(r) {
+				col = append(col, r[i])
+			}
+		}
+		result[i] = col
+	}
+	return result
+}
+
+// builtinFill fills array with value
+func (i *Interpreter) builtinFill(args []Value) Value {
+	if len(args) < 2 {
+		return []Value{}
+	}
+
+	n := int(i.toInt(args[0]))
+	if n <= 0 {
+		return []Value{}
+	}
+
+	value := args[1]
+	result := make([]Value, n)
+	for i := range result {
+		result[i] = value
+	}
+	return result
+}
+
+// builtinFillRange fills array with values in range
+func (i *Interpreter) builtinFillRange(args []Value) Value {
+	if len(args) < 2 {
+		return []Value{}
+	}
+
+	start := int(i.toInt(args[0]))
+	end := int(i.toInt(args[1]))
+	step := 1
+	if len(args) > 2 {
+		step = int(i.toInt(args[2]))
+	}
+
+	if step == 0 || (step > 0 && start > end) || (step < 0 && start < end) {
+		return []Value{}
+	}
+
+	result := []Value{}
+	if step > 0 {
+		for i := start; i < end; i += step {
+			result = append(result, int64(i))
+		}
+	} else {
+		for i := start; i > end; i += step {
+			result = append(result, int64(i))
+		}
+	}
+	return result
+}
+
+// builtinInsertAt inserts value at index
+func (i *Interpreter) builtinInsertAt(args []Value) Value {
+	if len(args) < 3 {
+		return args[0]
+	}
+
+	arr, ok := args[0].([]Value)
+	if !ok {
+		return []Value{}
+	}
+
+	idx := int(i.toInt(args[1]))
+	if idx < 0 {
+		idx = 0
+	}
+	if idx > len(arr) {
+		idx = len(arr)
+	}
+
+	value := args[2]
+	result := make([]Value, 0, len(arr)+1)
+	result = append(result, arr[:idx]...)
+	result = append(result, value)
+	result = append(result, arr[idx:]...)
+	return result
+}
+
+// builtinRemoveAt removes element at index
+func (i *Interpreter) builtinRemoveAt(args []Value) Value {
+	if len(args) < 2 {
+		return args[0]
+	}
+
+	arr, ok := args[0].([]Value)
+	if !ok || len(arr) == 0 {
+		return arr
+	}
+
+	idx := int(i.toInt(args[1]))
+	if idx < 0 || idx >= len(arr) {
+		return arr
+	}
+
+	result := make([]Value, 0, len(arr)-1)
+	result = append(result, arr[:idx]...)
+	result = append(result, arr[idx+1:]...)
+	return result
+}
+
+// builtinRemoveFirst removes first occurrence of value
+func (i *Interpreter) builtinRemoveFirst(args []Value) Value {
+	if len(args) < 2 {
+		return args[0]
+	}
+
+	arr, ok := args[0].([]Value)
+	if !ok || len(arr) == 0 {
+		return arr
+	}
+
+	target := args[1]
+	for idx, v := range arr {
+		if i.isEqual(v, target) {
+			result := make([]Value, 0, len(arr)-1)
+			result = append(result, arr[:idx]...)
+			result = append(result, arr[idx+1:]...)
+			return result
+		}
+	}
+	return arr
+}
+
+// builtinRemoveLast removes last occurrence of value
+func (i *Interpreter) builtinRemoveLast(args []Value) Value {
+	if len(args) < 2 {
+		return args[0]
+	}
+
+	arr, ok := args[0].([]Value)
+	if !ok || len(arr) == 0 {
+		return arr
+	}
+
+	target := args[1]
+	for idx := len(arr) - 1; idx >= 0; idx-- {
+		if i.isEqual(arr[idx], target) {
+			result := make([]Value, 0, len(arr)-1)
+			result = append(result, arr[:idx]...)
+			result = append(result, arr[idx+1:]...)
+			return result
+		}
+	}
+	return arr
+}
+
+// builtinRemoveAll removes all occurrences of value
+func (i *Interpreter) builtinRemoveAll(args []Value) Value {
+	if len(args) < 2 {
+		return args[0]
+	}
+
+	arr, ok := args[0].([]Value)
+	if !ok || len(arr) == 0 {
+		return arr
+	}
+
+	target := args[1]
+	result := []Value{}
+	for _, v := range arr {
+		if !i.isEqual(v, target) {
+			result = append(result, v)
+		}
+	}
+	return result
+}
+
+// builtinReplaceAt replaces element at index
+func (i *Interpreter) builtinReplaceAt(args []Value) Value {
+	if len(args) < 3 {
+		return args[0]
+	}
+
+	arr, ok := args[0].([]Value)
+	if !ok || len(arr) == 0 {
+		return arr
+	}
+
+	idx := int(i.toInt(args[1]))
+	if idx < 0 || idx >= len(arr) {
+		return arr
+	}
+
+	result := make([]Value, len(arr))
+	copy(result, arr)
+	result[idx] = args[2]
+	return result
+}
+
+// builtinSwap swaps two elements
+func (i *Interpreter) builtinSwap(args []Value) Value {
+	if len(args) < 3 {
+		return args[0]
+	}
+
+	arr, ok := args[0].([]Value)
+	if !ok || len(arr) < 2 {
+		return arr
+	}
+
+	i1 := int(i.toInt(args[1]))
+	i2 := int(i.toInt(args[2]))
+
+	if i1 < 0 || i1 >= len(arr) || i2 < 0 || i2 >= len(arr) {
+		return arr
+	}
+
+	result := make([]Value, len(arr))
+	copy(result, arr)
+	result[i1], result[i2] = result[i2], result[i1]
+	return result
+}
+
+// builtinMove moves element from one index to another
+func (i *Interpreter) builtinMove(args []Value) Value {
+	if len(args) < 3 {
+		return args[0]
+	}
+
+	arr, ok := args[0].([]Value)
+	if !ok || len(arr) < 2 {
+		return arr
+	}
+
+	from := int(i.toInt(args[1]))
+	to := int(i.toInt(args[2]))
+
+	if from < 0 || from >= len(arr) || to < 0 || to >= len(arr) {
+		return arr
+	}
+
+	result := make([]Value, len(arr))
+	copy(result, arr)
+
+	value := result[from]
+	// Remove from source
+	result = append(result[:from], result[from+1:]...)
+	// Insert at destination
+	result = append(result[:to], append([]Value{value}, result[to:]...)...)
+
+	return result[:len(arr)]
+}
+
+// builtinCompact removes nil/null values
+func (i *Interpreter) builtinCompact(args []Value) Value {
+	arr, ok := args[0].([]Value)
+	if !ok {
+		return []Value{}
+	}
+
+	result := []Value{}
+	for _, v := range arr {
+		if v != nil {
+			result = append(result, v)
+		}
+	}
+	return result
+}
+
+// builtinCompactFlat removes nil values and flattens one level
+func (i *Interpreter) builtinCompactFlat(args []Value) Value {
+	arr, ok := args[0].([]Value)
+	if !ok {
+		return []Value{}
+	}
+
+	result := []Value{}
+	for _, v := range arr {
+		if v == nil {
+			continue
+		}
+		if sub, ok := v.([]Value); ok {
+			for _, sv := range sub {
+				if sv != nil {
+					result = append(result, sv)
+				}
+			}
+		} else {
+			result = append(result, v)
+		}
+	}
+	return result
+}
+
+// builtinUniqBy returns unique elements by key function
+func (i *Interpreter) builtinUniqBy(args []Value) Value {
+	if len(args) < 2 {
+		return args[0]
+	}
+
+	arr, ok := args[0].([]Value)
+	if !ok {
+		return []Value{}
+	}
+
+	keyFn, ok := args[1].(string)
+	if !ok {
+		return i.builtinUnique(args)
+	}
+
+	seen := make(map[string]bool)
+	result := []Value{}
+
+	for _, v := range arr {
+		key := i.getKeyByFunction(v, keyFn)
+		if !seen[key] {
+			seen[key] = true
+			result = append(result, v)
+		}
+	}
+	return result
+}
+
+// builtinDifferenceBy difference with key function
+func (i *Interpreter) builtinDifferenceBy(args []Value) Value {
+	if len(args) < 3 {
+		return i.builtinDifference(args)
+	}
+
+	arr1, ok1 := args[0].([]Value)
+	arr2, ok2 := args[1].([]Value)
+	keyFn, ok3 := args[2].(string)
+
+	if !ok1 || !ok3 {
+		return []Value{}
+	}
+	if !ok2 {
+		return arr1
+	}
+
+	set := make(map[string]bool)
+	for _, v := range arr2 {
+		set[i.getKeyByFunction(v, keyFn)] = true
+	}
+
+	result := []Value{}
+	for _, v := range arr1 {
+		if !set[i.getKeyByFunction(v, keyFn)] {
+			result = append(result, v)
+		}
+	}
+	return result
+}
+
+// builtinIntersectionBy intersection with key function
+func (i *Interpreter) builtinIntersectionBy(args []Value) Value {
+	if len(args) < 3 {
+		return i.builtinIntersection(args)
+	}
+
+	arr1, ok1 := args[0].([]Value)
+	arr2, ok2 := args[1].([]Value)
+	keyFn, ok3 := args[2].(string)
+
+	if !ok1 || !ok2 || !ok3 {
+		return []Value{}
+	}
+
+	set := make(map[string]bool)
+	for _, v := range arr2 {
+		set[i.getKeyByFunction(v, keyFn)] = true
+	}
+
+	result := []Value{}
+	for _, v := range arr1 {
+		if set[i.getKeyByFunction(v, keyFn)] {
+			result = append(result, v)
+		}
+	}
+	return result
+}
+
+// builtinUnionBy union with key function
+func (i *Interpreter) builtinUnionBy(args []Value) Value {
+	if len(args) < 3 {
+		return i.builtinUnion(args)
+	}
+
+	arr1, ok1 := args[0].([]Value)
+	arr2, ok2 := args[1].([]Value)
+	keyFn, ok3 := args[2].(string)
+
+	if !ok1 {
+		arr1 = []Value{}
+	}
+	if !ok2 {
+		arr2 = []Value{}
+	}
+	if !ok3 {
+		return i.builtinUnion([]Value{arr1, arr2})
+	}
+
+	seen := make(map[string]bool)
+	result := []Value{}
+
+	for _, arr := range [][]Value{arr1, arr2} {
+		for _, v := range arr {
+			key := i.getKeyByFunction(v, keyFn)
+			if !seen[key] {
+				seen[key] = true
+				result = append(result, v)
+			}
+		}
+	}
+	return result
+}
+
+// builtinFindIndex finds index of first matching element
+func (i *Interpreter) builtinFindIndex(args []Value) Value {
+	if len(args) < 2 {
+		return int64(-1)
+	}
+
+	arr, ok := args[0].([]Value)
+	if !ok {
+		return int64(-1)
+	}
+
+	target := args[1]
+	for idx, v := range arr {
+		if i.isEqual(v, target) {
+			return int64(idx)
+		}
+	}
+	return int64(-1)
+}
+
+// builtinFindLastIndex finds index of last matching element
+func (i *Interpreter) builtinFindLastIndex(args []Value) Value {
+	if len(args) < 2 {
+		return int64(-1)
+	}
+
+	arr, ok := args[0].([]Value)
+	if !ok {
+		return int64(-1)
+	}
+
+	target := args[1]
+	for idx := len(arr) - 1; idx >= 0; idx-- {
+		if i.isEqual(arr[idx], target) {
+			return int64(idx)
+		}
+	}
+	return int64(-1)
+}
+
+// builtinIndicesOf finds all indices of value
+func (i *Interpreter) builtinIndicesOf(args []Value) Value {
+	if len(args) < 2 {
+		return []Value{}
+	}
+
+	arr, ok := args[0].([]Value)
+	if !ok {
+		return []Value{}
+	}
+
+	target := args[1]
+	result := []Value{}
+	for idx, v := range arr {
+		if i.isEqual(v, target) {
+			result = append(result, int64(idx))
+		}
+	}
+	return result
+}
+
+// builtinIndexOfAll alias for indicesOf
+func (i *Interpreter) builtinIndexOfAll(args []Value) Value {
+	return i.builtinIndicesOf(args)
+}
+
+// builtinTakeWhile takes elements while predicate is true
+func (i *Interpreter) builtinTakeWhile(args []Value) Value {
+	if len(args) < 2 {
+		return args[0]
+	}
+
+	arr, ok := args[0].([]Value)
+	if !ok {
+		return []Value{}
+	}
+
+	predicate, ok := args[1].(string)
+	if !ok {
+		return arr
+	}
+
+	result := []Value{}
+	for _, v := range arr {
+		if !i.matchesPredicate(v, predicate) {
+			break
+		}
+		result = append(result, v)
+	}
+	return result
+}
+
+// builtinDropWhile drops elements while predicate is true
+func (i *Interpreter) builtinDropWhile(args []Value) Value {
+	if len(args) < 2 {
+		return args[0]
+	}
+
+	arr, ok := args[0].([]Value)
+	if !ok {
+		return []Value{}
+	}
+
+	predicate, ok := args[1].(string)
+	if !ok {
+		return arr
+	}
+
+	result := []Value{}
+	dropping := true
+	for _, v := range arr {
+		if dropping && i.matchesPredicate(v, predicate) {
+			continue
+		}
+		dropping = false
+		result = append(result, v)
+	}
+	return result
+}
+
+// builtinSpan splits array at first point predicate fails
+func (i *Interpreter) builtinSpan(args []Value) Value {
+	if len(args) < 2 {
+		return []Value{args[0], []Value{}}
+	}
+
+	arr, ok := args[0].([]Value)
+	if !ok {
+		return []Value{[]Value{}, []Value{}}
+	}
+
+	predicate, ok := args[1].(string)
+	if !ok {
+		return []Value{arr, []Value{}}
+	}
+
+	splitIdx := len(arr)
+	for idx, v := range arr {
+		if !i.matchesPredicate(v, predicate) {
+			splitIdx = idx
+			break
+		}
+	}
+
+	return []Value{arr[:splitIdx], arr[splitIdx:]}
+}
+
+// builtinBreakList splits array at first point predicate succeeds
+func (i *Interpreter) builtinBreakList(args []Value) Value {
+	if len(args) < 2 {
+		return []Value{args[0], []Value{}}
+	}
+
+	arr, ok := args[0].([]Value)
+	if !ok {
+		return []Value{[]Value{}, []Value{}}
+	}
+
+	predicate, ok := args[1].(string)
+	if !ok {
+		return []Value{arr, []Value{}}
+	}
+
+	splitIdx := len(arr)
+	for idx, v := range arr {
+		if i.matchesPredicate(v, predicate) {
+			splitIdx = idx
+			break
+		}
+	}
+
+	return []Value{arr[:splitIdx], arr[splitIdx:]}
+}
+
+// builtinSplitAt splits array at index
+func (i *Interpreter) builtinSplitAt(args []Value) Value {
+	if len(args) < 2 {
+		return []Value{args[0], []Value{}}
+	}
+
+	arr, ok := args[0].([]Value)
+	if !ok {
+		return []Value{[]Value{}, []Value{}}
+	}
+
+	idx := int(i.toInt(args[1]))
+	if idx < 0 {
+		idx = 0
+	}
+	if idx > len(arr) {
+		idx = len(arr)
+	}
+
+	return []Value{arr[:idx], arr[idx:]}
+}
+
+// builtinSplitWhen splits array when predicate is true
+func (i *Interpreter) builtinSplitWhen(args []Value) Value {
+	if len(args) < 2 {
+		return []Value{}
+	}
+
+	arr, ok := args[0].([]Value)
+	if !ok {
+		return []Value{}
+	}
+
+	predicate, ok := args[1].(string)
+	if !ok {
+		return []Value{arr}
+	}
+
+	result := [][]Value{}
+	current := []Value{}
+
+	for _, v := range arr {
+		if i.matchesPredicate(v, predicate) {
+			if len(current) > 0 {
+				result = append(result, current)
+				current = []Value{}
+			}
+		} else {
+			current = append(current, v)
+		}
+	}
+	if len(current) > 0 {
+		result = append(result, current)
+	}
+
+	// Convert to []Value
+	ret := make([]Value, len(result))
+	for i, r := range result {
+		ret[i] = r
+	}
+	return ret
+}
+
+// builtinAperture returns consecutive n-tuples
+func (i *Interpreter) builtinAperture(args []Value) Value {
+	return i.builtinSlide(args)
+}
+
+// builtinXprod cartesian product of two arrays
+func (i *Interpreter) builtinXprod(args []Value) Value {
+	if len(args) < 2 {
+		return []Value{}
+	}
+
+	arr1, ok1 := args[0].([]Value)
+	arr2, ok2 := args[1].([]Value)
+
+	if !ok1 || !ok2 {
+		return []Value{}
+	}
+
+	result := []Value{}
+	for _, a := range arr1 {
+		for _, b := range arr2 {
+			result = append(result, []Value{a, b})
+		}
+	}
+	return result
+}
+
+// builtinFromPairs converts pairs to object
+func (i *Interpreter) builtinFromPairs(args []Value) Value {
+	arr, ok := args[0].([]Value)
+	if !ok {
+		return map[string]Value{}
+	}
+
+	result := make(map[string]Value)
+	for _, pair := range arr {
+		if p, ok := pair.([]Value); ok && len(p) >= 2 {
+			if key, ok := p[0].(string); ok {
+				result[key] = p[1]
+			}
+		}
+	}
+	return result
+}
+
+// builtinToPairs converts object to pairs
+func (i *Interpreter) builtinToPairs(args []Value) Value {
+	obj, ok := args[0].(map[string]Value)
+	if !ok {
+		return []Value{}
+	}
+
+	result := []Value{}
+	for k, v := range obj {
+		result = append(result, []Value{k, v})
+	}
+	return result
+}
+
+// builtinRangeStep creates range with step
+func (i *Interpreter) builtinRangeStep(args []Value) Value {
+	if len(args) < 3 {
+		return i.builtinRange(args)
+	}
+
+	start := int(i.toInt(args[0]))
+	end := int(i.toInt(args[1]))
+	step := int(i.toInt(args[2]))
+
+	if step == 0 {
+		return []Value{}
+	}
+
+	result := []Value{}
+	if step > 0 {
+		for i := start; i < end; i += step {
+			result = append(result, int64(i))
+		}
+	} else {
+		for i := start; i > end; i += step {
+			result = append(result, int64(i))
+		}
+	}
+	return result
+}
+
+// builtinRepeatAll creates array by repeating value
+func (i *Interpreter) builtinRepeatAll(args []Value) Value {
+	if len(args) < 2 {
+		return []Value{}
+	}
+
+	value := args[0]
+	n := int(i.toInt(args[1]))
+
+	result := make([]Value, n)
+	for i := range result {
+		result[i] = value
+	}
+	return result
+}
+
+// builtinCycle cycles through array n times
+func (i *Interpreter) builtinCycle(args []Value) Value {
+	if len(args) < 2 {
+		return args[0]
+	}
+
+	arr, ok := args[0].([]Value)
+	if !ok || len(arr) == 0 {
+		return []Value{}
+	}
+
+	n := int(i.toInt(args[1]))
+	result := []Value{}
+
+	for i := 0; i < n; i++ {
+		result = append(result, arr...)
+	}
+	return result
+}
+
+// builtinIterate creates array by iterating function
+func (i *Interpreter) builtinIterate(args []Value) Value {
+	if len(args) < 3 {
+		return []Value{}
+	}
+
+	initial := args[0]
+	n := int(i.toInt(args[1]))
+	operation, ok := args[2].(string)
+
+	if !ok || n <= 0 {
+		return []Value{initial}
+	}
+
+	result := []Value{initial}
+	current := initial
+
+	for idx := 1; idx < n; idx++ {
+		current = i.applyOperation(current, operation)
+		result = append(result, current)
+	}
+	return result
+}
+
+// builtinPrependAll prepends all elements from arrays
+func (i *Interpreter) builtinPrependAll(args []Value) Value {
+	if len(args) < 2 {
+		return args[0]
+	}
+
+	arr, ok := args[0].([]Value)
+	if !ok {
+		arr = []Value{}
+	}
+
+	result := []Value{}
+	for i := len(args) - 1; i >= 1; i-- {
+		if toPrepend, ok := args[i].([]Value); ok {
+			result = append(result, toPrepend...)
+		}
+	}
+	result = append(result, arr...)
+	return result
+}
+
+// builtinAppendAll appends all elements from arrays
+func (i *Interpreter) builtinAppendAll(args []Value) Value {
+	if len(args) < 2 {
+		return args[0]
+	}
+
+	result, ok := args[0].([]Value)
+	if !ok {
+		result = []Value{}
+	}
+
+	for i := 1; i < len(args); i++ {
+		if toAppend, ok := args[i].([]Value); ok {
+			result = append(result, toAppend...)
+		}
+	}
+	return result
+}
+
+// builtinIntersperse inserts value between elements
+func (i *Interpreter) builtinIntersperse(args []Value) Value {
+	if len(args) < 2 {
+		return args[0]
+	}
+
+	arr, ok := args[0].([]Value)
+	if !ok || len(arr) <= 1 {
+		return arr
+	}
+
+	separator := args[1]
+	result := []Value{}
+
+	for i, v := range arr {
+		if i > 0 {
+			result = append(result, separator)
+		}
+		result = append(result, v)
+	}
+	return result
+}
+
+// builtinIntercalate inserts array between elements and flattens
+func (i *Interpreter) builtinIntercalate(args []Value) Value {
+	if len(args) < 2 {
+		return args[0]
+	}
+
+	arr, ok := args[0].([]Value)
+	if !ok || len(arr) == 0 {
+		return []Value{}
+	}
+
+	separator, ok := args[1].([]Value)
+	if !ok {
+		return i.builtinIntersperse(args)
+	}
+
+	result := []Value{}
+	for i, v := range arr {
+		if i > 0 {
+			result = append(result, separator...)
+		}
+		result = append(result, v)
+	}
+	return result
+}
+
+// builtinSubsequences returns all subsequences
+func (i *Interpreter) builtinSubsequences(args []Value) Value {
+	arr, ok := args[0].([]Value)
+	if !ok {
+		return []Value{}
+	}
+
+	n := len(arr)
+	total := 1 << n // 2^n subsequences
+
+	result := []Value{}
+	for i := 0; i < total; i++ {
+		subseq := []Value{}
+		for j := 0; j < n; j++ {
+			if i&(1<<j) != 0 {
+				subseq = append(subseq, arr[j])
+			}
+		}
+		if len(subseq) > 0 {
+			result = append(result, subseq)
+		}
+	}
+	return append([]Value{}, result...) // Ensure we include empty list at start
+}
+
+// builtinPermutations returns all permutations
+func (i *Interpreter) builtinPermutations(args []Value) Value {
+	arr, ok := args[0].([]Value)
+	if !ok {
+		return []Value{}
+	}
+
+	if len(arr) == 0 {
+		return []Value{}
+	}
+
+	// Heap's algorithm
+	result := [][]Value{}
+	n := len(arr)
+
+	// Helper to generate permutations
+	var generate func([]Value, int)
+	generate = func(a []Value, k int) {
+		if k == 1 {
+			perm := make([]Value, len(a))
+			copy(perm, a)
+			result = append(result, perm)
+			return
+		}
+		generate(a, k-1)
+		for i := 0; i < k-1; i++ {
+			if k%2 == 0 {
+				a[i], a[k-1] = a[k-1], a[i]
+			} else {
+				a[0], a[k-1] = a[k-1], a[0]
+			}
+			generate(a, k-1)
+		}
+	}
+
+	arrCopy := make([]Value, len(arr))
+	copy(arrCopy, arr)
+	generate(arrCopy, n)
+
+	ret := make([]Value, len(result))
+	for i, r := range result {
+		ret[i] = r
+	}
+	return ret
+}
+
+// builtinMode calculates mode (most frequent value)
+func (i *Interpreter) builtinMode(args []Value) Value {
+	arr, ok := args[0].([]Value)
+	if !ok || len(arr) == 0 {
+		return nil
+	}
+
+	counts := make(map[string]int)
+	for _, v := range arr {
+		key := fmt.Sprintf("%v", v)
+		counts[key]++
+	}
+
+	maxCount := 0
+	var mode Value
+	for k, c := range counts {
+		if c > maxCount {
+			maxCount = c
+			// Find original value
+			for _, v := range arr {
+				if fmt.Sprintf("%v", v) == k {
+					mode = v
+					break
+				}
+			}
+		}
+	}
+	return mode
+}
+
+// builtinStdDev calculates standard deviation
+func (i *Interpreter) builtinStdDev(args []Value) Value {
+	variance := i.builtinVariance(args)
+	return math.Sqrt(i.toFloat(variance))
+}
+
+// builtinMinBy finds minimum by key function
+func (i *Interpreter) builtinMinBy(args []Value) Value {
+	if len(args) < 2 {
+		return i.builtinMin(args)
+	}
+
+	arr, ok := args[0].([]Value)
+	if !ok || len(arr) == 0 {
+		return nil
+	}
+
+	keyFn, ok := args[1].(string)
+	if !ok {
+		return arr[0]
+	}
+
+	minIdx := 0
+	minKey := i.getKeyByFunction(arr[0], keyFn)
+
+	for idx, v := range arr[1:] {
+		key := i.getKeyByFunction(v, keyFn)
+		if key < minKey {
+			minKey = key
+			minIdx = idx + 1
+		}
+	}
+	return arr[minIdx]
+}
+
+// builtinMaxBy finds maximum by key function
+func (i *Interpreter) builtinMaxBy(args []Value) Value {
+	if len(args) < 2 {
+		return i.builtinMax(args)
+	}
+
+	arr, ok := args[0].([]Value)
+	if !ok || len(arr) == 0 {
+		return nil
+	}
+
+	keyFn, ok := args[1].(string)
+	if !ok {
+		return arr[0]
+	}
+
+	maxIdx := 0
+	maxKey := i.getKeyByFunction(arr[0], keyFn)
+
+	for idx, v := range arr[1:] {
+		key := i.getKeyByFunction(v, keyFn)
+		if key > maxKey {
+			maxKey = key
+			maxIdx = idx + 1
+		}
+	}
+	return arr[maxIdx]
+}
+
+// Helper functions for array operations
+
+func (i *Interpreter) matchesPredicate(v Value, predicate string) bool {
+	switch predicate {
+	case "truthy", "true":
+		return i.toBool(v)
+	case "falsy", "false":
+		return !i.toBool(v)
+	case "string":
+		_, ok := v.(string)
+		return ok
+	case "number", "numeric":
+		switch v.(type) {
+		case int, int64, float64:
+			return true
+		default:
+			return false
+		}
+	case "array":
+		_, ok := v.([]Value)
+		return ok
+	case "object", "map":
+		_, ok := v.(map[string]Value)
+		return ok
+	case "nil", "null":
+		return v == nil
+	case "positive":
+		return i.toFloat(v) > 0
+	case "negative":
+		return i.toFloat(v) < 0
+	case "even":
+		return int(i.toFloat(v))%2 == 0
+	case "odd":
+		return int(i.toFloat(v))%2 != 0
+	case "zero":
+		return i.toFloat(v) == 0
+	default:
+		return false
+	}
+}
+
+func (i *Interpreter) getKeyByFunction(v Value, keyFn string) string {
+	switch keyFn {
+	case "string":
+		return fmt.Sprintf("%v", v)
+	case "lower":
+		return strings.ToLower(fmt.Sprintf("%v", v))
+	case "upper":
+		return strings.ToUpper(fmt.Sprintf("%v", v))
+	case "type":
+		return fmt.Sprintf("%T", v)
+	case "len":
+		switch val := v.(type) {
+		case string:
+			return fmt.Sprintf("%d", len(val))
+		case []Value:
+			return fmt.Sprintf("%d", len(val))
+		case map[string]Value:
+			return fmt.Sprintf("%d", len(val))
+		default:
+			return "0"
+		}
+	default:
+		// Check if it's an object property
+		if obj, ok := v.(map[string]Value); ok {
+			if val, exists := obj[keyFn]; exists {
+				return fmt.Sprintf("%v", val)
+			}
+		}
+		return fmt.Sprintf("%v", v)
+	}
+}
+
+func (i *Interpreter) applyOperation(v Value, operation string) Value {
+	switch operation {
+	case "inc", "increment":
+		return i.toFloat(v) + 1
+	case "dec", "decrement":
+		return i.toFloat(v) - 1
+	case "double":
+		return i.toFloat(v) * 2
+	case "half":
+		return i.toFloat(v) / 2
+	case "square":
+		f := i.toFloat(v)
+		return f * f
+	case "negate":
+		return -i.toFloat(v)
+	case "string":
+		return fmt.Sprintf("%v", v)
+	default:
+		return v
+	}
 }
 
 // ============================================================================
