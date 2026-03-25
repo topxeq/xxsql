@@ -13,11 +13,14 @@ import (
 	"fmt"
 	"html"
 	"io"
+	"math"
+	"math/rand"
 	"net/http"
 	"net/url"
 	"os"
 	"path/filepath"
 	"reflect"
+	"sort"
 	"strings"
 	"time"
 	"unicode"
@@ -1176,6 +1179,147 @@ func (i *Interpreter) callBuiltin(name string, args []Value) (Value, bool) {
 		return i.builtinSqrt(args), true
 	case "pow":
 		return i.builtinPow(args), true
+	// Trigonometric functions
+	case "sin":
+		return i.builtinSin(args), true
+	case "cos":
+		return i.builtinCos(args), true
+	case "tan":
+		return i.builtinTan(args), true
+	case "asin":
+		return i.builtinAsin(args), true
+	case "acos":
+		return i.builtinAcos(args), true
+	case "atan":
+		return i.builtinAtan(args), true
+	case "atan2":
+		return i.builtinAtan2(args), true
+	case "sinh":
+		return i.builtinSinh(args), true
+	case "cosh":
+		return i.builtinCosh(args), true
+	case "tanh":
+		return i.builtinTanh(args), true
+	// Logarithm and exponential
+	case "log":
+		return i.builtinLog(args), true
+	case "log10":
+		return i.builtinLog10(args), true
+	case "log2":
+		return i.builtinLog2(args), true
+	case "exp":
+		return i.builtinExp(args), true
+	// Other math
+	case "cbrt":
+		return i.builtinCbrt(args), true
+	case "hypot":
+		return i.builtinHypot(args), true
+	case "sign":
+		return i.builtinSign(args), true
+	case "mod":
+		return i.builtinMod(args), true
+	case "div":
+		return i.builtinDiv(args), true
+	case "clamp":
+		return i.builtinClamp(args), true
+	case "lerp":
+		return i.builtinLerp(args), true
+	case "degrees":
+		return i.builtinDegrees(args), true
+	case "radians":
+		return i.builtinRadians(args), true
+	case "isInf":
+		return i.builtinIsInf(args), true
+	case "isNaN":
+		return i.builtinIsNaN(args), true
+	// Number theory
+	case "factorial":
+		return i.builtinFactorial(args), true
+	case "gcd":
+		return i.builtinGCD(args), true
+	case "lcm":
+		return i.builtinLCM(args), true
+	case "isPrime":
+		return i.builtinIsPrime(args), true
+	case "fibonacci":
+		return i.builtinFibonacci(args), true
+	case "binomial":
+		return i.builtinBinomial(args), true
+	// Statistics
+	case "sum":
+		return i.builtinSum(args), true
+	case "product":
+		return i.builtinProduct(args), true
+	case "mean":
+		return i.builtinMean(args), true
+	case "median":
+		return i.builtinMedian(args), true
+	case "variance":
+		return i.builtinVariance(args), true
+	case "stddev":
+		return i.builtinStddev(args), true
+	case "percentile":
+		return i.builtinPercentile(args), true
+	// Random
+	case "random":
+		return i.builtinRandom(args), true
+	case "randomInt":
+		return i.builtinRandomInt(args), true
+	case "randomFloat":
+		return i.builtinRandomFloat(args), true
+	case "shuffle":
+		return i.builtinShuffle(args), true
+	case "sample":
+		return i.builtinSample(args), true
+	// Data processing - array functions
+	case "sort":
+		return i.builtinSort(args), true
+	case "sortDesc":
+		return i.builtinSortDesc(args), true
+	case "arrayReverse":
+		return i.builtinArrayReverse(args), true
+	case "unique":
+		return i.builtinUnique(args), true
+	case "flatten":
+		return i.builtinFlatten(args), true
+	case "chunk":
+		return i.builtinChunk(args), true
+	case "take":
+		return i.builtinTake(args), true
+	case "drop":
+		return i.builtinDrop(args), true
+	case "first":
+		return i.builtinFirst(args), true
+	case "last":
+		return i.builtinLast(args), true
+	case "nth":
+		return i.builtinNth(args), true
+	case "find":
+		return i.builtinFind(args), true
+	case "filter":
+		return i.builtinFilter(args), true
+	case "map":
+		return i.builtinMap(args), true
+	case "reduce":
+		return i.builtinReduce(args), true
+	case "every":
+		return i.builtinEvery(args), true
+	case "some":
+		return i.builtinSome(args), true
+	case "countBy":
+		return i.builtinCountBy(args), true
+	case "groupBy":
+		return i.builtinGroupBy(args), true
+	case "zip":
+		return i.builtinZip(args), true
+	case "unzip":
+		return i.builtinUnzip(args), true
+	case "intersection":
+		return i.builtinIntersection(args), true
+	case "union":
+		return i.builtinUnion(args), true
+	case "difference":
+		return i.builtinDifference(args), true
 	// Crypto/Hash functions
 	case "md5":
 		return i.builtinMD5(args), true
@@ -2337,13 +2481,1225 @@ func (i *Interpreter) builtinPow(args []Value) Value {
 	}
 	base := i.toFloat(args[0])
 	exp := i.toFloat(args[1])
-	result := 1.0
-	for exp > 0 {
-		if int(exp)%2 == 1 {
-			result *= base
+	return math.Pow(base, exp)
+}
+
+// ============================================================================
+// Trigonometric Functions
+// ============================================================================
+
+func (i *Interpreter) builtinSin(args []Value) Value {
+	if len(args) == 0 {
+		return 0.0
+	}
+	return math.Sin(i.toFloat(args[0]))
+}
+
+func (i *Interpreter) builtinCos(args []Value) Value {
+	if len(args) == 0 {
+		return 1.0
+	}
+	return math.Cos(i.toFloat(args[0]))
+}
+
+func (i *Interpreter) builtinTan(args []Value) Value {
+	if len(args) == 0 {
+		return 0.0
+	}
+	return math.Tan(i.toFloat(args[0]))
+}
+
+func (i *Interpreter) builtinAsin(args []Value) Value {
+	if len(args) == 0 {
+		return 0.0
+	}
+	return math.Asin(i.toFloat(args[0]))
+}
+
+func (i *Interpreter) builtinAcos(args []Value) Value {
+	if len(args) == 0 {
+		return 0.0
+	}
+	return math.Acos(i.toFloat(args[0]))
+}
+
+func (i *Interpreter) builtinAtan(args []Value) Value {
+	if len(args) == 0 {
+		return 0.0
+	}
+	return math.Atan(i.toFloat(args[0]))
+}
+
+func (i *Interpreter) builtinAtan2(args []Value) Value {
+	if len(args) < 2 {
+		return 0.0
+	}
+	return math.Atan2(i.toFloat(args[0]), i.toFloat(args[1]))
+}
+
+func (i *Interpreter) builtinSinh(args []Value) Value {
+	if len(args) == 0 {
+		return 0.0
+	}
+	return math.Sinh(i.toFloat(args[0]))
+}
+
+func (i *Interpreter) builtinCosh(args []Value) Value {
+	if len(args) == 0 {
+		return 1.0
+	}
+	return math.Cosh(i.toFloat(args[0]))
+}
+
+func (i *Interpreter) builtinTanh(args []Value) Value {
+	if len(args) == 0 {
+		return 0.0
+	}
+	return math.Tanh(i.toFloat(args[0]))
+}
+
+// ============================================================================
+// Logarithm and Exponential Functions
+// ============================================================================
+
+func (i *Interpreter) builtinLog(args []Value) Value {
+	if len(args) == 0 {
+		return 0.0
+	}
+	return math.Log(i.toFloat(args[0]))
+}
+
+func (i *Interpreter) builtinLog10(args []Value) Value {
+	if len(args) == 0 {
+		return 0.0
+	}
+	return math.Log10(i.toFloat(args[0]))
+}
+
+func (i *Interpreter) builtinLog2(args []Value) Value {
+	if len(args) == 0 {
+		return 0.0
+	}
+	return math.Log2(i.toFloat(args[0]))
+}
+
+func (i *Interpreter) builtinExp(args []Value) Value {
+	if len(args) == 0 {
+		return 1.0
+	}
+	return math.Exp(i.toFloat(args[0]))
+}
+
+// ============================================================================
+// Other Math Functions
+// ============================================================================
+
+func (i *Interpreter) builtinCbrt(args []Value) Value {
+	if len(args) == 0 {
+		return 0.0
+	}
+	return math.Cbrt(i.toFloat(args[0]))
+}
+
+func (i *Interpreter) builtinHypot(args []Value) Value {
+	if len(args) < 2 {
+		return 0.0
+	}
+	return math.Hypot(i.toFloat(args[0]), i.toFloat(args[1]))
+}
+
+func (i *Interpreter) builtinSign(args []Value) Value {
+	if len(args) == 0 {
+		return 0
+	}
+	v := i.toFloat(args[0])
+	if v > 0 {
+		return 1
+	} else if v < 0 {
+		return -1
+	}
+	return 0
+}
+
+func (i *Interpreter) builtinMod(args []Value) Value {
+	if len(args) < 2 {
+		return 0
+	}
+	return math.Mod(i.toFloat(args[0]), i.toFloat(args[1]))
+}
+
+func (i *Interpreter) builtinDiv(args []Value) Value {
+	if len(args) < 2 {
+		return 0
+	}
+	a := i.toFloat(args[0])
+	b := i.toFloat(args[1])
+	if b == 0 {
+		return 0.0
+	}
+	return math.Trunc(a / b)
+}
+
+func (i *Interpreter) builtinClamp(args []Value) Value {
+	if len(args) < 3 {
+		return 0
+	}
+	val := i.toFloat(args[0])
+	minVal := i.toFloat(args[1])
+	maxVal := i.toFloat(args[2])
+	return math.Max(minVal, math.Min(maxVal, val))
+}
+
+func (i *Interpreter) builtinLerp(args []Value) Value {
+	if len(args) < 3 {
+		return 0
+	}
+	start := i.toFloat(args[0])
+	end := i.toFloat(args[1])
+	t := i.toFloat(args[2])
+	return start + (end-start)*t
+}
+
+func (i *Interpreter) builtinDegrees(args []Value) Value {
+	if len(args) == 0 {
+		return 0.0
+	}
+	return i.toFloat(args[0]) * 180 / math.Pi
+}
+
+func (i *Interpreter) builtinRadians(args []Value) Value {
+	if len(args) == 0 {
+		return 0.0
+	}
+	return i.toFloat(args[0]) * math.Pi / 180
+}
+
+func (i *Interpreter) builtinIsInf(args []Value) Value {
+	if len(args) == 0 {
+		return false
+	}
+	return math.IsInf(i.toFloat(args[0]), 0)
+}
+
+func (i *Interpreter) builtinIsNaN(args []Value) Value {
+	if len(args) == 0 {
+		return false
+	}
+	return math.IsNaN(i.toFloat(args[0]))
+}
+
+// ============================================================================
+// Number Theory Functions
+// ============================================================================
+
+func (i *Interpreter) builtinFactorial(args []Value) Value {
+	if len(args) == 0 {
+		return int64(1)
+	}
+	n := int64(i.toInt(args[0]))
+	if n < 0 {
+		return int64(0)
+	}
+	if n <= 1 {
+		return int64(1)
+	}
+	result := int64(1)
+	for j := int64(2); j <= n; j++ {
+		result *= j
+	}
+	return result
+}
+
+func (i *Interpreter) builtinGCD(args []Value) Value {
+	if len(args) < 2 {
+		return int64(0)
+	}
+	a := int64(i.toInt(args[0]))
+	b := int64(i.toInt(args[1]))
+	if a < 0 {
+		a = -a
+	}
+	if b < 0 {
+		b = -b
+	}
+	for b != 0 {
+		a, b = b, a%b
+	}
+	return a
+}
+
+func (i *Interpreter) builtinLCM(args []Value) Value {
+	if len(args) < 2 {
+		return int64(0)
+	}
+	a := int64(i.toInt(args[0]))
+	b := int64(i.toInt(args[1]))
+	if a < 0 {
+		a = -a
+	}
+	if b < 0 {
+		b = -b
+	}
+	if a == 0 || b == 0 {
+		return int64(0)
+	}
+	gcd := func(x, y int64) int64 {
+		for y != 0 {
+			x, y = y, x%y
 		}
-		base *= base
-		exp = float64(int(exp) / 2)
+		return x
+	}
+	return a / gcd(a, b) * b
+}
+
+func (i *Interpreter) builtinIsPrime(args []Value) Value {
+	if len(args) == 0 {
+		return false
+	}
+	n := int64(i.toInt(args[0]))
+	if n < 2 {
+		return false
+	}
+	if n == 2 {
+		return true
+	}
+	if n%2 == 0 {
+		return false
+	}
+	for j := int64(3); j*j <= n; j += 2 {
+		if n%j == 0 {
+			return false
+		}
+	}
+	return true
+}
+
+func (i *Interpreter) builtinFibonacci(args []Value) Value {
+	if len(args) == 0 {
+		return int64(0)
+	}
+	n := int64(i.toInt(args[0]))
+	if n <= 0 {
+		return int64(0)
+	}
+	if n == 1 {
+		return int64(1)
+	}
+	a, b := int64(0), int64(1)
+	for j := int64(2); j <= n; j++ {
+		a, b = b, a+b
+	}
+	return b
+}
+
+func (i *Interpreter) builtinBinomial(args []Value) Value {
+	if len(args) < 2 {
+		return int64(0)
+	}
+	n := int64(i.toInt(args[0]))
+	k := int64(i.toInt(args[1]))
+	if k < 0 || k > n {
+		return int64(0)
+	}
+	if k == 0 || k == n {
+		return int64(1)
+	}
+	if k > n-k {
+		k = n - k
+	}
+	result := int64(1)
+	for j := int64(0); j < k; j++ {
+		result = result * (n - j) / (j + 1)
+	}
+	return result
+}
+
+// ============================================================================
+// Statistical Functions
+// ============================================================================
+
+func (i *Interpreter) builtinSum(args []Value) Value {
+	if len(args) == 0 {
+		return 0
+	}
+	arr, ok := args[0].([]Value)
+	if !ok {
+		return i.toFloat(args[0])
+	}
+	var sum float64
+	for _, v := range arr {
+		sum += i.toFloat(v)
+	}
+	return sum
+}
+
+func (i *Interpreter) builtinProduct(args []Value) Value {
+	if len(args) == 0 {
+		return 1
+	}
+	arr, ok := args[0].([]Value)
+	if !ok {
+		return i.toFloat(args[0])
+	}
+	prod := 1.0
+	for _, v := range arr {
+		prod *= i.toFloat(v)
+	}
+	return prod
+}
+
+func (i *Interpreter) builtinMean(args []Value) Value {
+	if len(args) == 0 {
+		return 0
+	}
+	arr, ok := args[0].([]Value)
+	if !ok || len(arr) == 0 {
+		return 0
+	}
+	var sum float64
+	for _, v := range arr {
+		sum += i.toFloat(v)
+	}
+	return sum / float64(len(arr))
+}
+
+func (i *Interpreter) builtinMedian(args []Value) Value {
+	if len(args) == 0 {
+		return 0
+	}
+	arr, ok := args[0].([]Value)
+	if !ok || len(arr) == 0 {
+		return 0
+	}
+	// Copy and sort
+	vals := make([]float64, len(arr))
+	for j, v := range arr {
+		vals[j] = i.toFloat(v)
+	}
+	sort.Float64s(vals)
+	n := len(vals)
+	if n%2 == 0 {
+		return (vals[n/2-1] + vals[n/2]) / 2
+	}
+	return vals[n/2]
+}
+
+func (i *Interpreter) builtinVariance(args []Value) Value {
+	if len(args) == 0 {
+		return 0
+	}
+	arr, ok := args[0].([]Value)
+	if !ok || len(arr) == 0 {
+		return 0
+	}
+	// Calculate mean
+	var sum float64
+	for _, v := range arr {
+		sum += i.toFloat(v)
+	}
+	mean := sum / float64(len(arr))
+	// Calculate variance
+	var variance float64
+	for _, v := range arr {
+		diff := i.toFloat(v) - mean
+		variance += diff * diff
+	}
+	return variance / float64(len(arr))
+}
+
+func (i *Interpreter) builtinStddev(args []Value) Value {
+	variance := i.builtinVariance(args)
+	return math.Sqrt(variance.(float64))
+}
+
+func (i *Interpreter) builtinPercentile(args []Value) Value {
+	if len(args) < 2 {
+		return 0
+	}
+	arr, ok := args[0].([]Value)
+	if !ok || len(arr) == 0 {
+		return 0
+	}
+	p := i.toFloat(args[1])
+	if p < 0 {
+		p = 0
+	}
+	if p > 100 {
+		p = 100
+	}
+	// Copy and sort
+	vals := make([]float64, len(arr))
+	for j, v := range arr {
+		vals[j] = i.toFloat(v)
+	}
+	sort.Float64s(vals)
+	// Calculate index
+	index := (p / 100) * float64(len(vals)-1)
+	lower := int(index)
+	upper := lower + 1
+	if upper >= len(vals) {
+		return vals[len(vals)-1]
+	}
+	frac := index - float64(lower)
+	return vals[lower] + frac*(vals[upper]-vals[lower])
+}
+
+// ============================================================================
+// Random Functions
+// ============================================================================
+
+func (i *Interpreter) builtinRandom(args []Value) Value {
+	return rand.Float64()
+}
+
+func (i *Interpreter) builtinRandomInt(args []Value) Value {
+	if len(args) < 2 {
+		return int64(0)
+	}
+	min := int64(i.toInt(args[0]))
+	max := int64(i.toInt(args[1]))
+	return min + rand.Int63n(max-min+1)
+}
+
+func (i *Interpreter) builtinRandomFloat(args []Value) Value {
+	if len(args) < 2 {
+		return rand.Float64()
+	}
+	min := i.toFloat(args[0])
+	max := i.toFloat(args[1])
+	return min + rand.Float64()*(max-min)
+}
+
+func (i *Interpreter) builtinShuffle(args []Value) Value {
+	if len(args) == 0 {
+		return []Value{}
+	}
+	arr, ok := args[0].([]Value)
+	if !ok {
+		return []Value{}
+	}
+	// Copy array
+	result := make([]Value, len(arr))
+	copy(result, arr)
+	// Fisher-Yates shuffle
+	for j := len(result) - 1; j > 0; j-- {
+		k := rand.Intn(j + 1)
+		result[j], result[k] = result[k], result[j]
+	}
+	return result
+}
+
+func (i *Interpreter) builtinSample(args []Value) Value {
+	if len(args) == 0 {
+		return []Value{}
+	}
+	arr, ok := args[0].([]Value)
+	if !ok || len(arr) == 0 {
+		return []Value{}
+	}
+	n := 1
+	if len(args) > 1 {
+		n = int(i.toInt(args[1]))
+	}
+	if n >= len(arr) {
+		// Return shuffled copy
+		return i.builtinShuffle(args)
+	}
+	// Reservoir sampling
+	result := make([]Value, n)
+	copy(result, arr[:n])
+	for j := n; j < len(arr); j++ {
+		k := rand.Intn(j + 1)
+		if k < n {
+			result[k] = arr[j]
+		}
+	}
+	return result
+}
+
+// ============================================================================
+// Data Processing - Array Functions
+// ============================================================================
+
+func (i *Interpreter) builtinSort(args []Value) Value {
+	if len(args) == 0 {
+		return []Value{}
+	}
+	arr, ok := args[0].([]Value)
+	if !ok {
+		return []Value{}
+	}
+	// Convert to float64s for sorting
+	vals := make([]float64, len(arr))
+	for j, v := range arr {
+		vals[j] = i.toFloat(v)
+	}
+	sort.Float64s(vals)
+	// Convert back
+	result := make([]Value, len(vals))
+	for j, v := range vals {
+		result[j] = v
+	}
+	return result
+}
+
+func (i *Interpreter) builtinSortDesc(args []Value) Value {
+	result := i.builtinSort(args)
+	arr := result.([]Value)
+	// Reverse
+	for j, k := 0, len(arr)-1; j < k; j, k = j+1, k-1 {
+		arr[j], arr[k] = arr[k], arr[j]
+	}
+	return arr
+}
+
+func (i *Interpreter) builtinArrayReverse(args []Value) Value {
+	if len(args) == 0 {
+		return []Value{}
+	}
+	arr, ok := args[0].([]Value)
+	if !ok {
+		return []Value{}
+	}
+	result := make([]Value, len(arr))
+	for j, v := range arr {
+		result[len(arr)-1-j] = v
+	}
+	return result
+}
+
+func (i *Interpreter) builtinUnique(args []Value) Value {
+	if len(args) == 0 {
+		return []Value{}
+	}
+	arr, ok := args[0].([]Value)
+	if !ok {
+		return []Value{}
+	}
+	seen := make(map[string]bool)
+	result := []Value{}
+	for _, v := range arr {
+		key := fmt.Sprintf("%v", v)
+		if !seen[key] {
+			seen[key] = true
+			result = append(result, v)
+		}
+	}
+	return result
+}
+
+func (i *Interpreter) builtinFlatten(args []Value) Value {
+	if len(args) == 0 {
+		return []Value{}
+	}
+	arr, ok := args[0].([]Value)
+	if !ok {
+		return []Value{args[0]}
+	}
+	depth := -1 // infinite depth
+	if len(args) > 1 {
+		depth = int(i.toInt(args[1]))
+	}
+	return i.flattenArray(arr, depth)
+}
+
+func (i *Interpreter) flattenArray(arr []Value, depth int) []Value {
+	result := []Value{}
+	for _, v := range arr {
+		if subArr, ok := v.([]Value); ok && depth != 0 {
+			newDepth := depth
+			if depth > 0 {
+				newDepth--
+			}
+			result = append(result, i.flattenArray(subArr, newDepth)...)
+		} else {
+			result = append(result, v)
+		}
+	}
+	return result
+}
+
+func (i *Interpreter) builtinChunk(args []Value) Value {
+	if len(args) < 2 {
+		return []Value{}
+	}
+	arr, ok := args[0].([]Value)
+	if !ok {
+		return []Value{}
+	}
+	size := int(i.toInt(args[1]))
+	if size <= 0 {
+		return []Value{}
+	}
+	result := []Value{}
+	for j := 0; j < len(arr); j += size {
+		end := j + size
+		if end > len(arr) {
+			end = len(arr)
+		}
+		result = append(result, arr[j:end])
+	}
+	return result
+}
+
+func (i *Interpreter) builtinTake(args []Value) Value {
+	if len(args) < 2 {
+		return []Value{}
+	}
+	arr, ok := args[0].([]Value)
+	if !ok {
+		return []Value{}
+	}
+	n := int(i.toInt(args[1]))
+	if n <= 0 {
+		return []Value{}
+	}
+	if n > len(arr) {
+		n = len(arr)
+	}
+	return arr[:n]
+}
+
+func (i *Interpreter) builtinDrop(args []Value) Value {
+	if len(args) < 2 {
+		return []Value{}
+	}
+	arr, ok := args[0].([]Value)
+	if !ok {
+		return []Value{}
+	}
+	n := int(i.toInt(args[1]))
+	if n <= 0 {
+		return arr
+	}
+	if n >= len(arr) {
+		return []Value{}
+	}
+	return arr[n:]
+}
+
+func (i *Interpreter) builtinFirst(args []Value) Value {
+	if len(args) == 0 {
+		return nil
+	}
+	arr, ok := args[0].([]Value)
+	if !ok || len(arr) == 0 {
+		return nil
+	}
+	return arr[0]
+}
+
+func (i *Interpreter) builtinLast(args []Value) Value {
+	if len(args) == 0 {
+		return nil
+	}
+	arr, ok := args[0].([]Value)
+	if !ok || len(arr) == 0 {
+		return nil
+	}
+	return arr[len(arr)-1]
+}
+
+func (i *Interpreter) builtinNth(args []Value) Value {
+	if len(args) < 2 {
+		return nil
+	}
+	arr, ok := args[0].([]Value)
+	if !ok {
+		return nil
+	}
+	n := int(i.toInt(args[1]))
+	if n < 0 {
+		n = len(arr) + n
+	}
+	if n < 0 || n >= len(arr) {
+		return nil
+	}
+	return arr[n]
+}
+
+func (i *Interpreter) builtinFind(args []Value) Value {
+	// find(arr, predicate) - simplified: find(arr, value)
+	if len(args) < 2 {
+		return nil
+	}
+	arr, ok := args[0].([]Value)
+	if !ok {
+		return nil
+	}
+	for _, v := range arr {
+		if fmt.Sprintf("%v", v) == fmt.Sprintf("%v", args[1]) {
+			return v
+		}
+	}
+	return nil
+}
+
+func (i *Interpreter) builtinFilter(args []Value) Value {
+	// filter(arr, type) - filter by type or condition
+	if len(args) < 2 {
+		return []Value{}
+	}
+	arr, ok := args[0].([]Value)
+	if !ok {
+		return []Value{}
+	}
+	typeStr, _ := args[1].(string)
+	result := []Value{}
+	for _, v := range arr {
+		switch typeStr {
+		case "number", "numeric":
+			if _, ok := v.(float64); ok {
+				result = append(result, v)
+			} else if _, ok := v.(int); ok {
+				result = append(result, v)
+			} else if _, ok := v.(int64); ok {
+				result = append(result, v)
+			}
+		case "string":
+			if _, ok := v.(string); ok {
+				result = append(result, v)
+			}
+		case "array":
+			if _, ok := v.([]Value); ok {
+				result = append(result, v)
+			}
+		case "map", "object":
+			if _, ok := v.(map[string]Value); ok {
+				result = append(result, v)
+			}
+		case "null", "nil":
+			if v == nil {
+				result = append(result, v)
+			}
+		default:
+			// Try numeric comparison
+			if i.toFloat(v) == i.toFloat(args[1]) {
+				result = append(result, v)
+			}
+		}
+	}
+	return result
+}
+
+func (i *Interpreter) builtinMap(args []Value) Value {
+	// map(arr, operation) - apply operation to each element
+	if len(args) < 2 {
+		return []Value{}
+	}
+	arr, ok := args[0].([]Value)
+	if !ok {
+		return []Value{}
+	}
+	op, _ := args[1].(string)
+	result := make([]Value, len(arr))
+	for j, v := range arr {
+		switch op {
+		case "abs":
+			result[j] = math.Abs(i.toFloat(v))
+		case "floor":
+			result[j] = math.Floor(i.toFloat(v))
+		case "ceil":
+			result[j] = math.Ceil(i.toFloat(v))
+		case "round":
+			result[j] = math.Round(i.toFloat(v))
+		case "sqrt":
+			result[j] = math.Sqrt(i.toFloat(v))
+		case "neg", "negate":
+			result[j] = -i.toFloat(v)
+		case "square":
+			f := i.toFloat(v)
+			result[j] = f * f
+		case "double":
+			result[j] = i.toFloat(v) * 2
+		case "half":
+			result[j] = i.toFloat(v) / 2
+		case "upper":
+			result[j] = strings.ToUpper(fmt.Sprintf("%v", v))
+		case "lower":
+			result[j] = strings.ToLower(fmt.Sprintf("%v", v))
+		case "trim":
+			result[j] = strings.TrimSpace(fmt.Sprintf("%v", v))
+		case "string":
+			result[j] = fmt.Sprintf("%v", v)
+		case "int":
+			result[j] = int(i.toFloat(v))
+		case "float":
+			result[j] = i.toFloat(v)
+		case "len":
+			if s, ok := v.(string); ok {
+				result[j] = len(s)
+			} else if a, ok := v.([]Value); ok {
+				result[j] = len(a)
+			} else {
+				result[j] = 0
+			}
+		default:
+			result[j] = v
+		}
+	}
+	return result
+}
+
+func (i *Interpreter) builtinReduce(args []Value) Value {
+	// reduce(arr, operation, initial)
+	if len(args) < 2 {
+		return 0
+	}
+	arr, ok := args[0].([]Value)
+	if !ok || len(arr) == 0 {
+		if len(args) > 2 {
+			return args[2]
+		}
+		return 0
+	}
+	op, _ := args[1].(string)
+	var acc Value
+	if len(args) > 2 {
+		acc = args[2]
+	} else {
+		acc = arr[0]
+		arr = arr[1:]
+	}
+
+	for _, v := range arr {
+		switch op {
+		case "sum", "+":
+			acc = i.toFloat(acc) + i.toFloat(v)
+		case "product", "*":
+			acc = i.toFloat(acc) * i.toFloat(v)
+		case "sub", "-":
+			acc = i.toFloat(acc) - i.toFloat(v)
+		case "div", "/":
+			if i.toFloat(v) != 0 {
+				acc = i.toFloat(acc) / i.toFloat(v)
+			}
+		case "min":
+			if i.toFloat(v) < i.toFloat(acc) {
+				acc = v
+			}
+		case "max":
+			if i.toFloat(v) > i.toFloat(acc) {
+				acc = v
+			}
+		case "concat":
+			acc = fmt.Sprintf("%v%v", acc, v)
+		default:
+			acc = i.toFloat(acc) + i.toFloat(v)
+		}
+	}
+	return acc
+}
+
+func (i *Interpreter) builtinEvery(args []Value) Value {
+	// every(arr, type) - check if all elements match
+	if len(args) < 2 {
+		return false
+	}
+	arr, ok := args[0].([]Value)
+	if !ok || len(arr) == 0 {
+		return true
+	}
+	typeStr, _ := args[1].(string)
+	for _, v := range arr {
+		match := false
+		switch typeStr {
+		case "number", "numeric":
+			_, match = v.(float64)
+			if !match {
+				_, match = v.(int)
+			}
+			if !match {
+				_, match = v.(int64)
+			}
+		case "string":
+			_, match = v.(string)
+		case "array":
+			_, match = v.([]Value)
+		case "map", "object":
+			_, match = v.(map[string]Value)
+		case "null", "nil":
+			match = v == nil
+		case "positive":
+			match = i.toFloat(v) > 0
+		case "negative":
+			match = i.toFloat(v) < 0
+		case "even":
+			match = int(i.toFloat(v))%2 == 0
+		case "odd":
+			match = int(i.toFloat(v))%2 != 0
+		}
+		if !match {
+			return false
+		}
+	}
+	return true
+}
+
+func (i *Interpreter) builtinSome(args []Value) Value {
+	// some(arr, type) - check if any element matches
+	if len(args) < 2 {
+		return false
+	}
+	arr, ok := args[0].([]Value)
+	if !ok || len(arr) == 0 {
+		return false
+	}
+	typeStr, _ := args[1].(string)
+	for _, v := range arr {
+		match := false
+		switch typeStr {
+		case "number", "numeric":
+			_, match = v.(float64)
+			if !match {
+				_, match = v.(int)
+			}
+			if !match {
+				_, match = v.(int64)
+			}
+		case "string":
+			_, match = v.(string)
+		case "array":
+			_, match = v.([]Value)
+		case "map", "object":
+			_, match = v.(map[string]Value)
+		case "null", "nil":
+			match = v == nil
+		case "positive":
+			match = i.toFloat(v) > 0
+		case "negative":
+			match = i.toFloat(v) < 0
+		case "even":
+			match = int(i.toFloat(v))%2 == 0
+		case "odd":
+			match = int(i.toFloat(v))%2 != 0
+		}
+		if match {
+			return true
+		}
+	}
+	return false
+}
+
+func (i *Interpreter) builtinCountBy(args []Value) Value {
+	// countBy(arr, keyFn) - count occurrences by key
+	if len(args) < 2 {
+		return map[string]Value{}
+	}
+	arr, ok := args[0].([]Value)
+	if !ok {
+		return map[string]Value{}
+	}
+	keyType, _ := args[1].(string)
+	result := map[string]Value{}
+	for _, v := range arr {
+		var key string
+		switch keyType {
+		case "type":
+			switch v.(type) {
+			case float64:
+				key = "number"
+			case int, int64:
+				key = "number"
+			case string:
+				key = "string"
+			case []Value:
+				key = "array"
+			case map[string]Value:
+				key = "object"
+			case nil:
+				key = "null"
+			default:
+				key = "unknown"
+			}
+		case "sign":
+			f := i.toFloat(v)
+			if f > 0 {
+				key = "positive"
+			} else if f < 0 {
+				key = "negative"
+			} else {
+				key = "zero"
+			}
+		case "parity":
+			if int(i.toFloat(v))%2 == 0 {
+				key = "even"
+			} else {
+				key = "odd"
+			}
+		default:
+			key = fmt.Sprintf("%v", v)
+		}
+		if count, ok := result[key]; ok {
+			result[key] = i.toInt(count) + 1
+		} else {
+			result[key] = int64(1)
+		}
+	}
+	return result
+}
+
+func (i *Interpreter) builtinGroupBy(args []Value) Value {
+	// groupBy(arr, keyFn) - group elements by key
+	if len(args) < 2 {
+		return map[string]Value{}
+	}
+	arr, ok := args[0].([]Value)
+	if !ok {
+		return map[string]Value{}
+	}
+	keyType, _ := args[1].(string)
+	result := map[string]Value{}
+	for _, v := range arr {
+		var key string
+		switch keyType {
+		case "type":
+			switch v.(type) {
+			case float64, int, int64:
+				key = "number"
+			case string:
+				key = "string"
+			case []Value:
+				key = "array"
+			case map[string]Value:
+				key = "object"
+			case nil:
+				key = "null"
+			default:
+				key = "unknown"
+			}
+		case "sign":
+			f := i.toFloat(v)
+			if f > 0 {
+				key = "positive"
+			} else if f < 0 {
+				key = "negative"
+			} else {
+				key = "zero"
+			}
+		case "parity":
+			if int(i.toFloat(v))%2 == 0 {
+				key = "even"
+			} else {
+				key = "odd"
+			}
+		default:
+			key = fmt.Sprintf("%v", v)
+		}
+		if group, ok := result[key]; ok {
+			result[key] = append(group.([]Value), v)
+		} else {
+			result[key] = []Value{v}
+		}
+	}
+	return result
+}
+
+func (i *Interpreter) builtinZip(args []Value) Value {
+	// zip(arr1, arr2) - combine arrays element-wise
+	if len(args) < 2 {
+		return []Value{}
+	}
+	arr1, ok1 := args[0].([]Value)
+	arr2, ok2 := args[1].([]Value)
+	if !ok1 || !ok2 {
+		return []Value{}
+	}
+	minLen := len(arr1)
+	if len(arr2) < minLen {
+		minLen = len(arr2)
+	}
+	result := make([]Value, minLen)
+	for j := 0; j < minLen; j++ {
+		result[j] = []Value{arr1[j], arr2[j]}
+	}
+	return result
+}
+
+func (i *Interpreter) builtinUnzip(args []Value) Value {
+	// unzip(arr) - separate pairs
+	if len(args) == 0 {
+		return []Value{}
+	}
+	arr, ok := args[0].([]Value)
+	if !ok || len(arr) == 0 {
+		return []Value{}
+	}
+	arr1, arr2 := []Value{}, []Value{}
+	for _, v := range arr {
+		if pair, ok := v.([]Value); ok && len(pair) >= 2 {
+			arr1 = append(arr1, pair[0])
+			arr2 = append(arr2, pair[1])
+		}
+	}
+	return []Value{arr1, arr2}
+}
+
+func (i *Interpreter) builtinIntersection(args []Value) Value {
+	// intersection(arr1, arr2) - common elements
+	if len(args) < 2 {
+		return []Value{}
+	}
+	arr1, ok1 := args[0].([]Value)
+	arr2, ok2 := args[1].([]Value)
+	if !ok1 || !ok2 {
+		return []Value{}
+	}
+	set := make(map[string]bool)
+	for _, v := range arr1 {
+		set[fmt.Sprintf("%v", v)] = true
+	}
+	result := []Value{}
+	seen := make(map[string]bool)
+	for _, v := range arr2 {
+		key := fmt.Sprintf("%v", v)
+		if set[key] && !seen[key] {
+			seen[key] = true
+			result = append(result, v)
+		}
+	}
+	return result
+}
+
+func (i *Interpreter) builtinUnion(args []Value) Value {
+	// union(arr1, arr2) - all unique elements
+	if len(args) < 2 {
+		return []Value{}
+	}
+	arr1, ok1 := args[0].([]Value)
+	arr2, ok2 := args[1].([]Value)
+	if !ok1 {
+		arr1 = []Value{}
+	}
+	if !ok2 {
+		arr2 = []Value{}
+	}
+	combined := append(arr1, arr2...)
+	return i.builtinUnique([]Value{combined})
+}
+
+func (i *Interpreter) builtinDifference(args []Value) Value {
+	// difference(arr1, arr2) - elements in arr1 not in arr2
+	if len(args) < 2 {
+		return []Value{}
+	}
+	arr1, ok1 := args[0].([]Value)
+	arr2, ok2 := args[1].([]Value)
+	if !ok1 {
+		return []Value{}
+	}
+	if !ok2 {
+		return arr1
+	}
+	set := make(map[string]bool)
+	for _, v := range arr2 {
+		set[fmt.Sprintf("%v", v)] = true
+	}
+	result := []Value{}
+	for _, v := range arr1 {
+		if !set[fmt.Sprintf("%v", v)] {
+			result = append(result, v)
+		}
 	}
 	return result
 }
