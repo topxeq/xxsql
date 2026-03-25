@@ -1045,6 +1045,8 @@ func (i *Interpreter) callBuiltin(name string, args []Value) (Value, bool) {
 		return i.builtinJSONParse(args), true
 	case "now":
 		return i.builtinNow(args), true
+	case "rand":
+		return i.builtinRand(args), true
 	case "formatTime":
 		return i.builtinFormatTime(args), true
 	case "parseTime":
@@ -1218,6 +1220,10 @@ func (i *Interpreter) builtinJSON(args []Value) Value {
 
 func (i *Interpreter) builtinNow(args []Value) Value {
 	return time.Now().Unix()
+}
+
+func (i *Interpreter) builtinRand(args []Value) Value {
+	return time.Now().UnixNano() % 1000000000
 }
 
 func (i *Interpreter) builtinInt(args []Value) Value {
@@ -2466,8 +2472,12 @@ func extractResult(result interface{}) ([][]interface{}, []string, error) {
 			for i := 0; i < colsField.Len(); i++ {
 				col := colsField.Index(i)
 				if col.Kind() == reflect.Struct {
+					// Check for Alias first, then fall back to Name
+					aliasField := col.FieldByName("Alias")
 					nameField := col.FieldByName("Name")
-					if nameField.IsValid() {
+					if aliasField.IsValid() && aliasField.String() != "" {
+						columns = append(columns, aliasField.String())
+					} else if nameField.IsValid() {
 						columns = append(columns, nameField.String())
 					}
 				} else if col.Kind() == reflect.String {

@@ -3,6 +3,8 @@ package server
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"fmt"
 	"net"
 	"os"
@@ -116,15 +118,19 @@ func (s *Server) Start() error {
 
 	// Create default admin user if auth is enabled and admin doesn't exist
 	if s.config.Auth.Enabled {
-		if s.config.Auth.AdminPassword != "" {
-			if _, err := s.auth.GetUser(s.config.Auth.AdminUser); err != nil {
-				// Admin doesn't exist, create it
-				_, err := s.auth.CreateUser(s.config.Auth.AdminUser, s.config.Auth.AdminPassword, auth.RoleAdmin)
-				if err != nil {
-					s.logger.Warn("Failed to create admin user: %v", err)
-				} else {
-					s.logger.Info("Created admin user: %s", s.config.Auth.AdminUser)
-				}
+		if _, err := s.auth.GetUser(s.config.Auth.AdminUser); err != nil {
+			// Admin doesn't exist, create it
+			adminPass := s.config.Auth.AdminPassword
+			if adminPass == "" {
+				// Generate a random password
+				adminPass = generateRandomPassword(12)
+				s.logger.Info("Generated random admin password (save this!): %s", adminPass)
+			}
+			_, err := s.auth.CreateUser(s.config.Auth.AdminUser, adminPass, auth.RoleAdmin)
+			if err != nil {
+				s.logger.Warn("Failed to create admin user: %v", err)
+			} else {
+				s.logger.Info("Created admin user: %s", s.config.Auth.AdminUser)
 			}
 		}
 	}
@@ -651,4 +657,14 @@ func RemovePIDFile(path string) {
 	if path != "" {
 		os.Remove(path)
 	}
+}
+
+// generateRandomPassword generates a random password of the specified length.
+func generateRandomPassword(length int) string {
+	bytes := make([]byte, length)
+	if _, err := rand.Read(bytes); err != nil {
+		// Fallback to time-based random if crypto/rand fails
+		return fmt.Sprintf("%d", time.Now().UnixNano())[0:length]
+	}
+	return hex.EncodeToString(bytes)[:length]
 }

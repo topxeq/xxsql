@@ -2715,7 +2715,8 @@ func (p *Parser) parsePrimaryExpr() Expression {
 		TokDecimal, TokNumeric, TokSmallInt, TokTinyInt, TokSeq,
 		TokLeft, TokRight, TokReplace, TokTruncate, TokUser, // LEFT/RIGHT/REPLACE/TRUNCATE/USER can be keywords or function names
 		TokData, TokLoad, TokCopy, TokInfile, TokFields, TokLines,
-		TokTerminated, TokEnclosed, TokEscaped, TokOptionally: // Bulk import/export keywords can be column names
+		TokTerminated, TokEnclosed, TokEscaped, TokOptionally, // Bulk import/export keywords can be column names
+		TokPassword, TokRole: // PASSWORD and ROLE can be used as column names
 		name := p.currTok.Value
 		p.nextToken()
 		if p.curTokenIs(TokLParen) {

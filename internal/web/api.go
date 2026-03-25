@@ -825,25 +825,33 @@ func (s *Server) handleAPIKeyDetail(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-// handleMicroservice handles /ms/<table>/<skey> requests.
-// It looks up the script from the specified table and executes it.
+// handleMicroservice handles /ms/<table>/<skey> or /ms/<skey> requests.
+// It looks up the script from the specified table (defaults to _sys_ms) and executes it.
 func (s *Server) handleMicroservice(w http.ResponseWriter, r *http.Request) {
-	// Parse path: /ms/<table>/<skey>
+	// Parse path: /ms/<table>/<skey> or /ms/<skey>
 	// skey can contain slashes, so we need to handle it specially
 	path := strings.TrimPrefix(r.URL.Path, "/ms/")
 
-	// Find the first slash to separate table name from skey
-	slashIdx := strings.Index(path, "/")
-	if slashIdx == -1 {
-		writeError(w, http.StatusBadRequest, "invalid path format: expected /ms/<table>/<skey>")
-		return
+	var tableName, skey string
+
+	// Check if path starts with a known system table
+	if strings.HasPrefix(path, "_sys_") {
+		// Format: /ms/<table>/<skey>
+		slashIdx := strings.Index(path, "/")
+		if slashIdx == -1 {
+			writeError(w, http.StatusBadRequest, "invalid path format: expected /ms/<table>/<skey>")
+			return
+		}
+		tableName = path[:slashIdx]
+		skey = path[slashIdx+1:]
+	} else {
+		// Format: /ms/<skey> - default to _sys_ms table
+		tableName = "_sys_ms"
+		skey = path
 	}
 
-	tableName := path[:slashIdx]
-	skey := path[slashIdx+1:] // Everything after the first slash is the skey
-
 	if tableName == "" || skey == "" {
-		writeError(w, http.StatusBadRequest, "invalid path format: expected /ms/<table>/<skey>")
+		writeError(w, http.StatusBadRequest, "invalid path format")
 		return
 	}
 
@@ -1910,8 +1918,8 @@ func (s *Server) handleAPIPluginInstall(w http.ResponseWriter, r *http.Request) 
 
 	// Check if already installed
 	exec := executor.NewExecutor(s.engine)
-	result, _ := exec.Execute(fmt.Sprintf("SELECT name FROM _sys_plugins WHERE name = '%s'", req.Name))
-	if len(result.Rows) > 0 {
+	result, err := exec.Execute(fmt.Sprintf("SELECT name FROM _sys_plugins WHERE name = '%s'", req.Name))
+	if err == nil && result != nil && len(result.Rows) > 0 {
 		writeError(w, http.StatusBadRequest, "plugin already installed")
 		return
 	}
@@ -2150,53 +2158,58 @@ func createPluginLocally(plugin map[string]interface{}) error {
 			id SEQ PRIMARY KEY,
 			username VARCHAR(50) UNIQUE NOT NULL,
 			password VARCHAR(255) NOT NULL,
-			email VARCHAR(100) UNIQUE,
+			email VARCHAR(100),
 			role VARCHAR(20) DEFAULT 'user',
-			created_at DATETIME,
-			last_login DATETIME
+			created_at VARCHAR(30),
+			last_login VARCHAR(30)
 		)`)
 		exec.Execute(`CREATE TABLE IF NOT EXISTS _plugin_auth_sessions (
 			id VARCHAR(64) PRIMARY KEY,
 			user_id INT NOT NULL,
-			created_at DATETIME,
-			expires_at DATETIME,
+			created_at VARCHAR(30),
+			expires_at VARCHAR(30),
 			ip_address VARCHAR(45)
 		)`)
 
 		// Register auth microservices
 		authLoginScript := `
-var username = http.formValue("username")
-var password = http.formValue("password")
-if username == "" || password == "" {
+var data = http.bodyJSON()
+var username = data.username
+var pwd = data.password
+if username == "" || pwd == "" {
     http.status(400)
     http.json({"success": false, "error": "Username and password required"})
     return
 }
-var user = db.queryRow("SELECT id, username, password, role FROM _plugin_auth_users WHERE username = '" + username + "'")
+var user = db.queryRow("SELECT id, username, password AS pwd, role FROM _plugin_auth_users WHERE username = '" + username + "'")
 if user == null {
     http.status(401)
     http.json({"success": false, "error": "Invalid credentials"})
     return
 }
-var hash = user.password
-if md5(password) != hash {
+var hash = user.pwd
+if md5(pwd) != hash {
     http.status(401)
     http.json({"success": false, "error": "Invalid credentials"})
     return
 }
 var sessionId = md5(username + string(now()) + string(rand()))
-db.exec("INSERT INTO _plugin_auth_sessions (id, user_id, created_at, expires_at, ip_address) VALUES ('" + sessionId + "', " + string(user.id) + ", NOW(), datetime('now', '+1 day'), '" + http.remoteAddr + "')")
-db.exec("UPDATE _plugin_auth_users SET last_login = NOW() WHERE id = " + string(user.id))
+var expireTime = now() + 86400
+var expireStr = formatTime(expireTime, "2006-01-02 15:04:05")
+var nowStr = formatTime(now(), "2006-01-02 15:04:05")
+db.exec("INSERT INTO _plugin_auth_sessions (id, user_id, created_at, expires_at, ip_address) VALUES ('" + sessionId + "', " + string(user.id) + ", '" + nowStr + "', '" + expireStr + "', '" + http.remoteAddr + "')")
+db.exec("UPDATE _plugin_auth_users SET last_login = '" + nowStr + "' WHERE id = " + string(user.id))
 http.setCookie("session_id", sessionId, 86400)
 http.json({"success": true, "user": {"id": user.id, "username": user.username, "role": user.role}})
 `
 		exec.Execute(fmt.Sprintf("INSERT INTO _sys_ms (SKEY, SCRIPT, description) VALUES ('auth/login', '%s', 'User login')", strings.ReplaceAll(authLoginScript, "'", "''")))
 
 		authRegisterScript := `
-var username = http.formValue("username")
-var password = http.formValue("password")
-var email = http.formValue("email")
-if username == "" || password == "" {
+var data = http.bodyJSON()
+var username = data.username
+var pwd = data.password
+var email = data.email
+if username == "" || pwd == "" {
     http.status(400)
     http.json({"success": false, "error": "Username and password required"})
     return
@@ -2207,8 +2220,13 @@ if existing != null {
     http.json({"success": false, "error": "Username already exists"})
     return
 }
-var hash = md5(password)
-var result = db.exec("INSERT INTO _plugin_auth_users (username, password, email, role, created_at) VALUES ('" + username + "', '" + hash + "', '" + email + "', 'user', NOW())")
+var hash = md5(pwd)
+var nowStr = formatTime(now(), "2006-01-02 15:04:05")
+var emailStr = string(email)
+if emailStr == "" || emailStr == "<nil>" {
+    emailStr = ""
+}
+var result = db.exec("INSERT INTO _plugin_auth_users (username, password, email, role, created_at) VALUES ('" + username + "', '" + hash + "', '" + emailStr + "', 'user', '" + nowStr + "')")
 http.json({"success": true, "user_id": result.insert_id})
 `
 		exec.Execute(fmt.Sprintf("INSERT INTO _sys_ms (SKEY, SCRIPT, description) VALUES ('auth/register', '%s', 'Register new user')", strings.ReplaceAll(authRegisterScript, "'", "''")))
@@ -2229,12 +2247,27 @@ if sessionId == "" {
     http.json({"authenticated": false})
     return
 }
-var session = db.queryRow("SELECT s.id, s.user_id, s.expires_at, u.username, u.role FROM _plugin_auth_sessions s JOIN _plugin_auth_users u ON s.user_id = u.id WHERE s.id = '" + sessionId + "' AND s.expires_at > NOW()")
+var session = db.queryRow("SELECT id, user_id, expires_at FROM _plugin_auth_sessions WHERE id = '" + sessionId + "'")
 if session == null {
     http.json({"authenticated": false})
     return
 }
-http.json({"authenticated": true, "user": {"id": session.user_id, "username": session.username, "role": session.role}})
+var expireStr = session.expires_at
+if expireStr == "" || expireStr == null {
+    http.json({"authenticated": false})
+    return
+}
+var expireTime = parseTime(expireStr, "2006-01-02 15:04:05")
+if now() > expireTime {
+    http.json({"authenticated": false})
+    return
+}
+var user = db.queryRow("SELECT id, username, role FROM _plugin_auth_users WHERE id = " + string(session.user_id))
+if user == null {
+    http.json({"authenticated": false})
+    return
+}
+http.json({"authenticated": true, "user": {"id": user.id, "username": user.username, "role": user.role}})
 `
 		exec.Execute(fmt.Sprintf("INSERT INTO _sys_ms (SKEY, SCRIPT, description) VALUES ('auth/check', '%s', 'Check authentication status')", strings.ReplaceAll(authCheckScript, "'", "''")))
 

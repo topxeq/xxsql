@@ -287,6 +287,15 @@ func (s *Server) authMiddleware(next http.Handler) http.Handler {
 			return
 		}
 
+		// Allow public microservice endpoints (auth/register, auth/login, etc.)
+		if strings.HasPrefix(r.URL.Path, "/ms/auth/register") ||
+			strings.HasPrefix(r.URL.Path, "/ms/auth/login") ||
+			strings.HasPrefix(r.URL.Path, "/ms/auth/check") ||
+			strings.HasPrefix(r.URL.Path, "/ms/health") {
+			next.ServeHTTP(w, r)
+			return
+		}
+
 		// For API routes and microservice routes, check session, API key, or Basic Auth
 		if strings.HasPrefix(r.URL.Path, "/api/") || strings.HasPrefix(r.URL.Path, "/ms/") {
 			// First, try session authentication

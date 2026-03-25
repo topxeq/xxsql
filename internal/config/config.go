@@ -251,7 +251,7 @@ func DefaultConfig() *Config {
 		Auth: AuthConfig{
 			Enabled:          true,
 			AdminUser:        "admin",
-			AdminPassword:    "xxsql",
+			AdminPassword:    "", // Must be set in config file or via XXSQL_ADMIN_PASSWORD env var
 			SessionTimeouSec: 3600,
 		},
 		Security: SecurityConfig{
