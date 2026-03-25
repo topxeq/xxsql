@@ -27,6 +27,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"reflect"
+	"regexp"
 	"runtime"
 	"sort"
 	"strconv"
@@ -1176,6 +1177,35 @@ func (i *Interpreter) callBuiltin(name string, args []Value) (Value, bool) {
 		return i.builtinHasPrefix(args), true
 	case "endsWith":
 		return i.builtinHasSuffix(args), true
+	// Regular expression functions
+	case "regexMatch":
+		return i.builtinRegexMatch(args), true
+	case "regexFind":
+		return i.builtinRegexFind(args), true
+	case "regexFindAll":
+		return i.builtinRegexFindAll(args), true
+	case "regexReplace":
+		return i.builtinRegexReplace(args), true
+	case "regexSplit":
+		return i.builtinRegexSplit(args), true
+	case "regexCompile":
+		return i.builtinRegexCompile(args), true
+	case "regexQuote":
+		return i.builtinRegexQuote(args), true
+	case "regexCount":
+		return i.builtinRegexCount(args), true
+	case "regexGroups":
+		return i.builtinRegexGroups(args), true
+	case "regexFindSubmatch":
+		return i.builtinRegexFindSubmatch(args), true
+	case "regexFindAllSubmatch":
+		return i.builtinRegexFindAllSubmatch(args), true
+	case "regexReplaceFunc":
+		return i.builtinRegexReplaceFunc(args), true
+	case "regexValid":
+		return i.builtinRegexValid(args), true
+	case "regexEscape":
+		return i.builtinRegexQuote(args), true // alias
 	// Array functions
 	case "push":
 		return i.builtinPush(args), true
@@ -2625,6 +2655,338 @@ func (i *Interpreter) builtinStartsWith(args []Value) Value {
 
 func (i *Interpreter) builtinEndsWith(args []Value) Value {
 	return i.builtinHasSuffix(args)
+}
+
+// ============================================================================
+// Regular Expression Functions
+// ============================================================================
+
+// builtinRegexMatch checks if a string matches a regex pattern
+func (i *Interpreter) builtinRegexMatch(args []Value) Value {
+	if len(args) < 2 {
+		return false
+	}
+	pattern, ok1 := args[0].(string)
+	str, ok2 := args[1].(string)
+	if !ok1 || !ok2 {
+		return false
+	}
+
+	re, err := regexp.Compile(pattern)
+	if err != nil {
+		return false
+	}
+	return re.MatchString(str)
+}
+
+// builtinRegexFind finds the first match of a regex pattern in a string
+func (i *Interpreter) builtinRegexFind(args []Value) Value {
+	if len(args) < 2 {
+		return ""
+	}
+	pattern, ok1 := args[0].(string)
+	str, ok2 := args[1].(string)
+	if !ok1 || !ok2 {
+		return ""
+	}
+
+	re, err := regexp.Compile(pattern)
+	if err != nil {
+		return ""
+	}
+	return re.FindString(str)
+}
+
+// builtinRegexFindAll finds all matches of a regex pattern in a string
+func (i *Interpreter) builtinRegexFindAll(args []Value) Value {
+	if len(args) < 2 {
+		return []Value{}
+	}
+	pattern, ok1 := args[0].(string)
+	str, ok2 := args[1].(string)
+	if !ok1 || !ok2 {
+		return []Value{}
+	}
+
+	n := -1
+	if len(args) > 2 {
+		n = int(i.toInt(args[2]))
+	}
+
+	re, err := regexp.Compile(pattern)
+	if err != nil {
+		return []Value{}
+	}
+
+	matches := re.FindAllString(str, n)
+	result := make([]Value, len(matches))
+	for i, m := range matches {
+		result[i] = m
+	}
+	return result
+}
+
+// builtinRegexReplace replaces all matches of a regex pattern with a replacement string
+func (i *Interpreter) builtinRegexReplace(args []Value) Value {
+	if len(args) < 3 {
+		return ""
+	}
+	pattern, ok1 := args[0].(string)
+	replacement, ok2 := args[1].(string)
+	str, ok3 := args[2].(string)
+	if !ok1 || !ok2 || !ok3 {
+		return str
+	}
+
+	re, err := regexp.Compile(pattern)
+	if err != nil {
+		return str
+	}
+	return re.ReplaceAllString(str, replacement)
+}
+
+// builtinRegexSplit splits a string by a regex pattern
+func (i *Interpreter) builtinRegexSplit(args []Value) Value {
+	if len(args) < 2 {
+		return []Value{}
+	}
+	pattern, ok1 := args[0].(string)
+	str, ok2 := args[1].(string)
+	if !ok1 || !ok2 {
+		return []Value{}
+	}
+
+	n := -1
+	if len(args) > 2 {
+		n = int(i.toInt(args[2]))
+	}
+
+	re, err := regexp.Compile(pattern)
+	if err != nil {
+		return []Value{str}
+	}
+
+	parts := re.Split(str, n)
+	result := make([]Value, len(parts))
+	for i, p := range parts {
+		result[i] = p
+	}
+	return result
+}
+
+// builtinRegexCompile compiles a regex pattern and returns a map with pattern info
+func (i *Interpreter) builtinRegexCompile(args []Value) Value {
+	if len(args) == 0 {
+		return map[string]Value{"success": false, "error": "no pattern provided"}
+	}
+
+	pattern, ok := args[0].(string)
+	if !ok {
+		return map[string]Value{"success": false, "error": "pattern must be a string"}
+	}
+
+	re, err := regexp.Compile(pattern)
+	if err != nil {
+		return map[string]Value{"success": false, "error": err.Error()}
+	}
+
+	return map[string]Value{
+		"success":   true,
+		"pattern":   pattern,
+		"numSubexp": int64(re.NumSubexp()),
+	}
+}
+
+// builtinRegexQuote escapes all regular expression metacharacters in a string
+func (i *Interpreter) builtinRegexQuote(args []Value) Value {
+	if len(args) == 0 {
+		return ""
+	}
+	s, ok := args[0].(string)
+	if !ok {
+		return ""
+	}
+	return regexp.QuoteMeta(s)
+}
+
+// builtinRegexCount counts the number of matches of a regex pattern in a string
+func (i *Interpreter) builtinRegexCount(args []Value) Value {
+	if len(args) < 2 {
+		return int64(0)
+	}
+	pattern, ok1 := args[0].(string)
+	str, ok2 := args[1].(string)
+	if !ok1 || !ok2 {
+		return int64(0)
+	}
+
+	re, err := regexp.Compile(pattern)
+	if err != nil {
+		return int64(0)
+	}
+
+	matches := re.FindAllString(str, -1)
+	return int64(len(matches))
+}
+
+// builtinRegexGroups extracts named groups from a regex match
+func (i *Interpreter) builtinRegexGroups(args []Value) Value {
+	if len(args) < 2 {
+		return map[string]Value{}
+	}
+	pattern, ok1 := args[0].(string)
+	str, ok2 := args[1].(string)
+	if !ok1 || !ok2 {
+		return map[string]Value{}
+	}
+
+	re, err := regexp.Compile(pattern)
+	if err != nil {
+		return map[string]Value{"error": err.Error()}
+	}
+
+	match := re.FindStringSubmatch(str)
+	if match == nil {
+		return map[string]Value{}
+	}
+
+	result := make(map[string]Value)
+	subexpNames := re.SubexpNames()
+
+	for i, name := range subexpNames {
+		if i > 0 && name != "" { // Skip the whole match (index 0)
+			if i < len(match) {
+				result[name] = match[i]
+			}
+		}
+	}
+
+	// Also include numbered groups
+	for i, m := range match {
+		result[fmt.Sprintf("%d", i)] = m
+	}
+
+	return result
+}
+
+// builtinRegexFindSubmatch finds the first match including submatches
+func (i *Interpreter) builtinRegexFindSubmatch(args []Value) Value {
+	if len(args) < 2 {
+		return []Value{}
+	}
+	pattern, ok1 := args[0].(string)
+	str, ok2 := args[1].(string)
+	if !ok1 || !ok2 {
+		return []Value{}
+	}
+
+	re, err := regexp.Compile(pattern)
+	if err != nil {
+		return []Value{}
+	}
+
+	match := re.FindStringSubmatch(str)
+	if match == nil {
+		return []Value{}
+	}
+
+	result := make([]Value, len(match))
+	for i, m := range match {
+		result[i] = m
+	}
+	return result
+}
+
+// builtinRegexFindAllSubmatch finds all matches including submatches
+func (i *Interpreter) builtinRegexFindAllSubmatch(args []Value) Value {
+	if len(args) < 2 {
+		return []Value{}
+	}
+	pattern, ok1 := args[0].(string)
+	str, ok2 := args[1].(string)
+	if !ok1 || !ok2 {
+		return []Value{}
+	}
+
+	n := -1
+	if len(args) > 2 {
+		n = int(i.toInt(args[2]))
+	}
+
+	re, err := regexp.Compile(pattern)
+	if err != nil {
+		return []Value{}
+	}
+
+	matches := re.FindAllStringSubmatch(str, n)
+	result := make([]Value, len(matches))
+	for i, match := range matches {
+		submatch := make([]Value, len(match))
+		for j, m := range match {
+			submatch[j] = m
+		}
+		result[i] = submatch
+	}
+	return result
+}
+
+// builtinRegexReplaceFunc replaces matches using a transformation function
+func (i *Interpreter) builtinRegexReplaceFunc(args []Value) Value {
+	if len(args) < 3 {
+		return ""
+	}
+	pattern, ok1 := args[0].(string)
+	transformType, ok2 := args[1].(string)
+	str, ok3 := args[2].(string)
+	if !ok1 || !ok2 || !ok3 {
+		return str
+	}
+
+	re, err := regexp.Compile(pattern)
+	if err != nil {
+		return str
+	}
+
+	result := re.ReplaceAllStringFunc(str, func(s string) string {
+		switch transformType {
+		case "upper", "uppercase":
+			return strings.ToUpper(s)
+		case "lower", "lowercase":
+			return strings.ToLower(s)
+		case "title":
+			return strings.Title(s)
+		case "reverse":
+			runes := []rune(s)
+			for i, j := 0, len(runes)-1; i < j; i, j = i+1, j-1 {
+				runes[i], runes[j] = runes[j], runes[i]
+			}
+			return string(runes)
+		case "trim":
+			return strings.TrimSpace(s)
+		case "double":
+			return s + s
+		case "quote":
+			return fmt.Sprintf("%q", s)
+		default:
+			return s
+		}
+	})
+
+	return result
+}
+
+// builtinRegexValid checks if a regex pattern is valid
+func (i *Interpreter) builtinRegexValid(args []Value) Value {
+	if len(args) == 0 {
+		return false
+	}
+	pattern, ok := args[0].(string)
+	if !ok {
+		return false
+	}
+
+	_, err := regexp.Compile(pattern)
+	return err == nil
 }
 
 // Array functions
