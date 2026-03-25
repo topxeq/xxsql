@@ -20,14 +20,22 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"sort"
 	"strings"
 	"time"
 	"unicode"
 
 	"github.com/topxeq/xxsql/internal/storage"
+)
+
+// runtimeOS and runtimeArch are constants for the current OS and architecture
+const (
+	runtimeOS   = runtime.GOOS
+	runtimeArch = runtime.GOARCH
 )
 
 // SQLExecutor is an interface for executing SQL queries.
@@ -1446,6 +1454,71 @@ func (i *Interpreter) callBuiltin(name string, args []Value) (Value, bool) {
 		return i.builtinJSONDecode(args), true
 	case "jsonPretty":
 		return i.builtinJSONPretty(args), true
+	// OS - Environment variables
+	case "env":
+		return i.builtinEnv(args), true
+	case "envSet":
+		return i.builtinEnvSet(args), true
+	case "envUnset":
+		return i.builtinEnvUnset(args), true
+	case "envList":
+		return i.builtinEnvList(args), true
+	// OS - Process info
+	case "pid":
+		return i.builtinPID(args), true
+	case "ppid":
+		return i.builtinPPID(args), true
+	case "uid":
+		return i.builtinUID(args), true
+	case "gid":
+		return i.builtinGID(args), true
+	// OS - System info
+	case "hostname":
+		return i.builtinHostname(args), true
+	case "osInfo":
+		return i.builtinOSInfo(args), true
+	case "arch":
+		return i.builtinArch(args), true
+	case "cwd":
+		return i.builtinCwd(args), true
+	case "home":
+		return i.builtinHome(args), true
+	case "tempDir":
+		return i.builtinTempDir(args), true
+	// OS - Time functions
+	case "sleep":
+		return i.builtinSleep(args), true
+	case "clock":
+		return i.builtinClock(args), true
+	case "timestamp":
+		return i.builtinTimestamp(args), true
+	case "dateParts":
+		return i.builtinDateParts(args), true
+	// OS - Command execution
+	case "exec":
+		return i.builtinExec(args), true
+	case "execOutput":
+		return i.builtinExecOutput(args), true
+	// OS - Memory and CPU
+	case "memStats":
+		return i.builtinMemStats(args), true
+	case "goroutines":
+		return i.builtinGoroutines(args), true
+	// OS - User
+	case "userHome":
+		return i.builtinUserHome(args), true
+	case "userCache":
+		return i.builtinUserCache(args), true
+	case "userConfig":
+		return i.builtinUserConfig(args), true
+	// OS - File permissions
+	case "chmod":
+		return i.builtinChmod(args), true
+	case "chown":
+		return i.builtinChown(args), true
+	// OS - Exit
+	case "exit":
+		return i.builtinExit(args), true
 	default:
 		return nil, false
 	}
@@ -4944,6 +5017,468 @@ func convertJSONValue(v interface{}) Value {
 	default:
 		return fmt.Sprintf("%v", val)
 	}
+}
+
+// ============================================================================
+// OS Functions - Environment Variables
+// ============================================================================
+
+func (i *Interpreter) builtinEnv(args []Value) Value {
+	if len(args) == 0 {
+		// Return all environment variables
+		result := make(map[string]Value)
+		for _, env := range os.Environ() {
+			parts := strings.SplitN(env, "=", 2)
+			if len(parts) == 2 {
+				result[parts[0]] = parts[1]
+			}
+		}
+		return result
+	}
+
+	key, ok := args[0].(string)
+	if !ok {
+		return ""
+	}
+
+	defaultVal := ""
+	if len(args) > 1 {
+		if d, ok := args[1].(string); ok {
+			defaultVal = d
+		}
+	}
+
+	val := os.Getenv(key)
+	if val == "" && defaultVal != "" {
+		return defaultVal
+	}
+	return val
+}
+
+func (i *Interpreter) builtinEnvSet(args []Value) Value {
+	if len(args) < 2 {
+		return map[string]Value{"success": false, "error": "envSet requires key and value"}
+	}
+
+	key, ok1 := args[0].(string)
+	value, ok2 := args[1].(string)
+	if !ok1 || !ok2 {
+		return map[string]Value{"success": false, "error": "key and value must be strings"}
+	}
+
+	if err := os.Setenv(key, value); err != nil {
+		return map[string]Value{"success": false, "error": err.Error()}
+	}
+
+	return map[string]Value{"success": true, "key": key, "value": value}
+}
+
+func (i *Interpreter) builtinEnvUnset(args []Value) Value {
+	if len(args) == 0 {
+		return map[string]Value{"success": false, "error": "key required"}
+	}
+
+	key, ok := args[0].(string)
+	if !ok {
+		return map[string]Value{"success": false, "error": "key must be a string"}
+	}
+
+	if err := os.Unsetenv(key); err != nil {
+		return map[string]Value{"success": false, "error": err.Error()}
+	}
+
+	return map[string]Value{"success": true}
+}
+
+func (i *Interpreter) builtinEnvList(args []Value) Value {
+	envVars := os.Environ()
+	result := make([]Value, len(envVars))
+	for i, env := range envVars {
+		result[i] = env
+	}
+	return result
+}
+
+// ============================================================================
+// OS Functions - Process Info
+// ============================================================================
+
+func (i *Interpreter) builtinPID(args []Value) Value {
+	return int64(os.Getpid())
+}
+
+func (i *Interpreter) builtinPPID(args []Value) Value {
+	return int64(os.Getppid())
+}
+
+func (i *Interpreter) builtinUID(args []Value) Value {
+	return int64(os.Getuid())
+}
+
+func (i *Interpreter) builtinGID(args []Value) Value {
+	return int64(os.Getgid())
+}
+
+// ============================================================================
+// OS Functions - System Info
+// ============================================================================
+
+func (i *Interpreter) builtinHostname(args []Value) Value {
+	hostname, err := os.Hostname()
+	if err != nil {
+		return ""
+	}
+	return hostname
+}
+
+func (i *Interpreter) builtinOSInfo(args []Value) Value {
+	return map[string]Value{
+		"success":  true,
+		"os":       runtimeOS,
+		"arch":     runtimeArch,
+		"hostname": i.builtinHostname(nil),
+		"pid":      int64(os.Getpid()),
+		"ppid":     int64(os.Getppid()),
+		"uid":      int64(os.Getuid()),
+		"gid":      int64(os.Getgid()),
+		"cwd":      i.builtinCwd(nil).(string),
+		"home":     os.Getenv("HOME"),
+		"tempDir":  os.TempDir(),
+	}
+}
+
+func (i *Interpreter) builtinArch(args []Value) Value {
+	return runtimeArch
+}
+
+func (i *Interpreter) builtinCwd(args []Value) Value {
+	dir, err := os.Getwd()
+	if err != nil {
+		return ""
+	}
+	return dir
+}
+
+func (i *Interpreter) builtinHome(args []Value) Value {
+	homeDir, err := os.UserHomeDir()
+	if err != nil {
+		return ""
+	}
+	return homeDir
+}
+
+func (i *Interpreter) builtinTempDir(args []Value) Value {
+	return os.TempDir()
+}
+
+// ============================================================================
+// OS Functions - Time
+// ============================================================================
+
+func (i *Interpreter) builtinSleep(args []Value) Value {
+	if len(args) == 0 {
+		return nil
+	}
+
+	var d time.Duration
+	switch v := args[0].(type) {
+	case float64:
+		d = time.Duration(v * float64(time.Second))
+	case int:
+		d = time.Duration(v) * time.Second
+	case int64:
+		d = time.Duration(v) * time.Second
+	case string:
+		// Parse duration string like "1s", "100ms", "1h30m"
+		parsed, err := time.ParseDuration(v)
+		if err != nil {
+			return nil
+		}
+		d = parsed
+	default:
+		return nil
+	}
+
+	time.Sleep(d)
+	return nil
+}
+
+func (i *Interpreter) builtinClock(args []Value) Value {
+	// Return Unix timestamp in seconds
+	return float64(time.Now().UnixNano()) / 1e9
+}
+
+func (i *Interpreter) builtinTimestamp(args []Value) Value {
+	// Return Unix timestamp in milliseconds
+	return time.Now().UnixMilli()
+}
+
+func (i *Interpreter) builtinDateParts(args []Value) Value {
+	var t time.Time
+	if len(args) == 0 {
+		t = time.Now()
+	} else if ts, ok := args[0].(float64); ok {
+		t = time.Unix(int64(ts), 0)
+	} else if ts, ok := args[0].(int64); ok {
+		t = time.Unix(ts, 0)
+	} else {
+		t = time.Now()
+	}
+
+	return map[string]Value{
+		"year":    int64(t.Year()),
+		"month":   int64(t.Month()),
+		"day":     int64(t.Day()),
+		"hour":    int64(t.Hour()),
+		"minute":  int64(t.Minute()),
+		"second":  int64(t.Second()),
+		"weekday": int64(t.Weekday()),
+		"yday":    int64(t.YearDay()),
+		"unix":    t.Unix(),
+	}
+}
+
+// ============================================================================
+// OS Functions - Command Execution
+// ============================================================================
+
+func (i *Interpreter) builtinExec(args []Value) Value {
+	if len(args) == 0 {
+		return map[string]Value{"success": false, "error": "command required"}
+	}
+
+	cmd, ok := args[0].(string)
+	if !ok {
+		return map[string]Value{"success": false, "error": "command must be a string"}
+	}
+
+	// Split command into name and args
+	parts := strings.Fields(cmd)
+	if len(parts) == 0 {
+		return map[string]Value{"success": false, "error": "empty command"}
+	}
+
+	name := parts[0]
+	cmdArgs := parts[1:]
+
+	// Additional args from second argument
+	if len(args) > 1 {
+		if arr, ok := args[1].([]Value); ok {
+			for _, a := range arr {
+				cmdArgs = append(cmdArgs, fmt.Sprintf("%v", a))
+			}
+		}
+	}
+
+	command := exec.Command(name, cmdArgs...)
+	output, err := command.CombinedOutput()
+
+	result := map[string]Value{
+		"success":    err == nil,
+		"output":     string(output),
+		"command":    cmd,
+		"exitCode":   0,
+	}
+
+	if err != nil {
+		result["error"] = err.Error()
+		if exitErr, ok := err.(*exec.ExitError); ok {
+			result["exitCode"] = int64(exitErr.ExitCode())
+		}
+	}
+
+	return result
+}
+
+func (i *Interpreter) builtinExecOutput(args []Value) Value {
+	if len(args) == 0 {
+		return ""
+	}
+
+	cmd, ok := args[0].(string)
+	if !ok {
+		return ""
+	}
+
+	parts := strings.Fields(cmd)
+	if len(parts) == 0 {
+		return ""
+	}
+
+	name := parts[0]
+	cmdArgs := parts[1:]
+
+	if len(args) > 1 {
+		if arr, ok := args[1].([]Value); ok {
+			for _, a := range arr {
+				cmdArgs = append(cmdArgs, fmt.Sprintf("%v", a))
+			}
+		}
+	}
+
+	command := exec.Command(name, cmdArgs...)
+	output, err := command.Output()
+	if err != nil {
+		return ""
+	}
+	return string(output)
+}
+
+// ============================================================================
+// OS Functions - Memory and CPU
+// ============================================================================
+
+func (i *Interpreter) builtinMemStats(args []Value) Value {
+	var m runtime.MemStats
+	runtime.ReadMemStats(&m)
+
+	return map[string]Value{
+		"success":         true,
+		"alloc":           int64(m.Alloc),
+		"totalAlloc":      int64(m.TotalAlloc),
+		"sys":             int64(m.Sys),
+		"lookups":         int64(m.Lookups),
+		"mallocs":         int64(m.Mallocs),
+		"frees":           int64(m.Frees),
+		"heapAlloc":       int64(m.HeapAlloc),
+		"heapSys":         int64(m.HeapSys),
+		"heapIdle":        int64(m.HeapIdle),
+		"heapInuse":       int64(m.HeapInuse),
+		"heapReleased":    int64(m.HeapReleased),
+		"heapObjects":     int64(m.HeapObjects),
+		"stackInuse":      int64(m.StackInuse),
+		"stackSys":        int64(m.StackSys),
+		"mspanInuse":      int64(m.MSpanInuse),
+		"mspanSys":        int64(m.MSpanSys),
+		"mcacheInuse":     int64(m.MCacheInuse),
+		"mcacheSys":       int64(m.MCacheSys),
+		"buckHashSys":     int64(m.BuckHashSys),
+		"gcsys":           int64(m.GCSys),
+		"otherSys":        int64(m.OtherSys),
+		"nextGC":          int64(m.NextGC),
+		"lastGC":          int64(m.LastGC),
+		"numGC":           int64(m.NumGC),
+		"numForcedGC":     int64(m.NumForcedGC),
+		"gcCPUFraction":   m.GCCPUFraction,
+	}
+}
+
+func (i *Interpreter) builtinGoroutines(args []Value) Value {
+	return int64(runtime.NumGoroutine())
+}
+
+// ============================================================================
+// OS Functions - User Directories
+// ============================================================================
+
+func (i *Interpreter) builtinUserHome(args []Value) Value {
+	dir, err := os.UserHomeDir()
+	if err != nil {
+		return ""
+	}
+	return dir
+}
+
+func (i *Interpreter) builtinUserCache(args []Value) Value {
+	dir, err := os.UserCacheDir()
+	if err != nil {
+		return ""
+	}
+	return dir
+}
+
+func (i *Interpreter) builtinUserConfig(args []Value) Value {
+	// Go 1.13+ has os.UserConfigDir
+	configDir := os.Getenv("XDG_CONFIG_HOME")
+	if configDir == "" {
+		homeDir, err := os.UserHomeDir()
+		if err != nil {
+			return ""
+		}
+		configDir = filepath.Join(homeDir, ".config")
+	}
+	return configDir
+}
+
+// ============================================================================
+// OS Functions - File Permissions
+// ============================================================================
+
+func (i *Interpreter) builtinChmod(args []Value) Value {
+	if len(args) < 2 {
+		return map[string]Value{"success": false, "error": "chmod requires path and mode"}
+	}
+
+	path, ok1 := args[0].(string)
+	if !ok1 {
+		return map[string]Value{"success": false, "error": "path must be a string"}
+	}
+
+	var mode os.FileMode
+	switch m := args[1].(type) {
+	case float64:
+		mode = os.FileMode(int(m))
+	case int:
+		mode = os.FileMode(m)
+	case int64:
+		mode = os.FileMode(m)
+	case string:
+		// Parse octal string like "755"
+		var n uint32
+		fmt.Sscanf(m, "%o", &n)
+		mode = os.FileMode(n)
+	default:
+		mode = 0644
+	}
+
+	// Resolve path relative to BaseDir
+	if i.ctx.BaseDir != "" && !filepath.IsAbs(path) {
+		path = filepath.Join(i.ctx.BaseDir, path)
+	}
+
+	if err := os.Chmod(path, mode); err != nil {
+		return map[string]Value{"success": false, "error": err.Error()}
+	}
+
+	return map[string]Value{"success": true, "path": path, "mode": fmt.Sprintf("%04o", mode)}
+}
+
+func (i *Interpreter) builtinChown(args []Value) Value {
+	if len(args) < 3 {
+		return map[string]Value{"success": false, "error": "chown requires path, uid, gid"}
+	}
+
+	path, ok := args[0].(string)
+	if !ok {
+		return map[string]Value{"success": false, "error": "path must be a string"}
+	}
+
+	uid := int(i.toInt(args[1]))
+	gid := int(i.toInt(args[2]))
+
+	// Resolve path relative to BaseDir
+	if i.ctx.BaseDir != "" && !filepath.IsAbs(path) {
+		path = filepath.Join(i.ctx.BaseDir, path)
+	}
+
+	if err := os.Chown(path, uid, gid); err != nil {
+		return map[string]Value{"success": false, "error": err.Error()}
+	}
+
+	return map[string]Value{"success": true, "path": path}
+}
+
+// ============================================================================
+// OS Functions - Exit
+// ============================================================================
+
+func (i *Interpreter) builtinExit(args []Value) Value {
+	code := 0
+	if len(args) > 0 {
+		code = int(i.toInt(args[0]))
+	}
+	os.Exit(code)
+	return nil
 }
 
 func iToInt(v Value) int64 {
