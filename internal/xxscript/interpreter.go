@@ -3,7 +3,9 @@ package xxscript
 
 import (
 	"bytes"
+	"crypto/hmac"
 	"crypto/md5"
+	"crypto/rand"
 	"crypto/sha1"
 	"crypto/sha256"
 	"crypto/sha512"
@@ -12,10 +14,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"hash/adler32"
+	"hash/crc32"
 	"html"
 	"io"
 	"math"
-	"math/rand"
+	mathrand "math/rand"
 	"net"
 	"net/http"
 	"net/url"
@@ -28,6 +32,12 @@ import (
 	"strings"
 	"time"
 	"unicode"
+
+	"golang.org/x/crypto/argon2"
+	"golang.org/x/crypto/bcrypt"
+	"golang.org/x/crypto/blake2b"
+	"golang.org/x/crypto/pbkdf2"
+	"golang.org/x/crypto/sha3"
 
 	"github.com/topxeq/xxsql/internal/storage"
 )
@@ -1367,16 +1377,79 @@ func (i *Interpreter) callBuiltin(name string, args []Value) (Value, bool) {
 		return i.builtinSHA256(args), true
 	case "sha512":
 		return i.builtinSHA512(args), true
+	case "sha224":
+		return i.builtinSHA224(args), true
+	case "sha384":
+		return i.builtinSHA384(args), true
+	case "sha3_256":
+		return i.builtinSHA3_256(args), true
+	case "sha3_512":
+		return i.builtinSHA3_512(args), true
+	case "blake2b256":
+		return i.builtinBlake2b256(args), true
+	case "blake2b512":
+		return i.builtinBlake2b512(args), true
+	case "crc32":
+		return i.builtinCRC32(args), true
+	case "adler32":
+		return i.builtinAdler32(args), true
+	// HMAC functions
+	case "hmacSHA1":
+		return i.builtinHmacSHA1(args), true
+	case "hmacSHA256":
+		return i.builtinHmacSHA256(args), true
+	case "hmacSHA512":
+		return i.builtinHmacSHA512(args), true
+	// Password hashing
+	case "bcryptHash":
+		return i.builtinBcryptHash(args), true
+	case "bcryptVerify":
+		return i.builtinBcryptVerify(args), true
+	case "argon2id":
+		return i.builtinArgon2id(args), true
+	// Key derivation
+	case "pbkdf2":
+		return i.builtinPBKDF2(args), true
+	case "hkdf":
+		return i.builtinHKDF(args), true
+	// Random generation
+	case "randomBytes":
+		return i.builtinRandomBytes(args), true
+	case "randomHex":
+		return i.builtinRandomHex(args), true
+	case "randomString":
+		return i.builtinRandomString(args), true
+	case "generatePassword":
+		return i.builtinGeneratePassword(args), true
+	case "uuid":
+		return i.builtinUUID(args), true
+	case "uuidv4":
+		return i.builtinUUID(args), true // alias
+	case "uuidv7":
+		return i.builtinUUIDv7(args), true
+	// Encoding
 	case "base64Encode":
 		return i.builtinBase64Encode(args), true
 	case "base64Decode":
 		return i.builtinBase64Decode(args), true
+	case "base64URLEncode":
+		return i.builtinBase64URLEncode(args), true
+	case "base64URLDecode":
+		return i.builtinBase64URLDecode(args), true
 	case "hexEncode":
 		return i.builtinHexEncode(args), true
 	case "hexDecode":
 		return i.builtinHexDecode(args), true
-	case "hmacSHA256":
-		return i.builtinHmacSHA256(args), true
+	// Simple crypto
+	case "xorEncrypt":
+		return i.builtinXorEncrypt(args), true
+	case "xorDecrypt":
+		return i.builtinXorDecrypt(args), true
+	// JWT (simple)
+	case "jwtEncode":
+		return i.builtinJWTEncode(args), true
+	case "jwtDecode":
+		return i.builtinJWTDecode(args), true
 	// File operations
 	case "fileSave":
 		return i.builtinFileSave(args), true
@@ -3149,7 +3222,7 @@ func (i *Interpreter) builtinPercentile(args []Value) Value {
 // ============================================================================
 
 func (i *Interpreter) builtinRandom(args []Value) Value {
-	return rand.Float64()
+	return mathrand.Float64()
 }
 
 func (i *Interpreter) builtinRandomInt(args []Value) Value {
@@ -3158,16 +3231,16 @@ func (i *Interpreter) builtinRandomInt(args []Value) Value {
 	}
 	min := int64(i.toInt(args[0]))
 	max := int64(i.toInt(args[1]))
-	return min + rand.Int63n(max-min+1)
+	return min + mathrand.Int63n(max-min+1)
 }
 
 func (i *Interpreter) builtinRandomFloat(args []Value) Value {
 	if len(args) < 2 {
-		return rand.Float64()
+		return mathrand.Float64()
 	}
 	min := i.toFloat(args[0])
 	max := i.toFloat(args[1])
-	return min + rand.Float64()*(max-min)
+	return min + mathrand.Float64()*(max-min)
 }
 
 func (i *Interpreter) builtinShuffle(args []Value) Value {
@@ -3183,7 +3256,7 @@ func (i *Interpreter) builtinShuffle(args []Value) Value {
 	copy(result, arr)
 	// Fisher-Yates shuffle
 	for j := len(result) - 1; j > 0; j-- {
-		k := rand.Intn(j + 1)
+		k := mathrand.Intn(j + 1)
 		result[j], result[k] = result[k], result[j]
 	}
 	return result
@@ -3209,7 +3282,7 @@ func (i *Interpreter) builtinSample(args []Value) Value {
 	result := make([]Value, n)
 	copy(result, arr[:n])
 	for j := n; j < len(arr); j++ {
-		k := rand.Intn(j + 1)
+		k := mathrand.Intn(j + 1)
 		if k < n {
 			result[k] = arr[j]
 		}
@@ -4579,6 +4652,659 @@ func (i *Interpreter) builtinHmacSHA256(args []Value) Value {
 	outer.Write(innerHash)
 
 	return hex.EncodeToString(outer.Sum(nil))
+}
+
+// ============================================================================
+// Additional Hash Functions
+// ============================================================================
+
+func (i *Interpreter) builtinSHA224(args []Value) Value {
+	if len(args) == 0 {
+		return ""
+	}
+	s := fmt.Sprintf("%v", args[0])
+	hash := sha256.Sum224([]byte(s))
+	return hex.EncodeToString(hash[:])
+}
+
+func (i *Interpreter) builtinSHA384(args []Value) Value {
+	if len(args) == 0 {
+		return ""
+	}
+	s := fmt.Sprintf("%v", args[0])
+	hash := sha512.Sum384([]byte(s))
+	return hex.EncodeToString(hash[:])
+}
+
+func (i *Interpreter) builtinSHA3_256(args []Value) Value {
+	if len(args) == 0 {
+		return ""
+	}
+	s := fmt.Sprintf("%v", args[0])
+	h := sha3.New256()
+	h.Write([]byte(s))
+	return hex.EncodeToString(h.Sum(nil))
+}
+
+func (i *Interpreter) builtinSHA3_512(args []Value) Value {
+	if len(args) == 0 {
+		return ""
+	}
+	s := fmt.Sprintf("%v", args[0])
+	h := sha3.New512()
+	h.Write([]byte(s))
+	return hex.EncodeToString(h.Sum(nil))
+}
+
+func (i *Interpreter) builtinBlake2b256(args []Value) Value {
+	if len(args) == 0 {
+		return ""
+	}
+	s := fmt.Sprintf("%v", args[0])
+	h, err := blake2b.New(32, nil)
+	if err != nil {
+		return ""
+	}
+	h.Write([]byte(s))
+	return hex.EncodeToString(h.Sum(nil))
+}
+
+func (i *Interpreter) builtinBlake2b512(args []Value) Value {
+	if len(args) == 0 {
+		return ""
+	}
+	s := fmt.Sprintf("%v", args[0])
+	h, err := blake2b.New(64, nil)
+	if err != nil {
+		return ""
+	}
+	h.Write([]byte(s))
+	return hex.EncodeToString(h.Sum(nil))
+}
+
+func (i *Interpreter) builtinCRC32(args []Value) Value {
+	if len(args) == 0 {
+		return int64(0)
+	}
+	s := fmt.Sprintf("%v", args[0])
+	crc := crc32.ChecksumIEEE([]byte(s))
+	return int64(crc)
+}
+
+func (i *Interpreter) builtinAdler32(args []Value) Value {
+	if len(args) == 0 {
+		return int64(0)
+	}
+	s := fmt.Sprintf("%v", args[0])
+	adler := adler32.Checksum([]byte(s))
+	return int64(adler)
+}
+
+// ============================================================================
+// HMAC Functions
+// ============================================================================
+
+func (i *Interpreter) builtinHmacSHA1(args []Value) Value {
+	if len(args) < 2 {
+		return ""
+	}
+	data := fmt.Sprintf("%v", args[0])
+	key := fmt.Sprintf("%v", args[1])
+	h := hmac.New(sha1.New, []byte(key))
+	h.Write([]byte(data))
+	return hex.EncodeToString(h.Sum(nil))
+}
+
+func (i *Interpreter) builtinHmacSHA512(args []Value) Value {
+	if len(args) < 2 {
+		return ""
+	}
+	data := fmt.Sprintf("%v", args[0])
+	key := fmt.Sprintf("%v", args[1])
+	h := hmac.New(sha512.New, []byte(key))
+	h.Write([]byte(data))
+	return hex.EncodeToString(h.Sum(nil))
+}
+
+// ============================================================================
+// Password Hashing Functions
+// ============================================================================
+
+func (i *Interpreter) builtinBcryptHash(args []Value) Value {
+	if len(args) == 0 {
+		return map[string]Value{"success": false, "error": "password required"}
+	}
+
+	password := fmt.Sprintf("%v", args[0])
+	cost := bcrypt.DefaultCost
+	if len(args) > 1 {
+		cost = int(i.toInt(args[1]))
+		if cost < bcrypt.MinCost {
+			cost = bcrypt.MinCost
+		}
+		if cost > bcrypt.MaxCost {
+			cost = bcrypt.MaxCost
+		}
+	}
+
+	hash, err := bcrypt.GenerateFromPassword([]byte(password), cost)
+	if err != nil {
+		return map[string]Value{"success": false, "error": err.Error()}
+	}
+
+	return map[string]Value{
+		"success": true,
+		"hash":    string(hash),
+	}
+}
+
+func (i *Interpreter) builtinBcryptVerify(args []Value) Value {
+	if len(args) < 2 {
+		return map[string]Value{"success": false, "error": "password and hash required"}
+	}
+
+	password := fmt.Sprintf("%v", args[0])
+	hash := fmt.Sprintf("%v", args[1])
+
+	err := bcrypt.CompareHashAndPassword([]byte(hash), []byte(password))
+	if err != nil {
+		return map[string]Value{"success": false, "valid": false, "error": "invalid password"}
+	}
+
+	return map[string]Value{"success": true, "valid": true}
+}
+
+func (i *Interpreter) builtinArgon2id(args []Value) Value {
+	if len(args) == 0 {
+		return map[string]Value{"success": false, "error": "password required"}
+	}
+
+	password := fmt.Sprintf("%v", args[0])
+
+	// Generate random salt
+	salt := make([]byte, 16)
+	if _, err := rand.Read(salt); err != nil {
+		return map[string]Value{"success": false, "error": err.Error()}
+	}
+
+	// Default parameters
+	timeCost := uint32(3)
+	memory := uint32(64 * 1024) // 64 MB
+	threads := uint8(4)
+	keyLen := uint32(32)
+
+	if len(args) > 1 {
+		if opts, ok := args[1].(map[string]Value); ok {
+			if t, ok := opts["time"].(float64); ok {
+				timeCost = uint32(t)
+			}
+			if m, ok := opts["memory"].(float64); ok {
+				memory = uint32(m)
+			}
+			if th, ok := opts["threads"].(float64); ok {
+				threads = uint8(th)
+			}
+			if k, ok := opts["keyLen"].(float64); ok {
+				keyLen = uint32(k)
+			}
+		}
+	}
+
+	hash := argon2.IDKey([]byte(password), salt, timeCost, memory, threads, keyLen)
+
+	return map[string]Value{
+		"success": true,
+		"hash":    hex.EncodeToString(hash),
+		"salt":    hex.EncodeToString(salt),
+		"params": map[string]Value{
+			"time":    int64(timeCost),
+			"memory":  int64(memory),
+			"threads": int64(threads),
+			"keyLen":  int64(keyLen),
+		},
+	}
+}
+
+// ============================================================================
+// Key Derivation Functions
+// ============================================================================
+
+func (i *Interpreter) builtinPBKDF2(args []Value) Value {
+	if len(args) < 3 {
+		return map[string]Value{"success": false, "error": "password, salt, and iterations required"}
+	}
+
+	password := fmt.Sprintf("%v", args[0])
+	salt := fmt.Sprintf("%v", args[1])
+	iterations := int(i.toInt(args[2]))
+	if iterations < 1000 {
+		iterations = 1000
+	}
+
+	keyLen := 32
+	if len(args) > 3 {
+		keyLen = int(i.toInt(args[3]))
+	}
+
+	hashFunc := sha256.New
+	if len(args) > 4 {
+		if h, ok := args[4].(string); ok {
+			switch h {
+			case "sha1":
+				hashFunc = sha1.New
+			case "sha512":
+				hashFunc = sha512.New
+			}
+		}
+	}
+
+	key := pbkdf2.Key([]byte(password), []byte(salt), iterations, keyLen, hashFunc)
+
+	return map[string]Value{
+		"success":     true,
+		"key":         hex.EncodeToString(key),
+		"iterations":  int64(iterations),
+		"keyLen":      int64(keyLen),
+	}
+}
+
+func (i *Interpreter) builtinHKDF(args []Value) Value {
+	if len(args) < 2 {
+		return map[string]Value{"success": false, "error": "secret and salt required"}
+	}
+
+	secret := fmt.Sprintf("%v", args[0])
+	salt := fmt.Sprintf("%v", args[1])
+	info := ""
+	if len(args) > 2 {
+		info = fmt.Sprintf("%v", args[2])
+	}
+
+	keyLen := 32
+	if len(args) > 3 {
+		keyLen = int(i.toInt(args[3]))
+	}
+
+	// Simple HKDF implementation using HMAC-SHA256
+	// Extract
+	prk := hmac.New(sha256.New, []byte(salt))
+	prk.Write([]byte(secret))
+	prkBytes := prk.Sum(nil)
+
+	// Expand
+	var okm []byte
+	var t []byte
+	counter := byte(1)
+	hashLen := 32
+
+	for len(okm) < keyLen {
+		h := hmac.New(sha256.New, prkBytes)
+		h.Write(t)
+		h.Write([]byte(info))
+		h.Write([]byte{counter})
+		t = h.Sum(nil)
+		okm = append(okm, t...)
+		counter++
+		if int(counter) > hashLen*255 {
+			break
+		}
+	}
+
+	return map[string]Value{
+		"success": true,
+		"key":     hex.EncodeToString(okm[:keyLen]),
+	}
+}
+
+// ============================================================================
+// Random Generation Functions
+// ============================================================================
+
+func (i *Interpreter) builtinRandomBytes(args []Value) Value {
+	n := 16
+	if len(args) > 0 {
+		n = int(i.toInt(args[0]))
+	}
+	if n <= 0 {
+		n = 16
+	}
+	if n > 1024 {
+		n = 1024
+	}
+
+	bytes := make([]byte, n)
+	if _, err := rand.Read(bytes); err != nil {
+		return ""
+	}
+	return hex.EncodeToString(bytes)
+}
+
+func (i *Interpreter) builtinRandomHex(args []Value) Value {
+	n := 16
+	if len(args) > 0 {
+		n = int(i.toInt(args[0]))
+	}
+	if n <= 0 {
+		n = 16
+	}
+	if n > 1024 {
+		n = 1024
+	}
+
+	bytes := make([]byte, (n+1)/2)
+	if _, err := rand.Read(bytes); err != nil {
+		return ""
+	}
+	return hex.EncodeToString(bytes)[:n]
+}
+
+func (i *Interpreter) builtinRandomString(args []Value) Value {
+	n := 16
+	if len(args) > 0 {
+		n = int(i.toInt(args[0]))
+	}
+	if n <= 0 {
+		n = 16
+	}
+	if n > 1024 {
+		n = 1024
+	}
+
+	chars := "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
+	if len(args) > 1 {
+		if c, ok := args[1].(string); ok {
+			chars = c
+		}
+	}
+
+	bytes := make([]byte, n)
+	if _, err := rand.Read(bytes); err != nil {
+		return ""
+	}
+
+	result := make([]byte, n)
+	for j := 0; j < n; j++ {
+		result[j] = chars[int(bytes[j])%len(chars)]
+	}
+	return string(result)
+}
+
+func (i *Interpreter) builtinGeneratePassword(args []Value) Value {
+	length := 16
+	if len(args) > 0 {
+		length = int(i.toInt(args[0]))
+	}
+	if length < 8 {
+		length = 8
+	}
+	if length > 128 {
+		length = 128
+	}
+
+	// Character sets
+	lower := "abcdefghijklmnopqrstuvwxyz"
+	upper := "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+	digits := "0123456789"
+	special := "!@#$%^&*()_+-=[]{}|;:,.<>?"
+
+	// Parse options
+	includeLower := true
+	includeUpper := true
+	includeDigits := true
+	includeSpecial := false
+
+	if len(args) > 1 {
+		if opts, ok := args[1].(map[string]Value); ok {
+			if v, ok := opts["lower"].(bool); ok {
+				includeLower = v
+			}
+			if v, ok := opts["upper"].(bool); ok {
+				includeUpper = v
+			}
+			if v, ok := opts["digits"].(bool); ok {
+				includeDigits = v
+			}
+			if v, ok := opts["special"].(bool); ok {
+				includeSpecial = v
+			}
+		}
+	}
+
+	// Build character set
+	var charset string
+	if includeLower {
+		charset += lower
+	}
+	if includeUpper {
+		charset += upper
+	}
+	if includeDigits {
+		charset += digits
+	}
+	if includeSpecial {
+		charset += special
+	}
+
+	if len(charset) == 0 {
+		charset = lower + upper + digits
+	}
+
+	// Generate password
+	bytes := make([]byte, length)
+	if _, err := rand.Read(bytes); err != nil {
+		return ""
+	}
+
+	password := make([]byte, length)
+	for j := 0; j < length; j++ {
+		password[j] = charset[int(bytes[j])%len(charset)]
+	}
+
+	return string(password)
+}
+
+func (i *Interpreter) builtinUUID(args []Value) Value {
+	uuid := make([]byte, 16)
+	if _, err := rand.Read(uuid); err != nil {
+		return ""
+	}
+
+	// Version 4
+	uuid[6] = (uuid[6] & 0x0f) | 0x40
+	// Variant
+	uuid[8] = (uuid[8] & 0x3f) | 0x80
+
+	return fmt.Sprintf("%x-%x-%x-%x-%x",
+		uuid[0:4], uuid[4:6], uuid[6:8], uuid[8:10], uuid[10:16])
+}
+
+func (i *Interpreter) builtinUUIDv7(args []Value) Value {
+	now := time.Now()
+	ts := uint64(now.UnixMilli())
+
+	uuid := make([]byte, 16)
+	if _, err := rand.Read(uuid); err != nil {
+		return ""
+	}
+
+	// Set timestamp (48 bits, big-endian)
+	uuid[0] = byte(ts >> 40)
+	uuid[1] = byte(ts >> 32)
+	uuid[2] = byte(ts >> 24)
+	uuid[3] = byte(ts >> 16)
+	uuid[4] = byte(ts >> 8)
+	uuid[5] = byte(ts)
+
+	// Version 7
+	uuid[6] = (uuid[6] & 0x0f) | 0x70
+	// Variant
+	uuid[8] = (uuid[8] & 0x3f) | 0x80
+
+	return fmt.Sprintf("%x-%x-%x-%x-%x",
+		uuid[0:4], uuid[4:6], uuid[6:8], uuid[8:10], uuid[10:16])
+}
+
+// ============================================================================
+// Encoding Functions
+// ============================================================================
+
+func (i *Interpreter) builtinBase64URLEncode(args []Value) Value {
+	if len(args) == 0 {
+		return ""
+	}
+	s := fmt.Sprintf("%v", args[0])
+	return base64.URLEncoding.EncodeToString([]byte(s))
+}
+
+func (i *Interpreter) builtinBase64URLDecode(args []Value) Value {
+	if len(args) == 0 {
+		return ""
+	}
+	s, ok := args[0].(string)
+	if !ok {
+		s = fmt.Sprintf("%v", args[0])
+	}
+	decoded, err := base64.URLEncoding.DecodeString(s)
+	if err != nil {
+		return ""
+	}
+	return string(decoded)
+}
+
+// ============================================================================
+// Simple Crypto Functions
+// ============================================================================
+
+func (i *Interpreter) builtinXorEncrypt(args []Value) Value {
+	if len(args) < 2 {
+		return ""
+	}
+
+	data := fmt.Sprintf("%v", args[0])
+	key := fmt.Sprintf("%v", args[1])
+
+	result := make([]byte, len(data))
+	for j := 0; j < len(data); j++ {
+		result[j] = data[j] ^ key[j%len(key)]
+	}
+
+	return hex.EncodeToString(result)
+}
+
+func (i *Interpreter) builtinXorDecrypt(args []Value) Value {
+	if len(args) < 2 {
+		return ""
+	}
+
+	dataHex, ok := args[0].(string)
+	if !ok {
+		return ""
+	}
+
+	data, err := hex.DecodeString(dataHex)
+	if err != nil {
+		return ""
+	}
+
+	key := fmt.Sprintf("%v", args[1])
+
+	result := make([]byte, len(data))
+	for j := 0; j < len(data); j++ {
+		result[j] = data[j] ^ key[j%len(key)]
+	}
+
+	return string(result)
+}
+
+// ============================================================================
+// JWT Functions (Simple)
+// ============================================================================
+
+func (i *Interpreter) builtinJWTEncode(args []Value) Value {
+	if len(args) < 2 {
+		return ""
+	}
+
+	// Get header
+	header := `{"alg":"HS256","typ":"JWT"}`
+	if len(args) > 2 {
+		if h, ok := args[2].(string); ok {
+			header = h
+		}
+	}
+
+	// Get payload
+	var payload string
+	switch v := args[0].(type) {
+	case string:
+		payload = v
+	case map[string]Value:
+		data, _ := json.Marshal(v)
+		payload = string(data)
+	default:
+		payload = fmt.Sprintf("%v", v)
+	}
+
+	// Get secret
+	secret := fmt.Sprintf("%v", args[1])
+
+	// Encode header and payload
+	headerB64 := base64.RawURLEncoding.EncodeToString([]byte(header))
+	payloadB64 := base64.RawURLEncoding.EncodeToString([]byte(payload))
+
+	// Sign
+	signingInput := headerB64 + "." + payloadB64
+	h := hmac.New(sha256.New, []byte(secret))
+	h.Write([]byte(signingInput))
+	signature := base64.RawURLEncoding.EncodeToString(h.Sum(nil))
+
+	return signingInput + "." + signature
+}
+
+func (i *Interpreter) builtinJWTDecode(args []Value) Value {
+	if len(args) == 0 {
+		return map[string]Value{"success": false, "error": "token required"}
+	}
+
+	token, ok := args[0].(string)
+	if !ok {
+		return map[string]Value{"success": false, "error": "invalid token"}
+	}
+
+	parts := strings.Split(token, ".")
+	if len(parts) != 3 {
+		return map[string]Value{"success": false, "error": "invalid token format"}
+	}
+
+	// Decode header
+	headerBytes, err := base64.RawURLEncoding.DecodeString(parts[0])
+	if err != nil {
+		return map[string]Value{"success": false, "error": "invalid header encoding"}
+	}
+
+	// Decode payload
+	payloadBytes, err := base64.RawURLEncoding.DecodeString(parts[1])
+	if err != nil {
+		return map[string]Value{"success": false, "error": "invalid payload encoding"}
+	}
+
+	result := map[string]Value{
+		"success": true,
+		"header":  string(headerBytes),
+		"payload": string(payloadBytes),
+	}
+
+	// Verify signature if secret provided
+	if len(args) > 1 {
+		secret := fmt.Sprintf("%v", args[1])
+		signingInput := parts[0] + "." + parts[1]
+		h := hmac.New(sha256.New, []byte(secret))
+		h.Write([]byte(signingInput))
+		expectedSig := base64.RawURLEncoding.EncodeToString(h.Sum(nil))
+		result["valid"] = expectedSig == parts[2]
+	}
+
+	return result
 }
 
 // ============================================================================
