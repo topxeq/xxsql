@@ -5,6 +5,8 @@ import (
 	"bytes"
 	"compress/gzip"
 	"compress/zlib"
+	"crypto/aes"
+	"crypto/cipher"
 	"crypto/hmac"
 	"crypto/md5"
 	"crypto/rand"
@@ -89,6 +91,7 @@ type Context struct {
 	HTTPRequest *http.Request
 	MaxSteps    int
 	BaseDir     string // Base directory for file operations
+	Timezone    *time.Location
 	steps       int
 	returning   bool
 	breaking    bool
@@ -2276,6 +2279,102 @@ func (i *Interpreter) callBuiltin(name string, args []Value) (Value, bool) {
 		return i.builtinCacheClear(args), true
 	case "cacheKeys":
 		return i.builtinCacheKeys(args), true
+	// Security Enhancement
+	case "jwtSign":
+		return i.builtinJWTSign(args), true
+	case "jwtVerify":
+		return i.builtinJWTVerify(args), true
+	case "hashPassword":
+		return i.builtinHashPassword(args), true
+	case "verifyPassword":
+		return i.builtinVerifyPassword(args), true
+	case "generateSecret":
+		return i.builtinGenerateSecret(args), true
+	case "encryptAES":
+		return i.builtinEncryptAES(args), true
+	case "decryptAES":
+		return i.builtinDecryptAES(args), true
+	// Validation and Sanitization
+	case "validate":
+		return i.builtinValidate(args), true
+	case "sanitize":
+		return i.builtinSanitize(args), true
+	case "normalizeEmail":
+		return i.builtinNormalizeEmail(args), true
+	case "normalizePhone":
+		return i.builtinNormalizePhone(args), true
+	case "validatePassword":
+		return i.builtinValidatePassword(args), true
+	case "isStrongPassword":
+		return i.builtinValidatePassword(args), true // alias
+	// Template and Rendering
+	case "renderTemplate":
+		return i.builtinRenderTemplate(args), true
+	case "minify":
+		return i.builtinMinify(args), true
+	case "beautify":
+		return i.builtinBeautify(args), true
+	// Email and Notification
+	case "sendEmail":
+		return i.builtinSendEmail(args), true
+	case "sendWebhook":
+		return i.builtinSendWebhook(args), true
+	// Random Generation Extended
+	case "randomAvatar":
+		return i.builtinRandomAvatar(args), true
+	case "generateLorem":
+		return i.builtinGenerateLorem(args), true
+	case "faker":
+		return i.builtinFaker(args), true
+	// Internationalization
+	case "getTimezone":
+		return i.builtinGetTimezone(args), true
+	case "setTimezone":
+		return i.builtinSetTimezone(args), true
+	case "listTimezones":
+		return i.builtinListTimezones(args), true
+	// Image Processing
+	case "imageInfo":
+		return i.builtinImageInfo(args), true
+	case "imageToBase64":
+		return i.builtinImageToBase64(args), true
+	case "base64ToImage":
+		return i.builtinBase64ToImage(args), true
+	case "barcodeEncode":
+		return i.builtinBarcodeEncode(args), true
+	// Data Structures
+	case "newStack":
+		return i.builtinNewStack(args), true
+	case "newQueue":
+		return i.builtinNewQueue(args), true
+	case "newSet":
+		return i.builtinNewSet(args), true
+	// Debug and Testing
+	case "debug":
+		return i.builtinDebug(args), true
+	case "benchmark":
+		return i.builtinBenchmark(args), true
+	case "mock":
+		return i.builtinMock(args), true
+	// Configuration Management
+	case "loadConfig":
+		return i.builtinLoadConfig(args), true
+	case "saveConfig":
+		return i.builtinSaveConfig(args), true
+	case "getSecret":
+		return i.builtinGetSecret(args), true
+	// System Extended
+	case "getMemory":
+		return i.builtinGetMemory(args), true
+	case "getCPU":
+		return i.builtinGetCPU(args), true
+	case "killProcess":
+		return i.builtinKillProcess(args), true
+	// Network Extended
+	case "ipLookup":
+		return i.builtinIPLookup(args), true
+	case "whois":
+		return i.builtinWhois(args), true
 	// Format - Other
 	case "printf":
 		return i.builtinPrintf(args), true
@@ -16914,6 +17013,1484 @@ func (i *Interpreter) valueToGo(v Value) interface{} {
 		return result
 	default:
 		return fmt.Sprintf("%v", val)
+	}
+}
+
+// ============================================================================
+// Security Enhancement Functions
+// ============================================================================
+
+// JWT Sign - create a simple JWT token
+func (i *Interpreter) builtinJWTSign(args []Value) Value {
+	if len(args) < 2 {
+		return map[string]Value{"error": "need payload and secret"}
+	}
+
+	payload, ok := args[0].(map[string]Value)
+	if !ok {
+		return map[string]Value{"error": "payload must be an object"}
+	}
+
+	secret, ok := args[1].(string)
+	if !ok {
+		return map[string]Value{"error": "secret must be string"}
+	}
+
+	// Create header
+	header := `{"alg":"HS256","typ":"JWT"}`
+	headerB64 := base64.RawURLEncoding.EncodeToString([]byte(header))
+
+	// Create payload
+	payloadJSON, _ := json.Marshal(i.valueToGo(payload))
+	payloadB64 := base64.RawURLEncoding.EncodeToString(payloadJSON)
+
+	// Create signature
+	signingInput := headerB64 + "." + payloadB64
+	h := hmac.New(sha256.New, []byte(secret))
+	h.Write([]byte(signingInput))
+	signature := base64.RawURLEncoding.EncodeToString(h.Sum(nil))
+
+	return signingInput + "." + signature
+}
+
+// JWT Verify - verify a JWT token
+func (i *Interpreter) builtinJWTVerify(args []Value) Value {
+	if len(args) < 2 {
+		return map[string]Value{"valid": false, "error": "need token and secret"}
+	}
+
+	token, ok := args[0].(string)
+	if !ok {
+		return map[string]Value{"valid": false, "error": "token must be string"}
+	}
+
+	secret, ok := args[1].(string)
+	if !ok {
+		return map[string]Value{"valid": false, "error": "secret must be string"}
+	}
+
+	parts := strings.Split(token, ".")
+	if len(parts) != 3 {
+		return map[string]Value{"valid": false, "error": "invalid token format"}
+	}
+
+	// Verify signature
+	signingInput := parts[0] + "." + parts[1]
+	h := hmac.New(sha256.New, []byte(secret))
+	h.Write([]byte(signingInput))
+	expectedSig := base64.RawURLEncoding.EncodeToString(h.Sum(nil))
+
+	if parts[2] != expectedSig {
+		return map[string]Value{"valid": false, "error": "invalid signature"}
+	}
+
+	// Decode payload
+	payloadBytes, err := base64.RawURLEncoding.DecodeString(parts[1])
+	if err != nil {
+		return map[string]Value{"valid": false, "error": "invalid payload encoding"}
+	}
+
+	var payload interface{}
+	if err := json.Unmarshal(payloadBytes, &payload); err != nil {
+		return map[string]Value{"valid": false, "error": "invalid payload JSON"}
+	}
+
+	return map[string]Value{
+		"valid":   true,
+		"header":  parts[0],
+		"payload": i.convertToValue(payload),
+	}
+}
+
+// Hash Password - using bcrypt
+func (i *Interpreter) builtinHashPassword(args []Value) Value {
+	if len(args) == 0 {
+		return map[string]Value{"error": "need password"}
+	}
+
+	password, ok := args[0].(string)
+	if !ok {
+		return map[string]Value{"error": "password must be string"}
+	}
+
+	cost := bcrypt.DefaultCost
+	if len(args) > 1 {
+		cost = int(i.toInt(args[1]))
+		if cost < bcrypt.MinCost {
+			cost = bcrypt.MinCost
+		}
+		if cost > bcrypt.MaxCost {
+			cost = bcrypt.MaxCost
+		}
+	}
+
+	hash, err := bcrypt.GenerateFromPassword([]byte(password), cost)
+	if err != nil {
+		return map[string]Value{"error": err.Error()}
+	}
+
+	return string(hash)
+}
+
+// Verify Password - using bcrypt
+func (i *Interpreter) builtinVerifyPassword(args []Value) Value {
+	if len(args) < 2 {
+		return false
+	}
+
+	password, ok := args[0].(string)
+	if !ok {
+		return false
+	}
+
+	hash, ok := args[1].(string)
+	if !ok {
+		return false
+	}
+
+	err := bcrypt.CompareHashAndPassword([]byte(hash), []byte(password))
+	return err == nil
+}
+
+// Generate Secret
+func (i *Interpreter) builtinGenerateSecret(args []Value) Value {
+	length := 32
+	if len(args) > 0 {
+		length = int(i.toInt(args[0]))
+	}
+
+	bytes := make([]byte, length)
+	if _, err := rand.Read(bytes); err != nil {
+		return ""
+	}
+
+	encoding := "hex"
+	if len(args) > 1 {
+		if e, ok := args[1].(string); ok {
+			encoding = e
+		}
+	}
+
+	switch encoding {
+	case "base64":
+		return base64.StdEncoding.EncodeToString(bytes)
+	case "base64url":
+		return base64.RawURLEncoding.EncodeToString(bytes)
+	default:
+		return hex.EncodeToString(bytes)
+	}
+}
+
+// Encrypt AES
+func (i *Interpreter) builtinEncryptAES(args []Value) Value {
+	if len(args) < 2 {
+		return map[string]Value{"error": "need plaintext and key"}
+	}
+
+	plaintext, ok := args[0].(string)
+	if !ok {
+		return map[string]Value{"error": "plaintext must be string"}
+	}
+
+	key, ok := args[1].(string)
+	if !ok {
+		return map[string]Value{"error": "key must be string"}
+	}
+
+	// Derive 32-byte key from input
+	keyHash := sha256.Sum256([]byte(key))
+
+	block, err := aes.NewCipher(keyHash[:])
+	if err != nil {
+		return map[string]Value{"error": err.Error()}
+	}
+
+	// Create GCM mode
+	gcm, err := cipher.NewGCM(block)
+	if err != nil {
+		return map[string]Value{"error": err.Error()}
+	}
+
+	// Generate nonce
+	nonce := make([]byte, gcm.NonceSize())
+	if _, err := rand.Read(nonce); err != nil {
+		return map[string]Value{"error": err.Error()}
+	}
+
+	// Encrypt
+	ciphertext := gcm.Seal(nonce, nonce, []byte(plaintext), nil)
+
+	return base64.StdEncoding.EncodeToString(ciphertext)
+}
+
+// Decrypt AES
+func (i *Interpreter) builtinDecryptAES(args []Value) Value {
+	if len(args) < 2 {
+		return map[string]Value{"error": "need ciphertext and key"}
+	}
+
+	ciphertextB64, ok := args[0].(string)
+	if !ok {
+		return map[string]Value{"error": "ciphertext must be string"}
+	}
+
+	key, ok := args[1].(string)
+	if !ok {
+		return map[string]Value{"error": "key must be string"}
+	}
+
+	// Decode base64
+	ciphertext, err := base64.StdEncoding.DecodeString(ciphertextB64)
+	if err != nil {
+		return map[string]Value{"error": "invalid base64"}
+	}
+
+	// Derive 32-byte key
+	keyHash := sha256.Sum256([]byte(key))
+
+	block, err := aes.NewCipher(keyHash[:])
+	if err != nil {
+		return map[string]Value{"error": err.Error()}
+	}
+
+	gcm, err := cipher.NewGCM(block)
+	if err != nil {
+		return map[string]Value{"error": err.Error()}
+	}
+
+	nonceSize := gcm.NonceSize()
+	if len(ciphertext) < nonceSize {
+		return map[string]Value{"error": "ciphertext too short"}
+	}
+
+	nonce, ciphertext := ciphertext[:nonceSize], ciphertext[nonceSize:]
+	plaintext, err := gcm.Open(nil, nonce, ciphertext, nil)
+	if err != nil {
+		return map[string]Value{"error": "decryption failed"}
+	}
+
+	return string(plaintext)
+}
+
+// ============================================================================
+// Validation and Sanitization Functions
+// ============================================================================
+
+// Validate - generic data validation
+func (i *Interpreter) builtinValidate(args []Value) Value {
+	if len(args) < 2 {
+		return map[string]Value{"valid": false, "error": "need value and rules"}
+	}
+
+	value := args[0]
+	rules, ok := args[1].(map[string]Value)
+	if !ok {
+		return map[string]Value{"valid": false, "error": "rules must be an object"}
+	}
+
+	errors := []Value{}
+
+	// Check required
+	if req, exists := rules["required"]; exists {
+		if i.toBool(req) && value == nil {
+			errors = append(errors, "value is required")
+		}
+	}
+
+	// Check type
+	if typeRule, exists := rules["type"]; exists {
+		typeStr, _ := typeRule.(string)
+		switch typeStr {
+		case "string":
+			if _, ok := value.(string); !ok {
+				errors = append(errors, "value must be string")
+			}
+		case "number":
+			if _, ok := value.(float64); !ok {
+				if _, ok := value.(int64); !ok {
+					errors = append(errors, "value must be number")
+				}
+			}
+		case "boolean", "bool":
+			if _, ok := value.(bool); !ok {
+				errors = append(errors, "value must be boolean")
+			}
+		case "array":
+			if _, ok := value.([]Value); !ok {
+				errors = append(errors, "value must be array")
+			}
+		case "object", "map":
+			if _, ok := value.(map[string]Value); !ok {
+				errors = append(errors, "value must be object")
+			}
+		}
+	}
+
+	// Check min
+	if min, exists := rules["min"]; exists {
+		if num, ok := value.(float64); ok {
+			if num < i.toFloat(min) {
+				errors = append(errors, fmt.Sprintf("value must be >= %v", min))
+			}
+		} else if str, ok := value.(string); ok {
+			if len(str) < int(i.toInt(min)) {
+				errors = append(errors, fmt.Sprintf("string length must be >= %v", min))
+			}
+		}
+	}
+
+	// Check max
+	if max, exists := rules["max"]; exists {
+		if num, ok := value.(float64); ok {
+			if num > i.toFloat(max) {
+				errors = append(errors, fmt.Sprintf("value must be <= %v", max))
+			}
+		} else if str, ok := value.(string); ok {
+			if len(str) > int(i.toInt(max)) {
+				errors = append(errors, fmt.Sprintf("string length must be <= %v", max))
+			}
+		}
+	}
+
+	// Check pattern (regex)
+	if pattern, exists := rules["pattern"]; exists {
+		if patternStr, ok := pattern.(string); ok {
+			if str, ok := value.(string); ok {
+				matched, err := regexp.MatchString(patternStr, str)
+				if err != nil || !matched {
+					errors = append(errors, fmt.Sprintf("value does not match pattern: %s", patternStr))
+				}
+			}
+		}
+	}
+
+	return map[string]Value{
+		"valid":  len(errors) == 0,
+		"errors": errors,
+	}
+}
+
+// Sanitize - clean data
+func (i *Interpreter) builtinSanitize(args []Value) Value {
+	if len(args) == 0 {
+		return ""
+	}
+
+	s, ok := args[0].(string)
+	if !ok {
+		return args[0]
+	}
+
+	// HTML escape
+	s = html.EscapeString(s)
+
+	// Remove control characters
+	var result strings.Builder
+	for _, r := range s {
+		if r >= 32 || r == '\n' || r == '\r' || r == '\t' {
+			result.WriteRune(r)
+		}
+	}
+
+	return result.String()
+}
+
+// Normalize Email
+func (i *Interpreter) builtinNormalizeEmail(args []Value) Value {
+	if len(args) == 0 {
+		return ""
+	}
+
+	email, ok := args[0].(string)
+	if !ok {
+		return ""
+	}
+
+	// Trim and lowercase
+	email = strings.TrimSpace(strings.ToLower(email))
+
+	// Remove dots in Gmail addresses
+	parts := strings.Split(email, "@")
+	if len(parts) == 2 {
+		if strings.HasSuffix(parts[1], "gmail.com") {
+			parts[0] = strings.ReplaceAll(parts[0], ".", "")
+			email = parts[0] + "@" + parts[1]
+		}
+	}
+
+	return email
+}
+
+// Normalize Phone
+func (i *Interpreter) builtinNormalizePhone(args []Value) Value {
+	if len(args) == 0 {
+		return ""
+	}
+
+	phone, ok := args[0].(string)
+	if !ok {
+		return ""
+	}
+
+	// Remove non-digits
+	var result strings.Builder
+	for _, r := range phone {
+		if r >= '0' && r <= '9' {
+			result.WriteRune(r)
+		}
+	}
+
+	digits := result.String()
+
+	// Default country code
+	countryCode := "1"
+	if len(args) > 1 {
+		countryCode, _ = args[1].(string)
+	}
+
+	// Add country code if missing
+	if len(digits) == 10 {
+		digits = countryCode + digits
+	}
+
+	return "+" + digits
+}
+
+// Validate Password Strength
+func (i *Interpreter) builtinValidatePassword(args []Value) Value {
+	if len(args) == 0 {
+		return map[string]Value{"valid": false, "score": 0}
+	}
+
+	password, ok := args[0].(string)
+	if !ok {
+		return map[string]Value{"valid": false, "score": 0}
+	}
+
+	minLength := 8
+	if len(args) > 1 {
+		minLength = int(i.toInt(args[1]))
+	}
+
+	score := 0
+	feedback := []Value{}
+
+	// Length check
+	if len(password) >= minLength {
+		score++
+	} else {
+		feedback = append(feedback, fmt.Sprintf("Password must be at least %d characters", minLength))
+	}
+
+	// Uppercase check
+	if regexp.MustCompile(`[A-Z]`).MatchString(password) {
+		score++
+	} else {
+		feedback = append(feedback, "Add uppercase letter")
+	}
+
+	// Lowercase check
+	if regexp.MustCompile(`[a-z]`).MatchString(password) {
+		score++
+	} else {
+		feedback = append(feedback, "Add lowercase letter")
+	}
+
+	// Number check
+	if regexp.MustCompile(`[0-9]`).MatchString(password) {
+		score++
+	} else {
+		feedback = append(feedback, "Add number")
+	}
+
+	// Special character check
+	if regexp.MustCompile(`[!@#$%^&*()_+\-=\[\]{};':"\\|,.<>/?]`).MatchString(password) {
+		score++
+	} else {
+		feedback = append(feedback, "Add special character")
+	}
+
+	// Strength rating
+	var strength string
+	switch score {
+	case 5:
+		strength = "very strong"
+	case 4:
+		strength = "strong"
+	case 3:
+		strength = "medium"
+	case 2:
+		strength = "weak"
+	default:
+		strength = "very weak"
+	}
+
+	return map[string]Value{
+		"valid":    score >= 3 && len(password) >= minLength,
+		"score":    score,
+		"strength": strength,
+		"feedback": feedback,
+	}
+}
+
+// ============================================================================
+// Template and Rendering Functions
+// ============================================================================
+
+// Render Template - simple template rendering
+func (i *Interpreter) builtinRenderTemplate(args []Value) Value {
+	if len(args) < 2 {
+		return ""
+	}
+
+	tmpl, ok := args[0].(string)
+	if !ok {
+		return ""
+	}
+
+	data, ok := args[1].(map[string]Value)
+	if !ok {
+		return tmpl
+	}
+
+	// Simple {{variable}} replacement
+	re := regexp.MustCompile(`\{\{(\w+)\}\}`)
+	result := re.ReplaceAllStringFunc(tmpl, func(match string) string {
+		key := match[2 : len(match)-2]
+		if val, exists := data[key]; exists {
+			return fmt.Sprintf("%v", val)
+		}
+		return match
+	})
+
+	return result
+}
+
+// Minify - minify code
+func (i *Interpreter) builtinMinify(args []Value) Value {
+	if len(args) == 0 {
+		return ""
+	}
+
+	code, ok := args[0].(string)
+	if !ok {
+		return ""
+	}
+
+	lang := "auto"
+	if len(args) > 1 {
+		lang, _ = args[1].(string)
+	}
+
+	// Simple minification: remove extra whitespace
+	switch lang {
+	case "json":
+		// Compact JSON
+		var compact bytes.Buffer
+		if err := json.Compact(&compact, []byte(code)); err == nil {
+			return compact.String()
+		}
+	case "html":
+		// Remove comments and extra whitespace
+		code = regexp.MustCompile(`<!--.*?-->`).ReplaceAllString(code, "")
+		code = regexp.MustCompile(`\s+`).ReplaceAllString(code, " ")
+		code = regexp.MustCompile(`>\s+<`).ReplaceAllString(code, "><")
+		return strings.TrimSpace(code)
+	default:
+		// Generic minification
+		code = regexp.MustCompile(`\s+`).ReplaceAllString(code, " ")
+		return strings.TrimSpace(code)
+	}
+
+	return code
+}
+
+// Beautify - format code
+func (i *Interpreter) builtinBeautify(args []Value) Value {
+	if len(args) == 0 {
+		return ""
+	}
+
+	code, ok := args[0].(string)
+	if !ok {
+		return ""
+	}
+
+	lang := "auto"
+	if len(args) > 1 {
+		lang, _ = args[1].(string)
+	}
+
+	switch lang {
+	case "json":
+		var pretty bytes.Buffer
+		if err := json.Indent(&pretty, []byte(code), "", "  "); err == nil {
+			return pretty.String()
+		}
+	case "xml":
+		// Simple XML formatting
+		code = regexp.MustCompile(`>`).ReplaceAllString(code, ">\n")
+		code = regexp.MustCompile(`<`).ReplaceAllString(code, "\n<")
+		code = regexp.MustCompile(`\n+`).ReplaceAllString(code, "\n")
+		return code
+	}
+
+	return code
+}
+
+// ============================================================================
+// Email and Notification Functions
+// ============================================================================
+
+// Send Email - requires SMTP config
+func (i *Interpreter) builtinSendEmail(args []Value) Value {
+	if len(args) < 3 {
+		return map[string]Value{"success": false, "error": "need to, subject, body"}
+	}
+
+	to, ok := args[0].(string)
+	if !ok {
+		return map[string]Value{"success": false, "error": "to must be string"}
+	}
+
+	subject, ok := args[1].(string)
+	if !ok {
+		return map[string]Value{"success": false, "error": "subject must be string"}
+	}
+
+	body, ok := args[2].(string)
+	if !ok {
+		return map[string]Value{"success": false, "error": "body must be string"}
+	}
+
+	// This is a placeholder - actual email sending would require SMTP config
+	// For now, just return success with the email details
+	return map[string]Value{
+		"success": true,
+		"message": "Email would be sent (SMTP not configured)",
+		"to":      to,
+		"subject": subject,
+		"length":  len(body),
+	}
+}
+
+// Send Webhook
+func (i *Interpreter) builtinSendWebhook(args []Value) Value {
+	if len(args) < 2 {
+		return map[string]Value{"success": false, "error": "need url and payload"}
+	}
+
+	url, ok := args[0].(string)
+	if !ok {
+		return map[string]Value{"success": false, "error": "url must be string"}
+	}
+
+	payload := args[1]
+	var bodyReader io.Reader
+
+	switch v := payload.(type) {
+	case string:
+		bodyReader = strings.NewReader(v)
+	case map[string]Value:
+		jsonData, _ := json.Marshal(i.valueToGo(v))
+		bodyReader = bytes.NewReader(jsonData)
+	default:
+		jsonData, _ := json.Marshal(payload)
+		bodyReader = bytes.NewReader(jsonData)
+	}
+
+	req, err := http.NewRequest("POST", url, bodyReader)
+	if err != nil {
+		return map[string]Value{"success": false, "error": err.Error()}
+	}
+
+	req.Header.Set("Content-Type", "application/json")
+
+	client := &http.Client{Timeout: 30 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return map[string]Value{"success": false, "error": err.Error()}
+	}
+	defer resp.Body.Close()
+
+	respBody, _ := io.ReadAll(resp.Body)
+
+	return map[string]Value{
+		"success":    resp.StatusCode >= 200 && resp.StatusCode < 300,
+		"statusCode": resp.StatusCode,
+		"response":   string(respBody),
+	}
+}
+
+// ============================================================================
+// Random Generation Extended Functions
+// ============================================================================
+
+// Random Avatar URL
+func (i *Interpreter) builtinRandomAvatar(args []Value) Value {
+	style := "identicon"
+	size := 200
+
+	if len(args) > 0 {
+		if s, ok := args[0].(string); ok {
+			style = s
+		}
+	}
+	if len(args) > 1 {
+		size = int(i.toInt(args[1]))
+	}
+
+	// Generate random seed
+	seed := make([]byte, 8)
+	rand.Read(seed)
+	seedHex := hex.EncodeToString(seed)
+
+	switch style {
+	case "robohash":
+		return fmt.Sprintf("https://robohash.org/%s?size=%dx%d", seedHex, size, size)
+	case "dicebear":
+		return fmt.Sprintf("https://api.dicebear.com/7.x/avataaars/svg?seed=%s", seedHex)
+	case "uiavatars":
+		name := "User"
+		if len(args) > 2 {
+			name, _ = args[2].(string)
+		}
+		return fmt.Sprintf("https://ui-avatars.com/api/?name=%s&size=%d&background=random", url.QueryEscape(name), size)
+	default:
+		return fmt.Sprintf("https://www.gravatar.com/avatar/%s?d=identicon&s=%d", seedHex, size)
+	}
+}
+
+// Generate Lorem Ipsum
+func (i *Interpreter) builtinGenerateLorem(args []Value) Value {
+	count := 5
+	units := "paragraphs"
+
+	if len(args) > 0 {
+		count = int(i.toInt(args[0]))
+	}
+	if len(args) > 1 {
+		units, _ = args[1].(string)
+	}
+
+	words := []string{
+		"lorem", "ipsum", "dolor", "sit", "amet", "consectetur", "adipiscing", "elit",
+		"sed", "do", "eiusmod", "tempor", "incididunt", "ut", "labore", "et", "dolore",
+		"magna", "aliqua", "enim", "ad", "minim", "veniam", "quis", "nostrud",
+		"exercitation", "ullamco", "laboris", "nisi", "aliquip", "ex", "ea", "commodo",
+	}
+
+	generateSentence := func() string {
+		n := 10 + int(mathrand.Intn(10))
+		sentence := make([]string, n)
+		for i := 0; i < n; i++ {
+			sentence[i] = words[mathrand.Intn(len(words))]
+		}
+		sentence[0] = strings.Title(sentence[0])
+		return strings.Join(sentence, " ") + "."
+	}
+
+	switch units {
+	case "words":
+		result := make([]string, count)
+		for i := 0; i < count; i++ {
+			result[i] = words[mathrand.Intn(len(words))]
+		}
+		return strings.Join(result, " ")
+	case "sentences":
+		result := make([]string, count)
+		for i := 0; i < count; i++ {
+			result[i] = generateSentence()
+		}
+		return strings.Join(result, " ")
+	default: // paragraphs
+		result := make([]string, count)
+		for i := 0; i < count; i++ {
+			sentences := 3 + mathrand.Intn(3)
+			para := make([]string, sentences)
+			for j := 0; j < sentences; j++ {
+				para[j] = generateSentence()
+			}
+			result[i] = strings.Join(para, " ")
+		}
+		return strings.Join(result, "\n\n")
+	}
+}
+
+// Faker - generate mock data
+func (i *Interpreter) builtinFaker(args []Value) Value {
+	fakerType := "name"
+	if len(args) > 0 {
+		fakerType, _ = args[0].(string)
+	}
+
+	r := make([]byte, 4)
+	rand.Read(r)
+
+	switch fakerType {
+	case "name":
+		names := []string{"John Smith", "Jane Doe", "Bob Wilson", "Alice Brown", "Charlie Davis", "Emma Johnson", "Michael Lee", "Sarah Miller"}
+		return names[int(r[0])%len(names)]
+	case "firstName":
+		names := []string{"John", "Jane", "Bob", "Alice", "Charlie", "Emma", "Michael", "Sarah"}
+		return names[int(r[0])%len(names)]
+	case "lastName":
+		names := []string{"Smith", "Doe", "Wilson", "Brown", "Davis", "Johnson", "Lee", "Miller"}
+		return names[int(r[0])%len(names)]
+	case "email":
+		names := []string{"john", "jane", "bob", "alice", "charlie"}
+		domains := []string{"example.com", "test.com", "demo.org", "sample.net"}
+		return names[int(r[0])%len(names)] + "@" + domains[int(r[1])%len(domains)]
+	case "phone":
+		return fmt.Sprintf("+1-555-%03d-%04d", int(r[0])%1000, int(r[1])*256+int(r[2])%10000)
+	case "address":
+		num := int(r[0])%900 + 100
+		streets := []string{"Main St", "Oak Ave", "Park Rd", "First St", "Second Ave"}
+		cities := []string{"New York", "Los Angeles", "Chicago", "Houston", "Phoenix"}
+		return fmt.Sprintf("%d %s, %s", num, streets[int(r[1])%len(streets)], cities[int(r[2])%len(cities)])
+	case "company":
+		companies := []string{"Acme Corp", "Tech Solutions", "Global Industries", "Innovative Labs", "Future Systems"}
+		return companies[int(r[0])%len(companies)]
+	case "jobTitle":
+		titles := []string{"Software Engineer", "Product Manager", "Data Analyst", "UX Designer", "Marketing Director"}
+		return titles[int(r[0])%len(titles)]
+	case "country":
+		countries := []string{"United States", "Canada", "United Kingdom", "Germany", "France", "Japan", "Australia"}
+		return countries[int(r[0])%len(countries)]
+	case "city":
+		cities := []string{"New York", "London", "Tokyo", "Paris", "Sydney", "Berlin", "Toronto"}
+		return cities[int(r[0])%len(cities)]
+	case "price":
+		return float64(int(r[0])*100+int(r[1])) / 100
+	case "product":
+		products := []string{"Laptop", "Smartphone", "Tablet", "Headphones", "Camera", "Smart Watch"}
+		return products[int(r[0])%len(products)]
+	case "date":
+		year := 2020 + int(r[0])%6
+		month := 1 + int(r[1])%12
+		day := 1 + int(r[2])%28
+		return fmt.Sprintf("%04d-%02d-%02d", year, month, day)
+	case "url":
+		domains := []string{"example.com", "test.org", "demo.net"}
+		paths := []string{"/home", "/about", "/products", "/contact"}
+		return "https://" + domains[int(r[0])%len(domains)] + paths[int(r[1])%len(paths)]
+	case "ipv4":
+		return fmt.Sprintf("%d.%d.%d.%d", int(r[0])%256, int(r[1])%256, int(r[2])%256, int(r[3])%256)
+	case "uuid":
+		return fmt.Sprintf("%08x-%04x-%04x-%04x-%012x",
+			uint32(r[0])<<24|uint32(r[1])<<16|uint32(r[2])<<8|uint32(r[3]),
+			uint16(r[0])<<8|uint16(r[1]),
+			0x4000|uint16(r[2])<<8|uint16(r[3]),
+			0x8000|uint16(r[0])<<8|uint16(r[1]),
+			uint64(r[0])<<40|uint64(r[1])<<32|uint64(r[2])<<24|uint64(r[3])<<16|uint64(r[0])<<8|uint64(r[1]))
+	case "creditCard":
+		return fmt.Sprintf("4%03d-%04d-%04d-%04d", int(r[0])%1000, int(r[1])*256+int(r[2]), int(r[2])*256+int(r[3]), int(r[3])*256+int(r[0]))
+	default:
+		return "unknown faker type"
+	}
+}
+
+// ============================================================================
+// Internationalization Functions
+// ============================================================================
+
+// Get Timezone
+func (i *Interpreter) builtinGetTimezone(args []Value) Value {
+	_, offset := time.Now().Zone()
+	return map[string]Value{
+		"name":   time.Now().Location().String(),
+		"offset": offset / 3600,
+	}
+}
+
+// Set Timezone (affects current context)
+func (i *Interpreter) builtinSetTimezone(args []Value) Value {
+	if len(args) == 0 {
+		return false
+	}
+
+	tz, ok := args[0].(string)
+	if !ok {
+		return false
+	}
+
+	loc, err := time.LoadLocation(tz)
+	if err != nil {
+		return false
+	}
+
+	// This affects the interpreter context
+	if i.ctx != nil {
+		i.ctx.Timezone = loc
+	}
+
+	return true
+}
+
+// List Timezones
+func (i *Interpreter) builtinListTimezones(args []Value) Value {
+	// Common timezones
+	timezones := []Value{
+		"UTC",
+		"America/New_York",
+		"America/Chicago",
+		"America/Denver",
+		"America/Los_Angeles",
+		"America/Toronto",
+		"America/Vancouver",
+		"Europe/London",
+		"Europe/Paris",
+		"Europe/Berlin",
+		"Europe/Moscow",
+		"Asia/Tokyo",
+		"Asia/Shanghai",
+		"Asia/Hong_Kong",
+		"Asia/Singapore",
+		"Asia/Dubai",
+		"Australia/Sydney",
+		"Australia/Melbourne",
+		"Pacific/Auckland",
+	}
+	return timezones
+}
+
+// ============================================================================
+// Image Processing Functions
+// ============================================================================
+
+// Image Info
+func (i *Interpreter) builtinImageInfo(args []Value) Value {
+	if len(args) == 0 {
+		return map[string]Value{"error": "need image path or base64"}
+	}
+
+	var data []byte
+
+	switch v := args[0].(type) {
+	case string:
+		// Check if it's a file path or base64
+		if strings.HasPrefix(v, "data:image") {
+			// Base64 data URL
+			parts := strings.SplitN(v, ",", 2)
+			if len(parts) == 2 {
+				decoded, err := base64.StdEncoding.DecodeString(parts[1])
+				if err != nil {
+					return map[string]Value{"error": "invalid base64"}
+				}
+				data = decoded
+			}
+		} else if _, err := os.Stat(v); err == nil {
+			// File path
+			fileData, err := os.ReadFile(v)
+			if err != nil {
+				return map[string]Value{"error": err.Error()}
+			}
+			data = fileData
+		} else {
+			// Assume base64 string
+			decoded, err := base64.StdEncoding.DecodeString(v)
+			if err != nil {
+				return map[string]Value{"error": "invalid input"}
+			}
+			data = decoded
+		}
+	default:
+		return map[string]Value{"error": "invalid input"}
+	}
+
+	// Detect image type
+	imageType := "unknown"
+	if len(data) > 4 {
+		if data[0] == 0xFF && data[1] == 0xD8 {
+			imageType = "jpeg"
+		} else if data[0] == 0x89 && string(data[1:4]) == "PNG" {
+			imageType = "png"
+		} else if data[0] == 'G' && data[1] == 'I' && data[2] == 'F' {
+			imageType = "gif"
+		} else if data[0] == 'B' && data[1] == 'M' {
+			imageType = "bmp"
+		}
+	}
+
+	return map[string]Value{
+		"type": imageType,
+		"size": len(data),
+	}
+}
+
+// Image to Base64
+func (i *Interpreter) builtinImageToBase64(args []Value) Value {
+	if len(args) == 0 {
+		return ""
+	}
+
+	path, ok := args[0].(string)
+	if !ok {
+		return ""
+	}
+
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return ""
+	}
+
+	// Detect type
+	imageType := "png"
+	if len(data) > 4 {
+		if data[0] == 0xFF && data[1] == 0xD8 {
+			imageType = "jpeg"
+		} else if data[0] == 'G' && data[1] == 'I' && data[2] == 'F' {
+			imageType = "gif"
+		}
+	}
+
+	return fmt.Sprintf("data:image/%s;base64,%s", imageType, base64.StdEncoding.EncodeToString(data))
+}
+
+// Base64 to Image
+func (i *Interpreter) builtinBase64ToImage(args []Value) Value {
+	if len(args) < 2 {
+		return map[string]Value{"error": "need base64 and filepath"}
+	}
+
+	b64, ok := args[0].(string)
+	if !ok {
+		return map[string]Value{"error": "base64 must be string"}
+	}
+
+	filepath, ok := args[1].(string)
+	if !ok {
+		return map[string]Value{"error": "filepath must be string"}
+	}
+
+	// Remove data URL prefix if present
+	if strings.Contains(b64, ",") {
+		parts := strings.SplitN(b64, ",", 2)
+		b64 = parts[1]
+	}
+
+	data, err := base64.StdEncoding.DecodeString(b64)
+	if err != nil {
+		return map[string]Value{"error": "invalid base64"}
+	}
+
+	if err := os.WriteFile(filepath, data, 0644); err != nil {
+		return map[string]Value{"error": err.Error()}
+	}
+
+	return map[string]Value{
+		"success": true,
+		"path":    filepath,
+		"size":    len(data),
+	}
+}
+
+// Barcode Encode
+func (i *Interpreter) builtinBarcodeEncode(args []Value) Value {
+	if len(args) == 0 {
+		return ""
+	}
+
+	content, ok := args[0].(string)
+	if !ok {
+		return ""
+	}
+
+	format := "code128"
+	if len(args) > 1 {
+		format, _ = args[1].(string)
+	}
+
+	// Simple barcode representation (text-based)
+	// Real implementation would use a barcode library
+	var bars strings.Builder
+
+	switch format {
+	case "code39":
+		// Code 39 pattern simulation
+		bars.WriteString("*")
+		for _, c := range content {
+			bars.WriteRune(c)
+			bars.WriteString(" ")
+		}
+		bars.WriteString("*")
+	default: // code128
+		// Simple representation
+		for _, c := range content {
+			bars.WriteString(fmt.Sprintf("|%d|", int(c)))
+		}
+	}
+
+	return bars.String()
+}
+
+// ============================================================================
+// Data Structures Functions
+// ============================================================================
+
+// New Stack
+func (i *Interpreter) builtinNewStack(args []Value) Value {
+	return map[string]Value{
+		"type":  "stack",
+		"items": []Value{},
+	}
+}
+
+// New Queue
+func (i *Interpreter) builtinNewQueue(args []Value) Value {
+	return map[string]Value{
+		"type":  "queue",
+		"items": []Value{},
+	}
+}
+
+// New Set
+func (i *Interpreter) builtinNewSet(args []Value) Value {
+	return map[string]Value{
+		"type":    "set",
+		"members": map[string]Value{},
+	}
+}
+
+// ============================================================================
+// Debug and Testing Functions
+// ============================================================================
+
+// Debug
+func (i *Interpreter) builtinDebug(args []Value) Value {
+	if len(args) == 0 {
+		return nil
+	}
+
+	// Return debug info about the value
+	v := args[0]
+	return map[string]Value{
+		"value": v,
+		"type":  fmt.Sprintf("%T", v),
+		"repr":  fmt.Sprintf("%#v", v),
+	}
+}
+
+// Benchmark
+func (i *Interpreter) builtinBenchmark(args []Value) Value {
+	if len(args) < 2 {
+		return map[string]Value{"error": "need function and iterations"}
+	}
+
+	funcName, ok := args[0].(string)
+	if !ok {
+		return map[string]Value{"error": "function name must be string"}
+	}
+
+	iterations := int(i.toInt(args[1]))
+
+	userFunc, ok := i.ctx.Functions[funcName]
+	if !ok {
+		return map[string]Value{"error": "function not found"}
+	}
+
+	start := time.Now()
+	for j := 0; j < iterations; j++ {
+		i.callUserFunc(userFunc, []Value{})
+	}
+	elapsed := time.Since(start)
+
+	return map[string]Value{
+		"iterations":   iterations,
+		"totalMs":      elapsed.Milliseconds(),
+		"avgMs":        float64(elapsed.Milliseconds()) / float64(iterations),
+		"opsPerSecond": float64(iterations) / elapsed.Seconds(),
+	}
+}
+
+// Mock
+func (i *Interpreter) builtinMock(args []Value) Value {
+	if len(args) == 0 {
+		return map[string]Value{}
+	}
+
+	mockType, ok := args[0].(string)
+	if !ok {
+		return map[string]Value{}
+	}
+
+	// Generate mock data based on type
+	switch mockType {
+	case "user":
+		return map[string]Value{
+			"id":    int64(1 + mathrand.Intn(1000)),
+			"name":  i.builtinFaker([]Value{"name"}),
+			"email": i.builtinFaker([]Value{"email"}),
+			"age":   int64(18 + mathrand.Intn(60)),
+		}
+	case "product":
+		return map[string]Value{
+			"id":    int64(1 + mathrand.Intn(100)),
+			"name":  i.builtinFaker([]Value{"product"}),
+			"price": i.builtinFaker([]Value{"price"}),
+		}
+	case "order":
+		return map[string]Value{
+			"id":       i.builtinFaker([]Value{"uuid"}),
+			"userId":   int64(1 + mathrand.Intn(100)),
+			"status":   []string{"pending", "processing", "shipped", "delivered"}[mathrand.Intn(4)],
+			"total":    float64(10 + mathrand.Intn(500)),
+			"quantity": int64(1 + mathrand.Intn(10)),
+		}
+	default:
+		return map[string]Value{"type": mockType}
+	}
+}
+
+// ============================================================================
+// Configuration Management Functions
+// ============================================================================
+
+// Load Config
+func (i *Interpreter) builtinLoadConfig(args []Value) Value {
+	if len(args) == 0 {
+		return map[string]Value{"error": "need filepath"}
+	}
+
+	path, ok := args[0].(string)
+	if !ok {
+		return map[string]Value{"error": "filepath must be string"}
+	}
+
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return map[string]Value{"error": err.Error()}
+	}
+
+	// Detect format from extension
+	ext := strings.ToLower(filepath.Ext(path))
+	var result map[string]interface{}
+
+	switch ext {
+	case ".json":
+		if err := json.Unmarshal(data, &result); err != nil {
+			return map[string]Value{"error": err.Error()}
+		}
+	case ".yaml", ".yml":
+		if err := yaml.Unmarshal(data, &result); err != nil {
+			return map[string]Value{"error": err.Error()}
+		}
+	case ".toml":
+		if _, err := toml.Decode(string(data), &result); err != nil {
+			return map[string]Value{"error": err.Error()}
+		}
+	default:
+		// Try JSON first
+		if err := json.Unmarshal(data, &result); err != nil {
+			return map[string]Value{"error": "unknown format"}
+		}
+	}
+
+	return i.convertToValue(result).(map[string]Value)
+}
+
+// Save Config
+func (i *Interpreter) builtinSaveConfig(args []Value) Value {
+	if len(args) < 2 {
+		return map[string]Value{"success": false, "error": "need config and filepath"}
+	}
+
+	config, ok := args[0].(map[string]Value)
+	if !ok {
+		return map[string]Value{"success": false, "error": "config must be object"}
+	}
+
+	path, ok := args[1].(string)
+	if !ok {
+		return map[string]Value{"success": false, "error": "filepath must be string"}
+	}
+
+	// Detect format from extension
+	ext := strings.ToLower(filepath.Ext(path))
+	var data []byte
+	var err error
+
+	goConfig := i.valueToGo(config).(map[string]interface{})
+
+	switch ext {
+	case ".json":
+		data, err = json.MarshalIndent(goConfig, "", "  ")
+	case ".yaml", ".yml":
+		data, err = yaml.Marshal(goConfig)
+	case ".toml":
+		var buf strings.Builder
+		err = toml.NewEncoder(&buf).Encode(goConfig)
+		data = []byte(buf.String())
+	default:
+		data, err = json.MarshalIndent(goConfig, "", "  ")
+	}
+
+	if err != nil {
+		return map[string]Value{"success": false, "error": err.Error()}
+	}
+
+	if err := os.WriteFile(path, data, 0644); err != nil {
+		return map[string]Value{"success": false, "error": err.Error()}
+	}
+
+	return map[string]Value{"success": true, "path": path}
+}
+
+// Get Secret
+func (i *Interpreter) builtinGetSecret(args []Value) Value {
+	if len(args) == 0 {
+		return ""
+	}
+
+	key, ok := args[0].(string)
+	if !ok {
+		return ""
+	}
+
+	// Check environment variable first
+	if val := os.Getenv(key); val != "" {
+		return val
+	}
+
+	// Check common secret locations
+	secretPaths := []string{
+		"/run/secrets/" + key,
+		"/etc/secrets/" + key,
+		"./secrets/" + key,
+	}
+
+	for _, path := range secretPaths {
+		if data, err := os.ReadFile(path); err == nil {
+			return strings.TrimSpace(string(data))
+		}
+	}
+
+	return ""
+}
+
+// ============================================================================
+// System Extended Functions
+// ============================================================================
+
+// Get Memory
+func (i *Interpreter) builtinGetMemory(args []Value) Value {
+	var m runtime.MemStats
+	runtime.ReadMemStats(&m)
+
+	return map[string]Value{
+		"allocMB":      m.Alloc / 1024 / 1024,
+		"totalAllocMB": m.TotalAlloc / 1024 / 1024,
+		"sysMB":        m.Sys / 1024 / 1024,
+		"numGC":        m.NumGC,
+		"heapObjects":  m.HeapObjects,
+	}
+}
+
+// Get CPU
+func (i *Interpreter) builtinGetCPU(args []Value) Value {
+	return map[string]Value{
+		"numCPU":     runtime.NumCPU(),
+		"goroutines": runtime.NumGoroutine(),
+		"goVersion":  runtime.Version(),
+		"compiler":   runtime.Compiler,
+	}
+}
+
+// Kill Process
+func (i *Interpreter) builtinKillProcess(args []Value) Value {
+	if len(args) == 0 {
+		return map[string]Value{"success": false, "error": "need PID"}
+	}
+
+	pid := int(i.toInt(args[0]))
+
+	// Find process
+	process, err := os.FindProcess(pid)
+	if err != nil {
+		return map[string]Value{"success": false, "error": err.Error()}
+	}
+
+	// Kill process
+	if err := process.Kill(); err != nil {
+		return map[string]Value{"success": false, "error": err.Error()}
+	}
+
+	return map[string]Value{"success": true, "pid": int64(pid)}
+}
+
+// ============================================================================
+// Network Extended Functions
+// ============================================================================
+
+// IP Lookup
+func (i *Interpreter) builtinIPLookup(args []Value) Value {
+	if len(args) == 0 {
+		return map[string]Value{"error": "need IP or hostname"}
+	}
+
+	host, ok := args[0].(string)
+	if !ok {
+		return map[string]Value{"error": "input must be string"}
+	}
+
+	// Parse as IP
+	ip := net.ParseIP(host)
+	if ip != nil {
+		// Reverse lookup
+		names, err := net.LookupAddr(host)
+		if err != nil {
+			return map[string]Value{
+				"ip":     host,
+				"names":  []Value{},
+				"valid":  true,
+				"version": map[string]Value{"v4": ip.To4() != nil, "v6": ip.To4() == nil},
+			}
+		}
+		result := make([]Value, len(names))
+		for idx, n := range names {
+			result[idx] = n
+		}
+		return map[string]Value{
+			"ip":      host,
+			"names":   result,
+			"valid":   true,
+			"version": map[string]Value{"v4": ip.To4() != nil, "v6": ip.To4() == nil},
+		}
+	}
+
+	// Forward lookup
+	addrs, err := net.LookupHost(host)
+	if err != nil {
+		return map[string]Value{"error": err.Error(), "host": host}
+	}
+
+	ips := make([]Value, len(addrs))
+	for idx, addr := range addrs {
+		ips[idx] = addr
+	}
+
+	return map[string]Value{
+		"host": host,
+		"ips":  ips,
+	}
+}
+
+// Whois (simplified)
+func (i *Interpreter) builtinWhois(args []Value) Value {
+	if len(args) == 0 {
+		return map[string]Value{"error": "need domain"}
+	}
+
+	domain, ok := args[0].(string)
+	if !ok {
+		return map[string]Value{"error": "domain must be string"}
+	}
+
+	// This is a placeholder - actual whois requires network access to whois servers
+	return map[string]Value{
+		"domain":  domain,
+		"message": "Whois lookup requires external whois server connection",
+		"note":    "Use dnsLookup for DNS information",
 	}
 }
 
