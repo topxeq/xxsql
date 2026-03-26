@@ -14,7 +14,9 @@ A lightweight SQL database with **built-in microservices engine**, implemented i
 |----------|-------------|
 | [Reference Manual](docs/REFERENCE.md) | Complete SQL syntax, data types, functions, and features reference |
 | [Microservices Guide](docs/microservices.md) | Microservices and Projects: XxScript HTTP endpoints, project management |
+| [XxScript Reference](docs/xxscript.md) | XxScript language syntax, built-in functions, and usage examples |
 | [Maintenance Manual](docs/MAINTENANCE.md) | Installation, configuration, upgrade, backup, migration, and administration guide |
+| [REST API Reference](docs/API.md) | Complete REST API documentation with all endpoints |
 | [Testing Guide](docs/TESTING.md) | Testing guidelines and procedures |
 | [Contributing Guide](CONTRIBUTING.md) | How to contribute to XxSql |
 
