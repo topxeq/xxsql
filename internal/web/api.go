@@ -854,9 +854,17 @@ func (s *Server) handleMicroservice(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	} else {
-		// Format: /ms/<table>/<skey>
-		tableName = parts[0]
-		skey = parts[1]
+		// Format: /ms/<table>/<skey> or /ms/<skey-with-slash>
+		// Check if the first part is an existing table
+		if _, err := s.engine.GetTable(parts[0]); err == nil {
+			// First part is a table name
+			tableName = parts[0]
+			skey = parts[1]
+		} else {
+			// First part is not a table, treat entire path as skey in _sys_ms
+			tableName = "_sys_ms"
+			skey = path
+		}
 	}
 
 	if skey == "" {
