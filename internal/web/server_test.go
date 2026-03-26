@@ -14,6 +14,7 @@ import (
 
 	"github.com/topxeq/xxsql/internal/auth"
 	"github.com/topxeq/xxsql/internal/config"
+	"github.com/topxeq/xxsql/internal/executor"
 	"github.com/topxeq/xxsql/internal/storage"
 )
 
@@ -35,6 +36,11 @@ func setupTestServer(t *testing.T) (*Server, string) {
 		t.Fatalf("Failed to open engine: %v", err)
 	}
 	t.Cleanup(func() { engine.Close() })
+
+	// Initialize system tables
+	if err := executor.InitSystemTables(engine); err != nil {
+		t.Fatalf("Failed to init system tables: %v", err)
+	}
 
 	authMgr := auth.NewManager(auth.WithDataDir(dataDir))
 	authMgr.CreateUser("admin", "admin", auth.RoleAdmin)
@@ -1629,5 +1635,164 @@ func TestHandleAPIStatusExtra(t *testing.T) {
 
 	if w.Code != http.StatusOK {
 		t.Errorf("Status: got %d, want %d", w.Code, http.StatusOK)
+	}
+}
+
+// TestHandleAPIPlugins tests GET /api/plugins
+func TestHandleAPIPlugins(t *testing.T) {
+	server, _ := setupTestServer(t)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/plugins", nil)
+	w := httptest.NewRecorder()
+
+	server.handleAPIPlugins(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("Status: got %d, want %d", w.Code, http.StatusOK)
+	}
+
+	var result map[string]interface{}
+	if err := json.Unmarshal(w.Body.Bytes(), &result); err != nil {
+		t.Fatalf("JSON unmarshal error: %v", err)
+	}
+
+	plugins, ok := result["plugins"].([]interface{})
+	if !ok {
+		t.Fatal("plugins should be an array")
+	}
+
+	// Should be empty initially
+	if len(plugins) != 0 {
+		t.Errorf("Expected 0 plugins, got %d", len(plugins))
+	}
+}
+
+// TestHandleAPIPluginsAvailable tests GET /api/plugins/available
+func TestHandleAPIPluginsAvailable(t *testing.T) {
+	server, _ := setupTestServer(t)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/plugins/available", nil)
+	w := httptest.NewRecorder()
+
+	server.handleAPIPluginsAvailable(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("Status: got %d, want %d", w.Code, http.StatusOK)
+	}
+
+	var result map[string]interface{}
+	if err := json.Unmarshal(w.Body.Bytes(), &result); err != nil {
+		t.Fatalf("JSON unmarshal error: %v", err)
+	}
+
+	plugins, ok := result["plugins"].([]interface{})
+	if !ok {
+		t.Fatal("plugins should be an array")
+	}
+
+	// Should have 4 official plugins
+	if len(plugins) < 4 {
+		t.Errorf("Expected at least 4 plugins, got %d", len(plugins))
+	}
+}
+
+// TestHandleAPIPluginInstall tests POST /api/plugins/install
+func TestHandleAPIPluginInstall(t *testing.T) {
+	server, _ := setupTestServer(t)
+
+	// Install auth plugin
+	body, _ := json.Marshal(map[string]string{"name": "auth"})
+	req := httptest.NewRequest(http.MethodPost, "/api/plugins/install", bytes.NewBuffer(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+
+	server.handleAPIPluginRoutes(w, req)
+
+	if w.Code != http.StatusOK {
+		t.Errorf("Status: got %d, body: %s", w.Code, w.Body.String())
+	}
+
+	var result map[string]interface{}
+	if err := json.Unmarshal(w.Body.Bytes(), &result); err != nil {
+		t.Fatalf("JSON unmarshal error: %v", err)
+	}
+
+	if result["success"] != true {
+		t.Errorf("Expected success=true, got %v", result["success"])
+	}
+
+	// Verify plugin is installed
+	req2 := httptest.NewRequest(http.MethodGet, "/api/plugins", nil)
+	w2 := httptest.NewRecorder()
+	server.handleAPIPlugins(w2, req2)
+
+	var result2 map[string]interface{}
+	json.Unmarshal(w2.Body.Bytes(), &result2)
+	plugins := result2["plugins"].([]interface{})
+	if len(plugins) != 1 {
+		t.Errorf("Expected 1 installed plugin, got %d", len(plugins))
+	}
+}
+
+// TestHandleAPIPluginEnableDisable tests enable/disable plugin
+func TestHandleAPIPluginEnableDisable(t *testing.T) {
+	server, _ := setupTestServer(t)
+
+	// First install a plugin
+	body, _ := json.Marshal(map[string]string{"name": "auth"})
+	req := httptest.NewRequest(http.MethodPost, "/api/plugins/install", bytes.NewBuffer(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	server.handleAPIPluginRoutes(w, req)
+
+	// Disable the plugin
+	req2 := httptest.NewRequest(http.MethodPost, "/api/plugins/auth/disable", nil)
+	w2 := httptest.NewRecorder()
+	server.handleAPIPluginRoutes(w2, req2)
+
+	if w2.Code != http.StatusOK {
+		t.Errorf("Disable status: got %d, want %d", w2.Code, http.StatusOK)
+	}
+
+	// Enable the plugin
+	req3 := httptest.NewRequest(http.MethodPost, "/api/plugins/auth/enable", nil)
+	w3 := httptest.NewRecorder()
+	server.handleAPIPluginRoutes(w3, req3)
+
+	if w3.Code != http.StatusOK {
+		t.Errorf("Enable status: got %d, want %d", w3.Code, http.StatusOK)
+	}
+}
+
+// TestHandleAPIPluginUninstall tests uninstall plugin
+func TestHandleAPIPluginUninstall(t *testing.T) {
+	server, _ := setupTestServer(t)
+
+	// First install a plugin
+	body, _ := json.Marshal(map[string]string{"name": "auth"})
+	req := httptest.NewRequest(http.MethodPost, "/api/plugins/install", bytes.NewBuffer(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	server.handleAPIPluginRoutes(w, req)
+
+	// Uninstall the plugin
+	req2 := httptest.NewRequest(http.MethodPost, "/api/plugins/auth/uninstall", nil)
+	w2 := httptest.NewRecorder()
+	server.handleAPIPluginRoutes(w2, req2)
+
+	if w2.Code != http.StatusOK {
+		t.Errorf("Uninstall status: got %d, body: %s", w2.Code, w2.Body.String())
+	}
+
+	// Verify plugin is removed
+	req3 := httptest.NewRequest(http.MethodGet, "/api/plugins", nil)
+	w3 := httptest.NewRecorder()
+	server.handleAPIPlugins(w3, req3)
+
+	var result map[string]interface{}
+	json.Unmarshal(w3.Body.Bytes(), &result)
+	plugins := result["plugins"].([]interface{})
+	if len(plugins) != 0 {
+		t.Errorf("Expected 0 plugins after uninstall, got %d", len(plugins))
 	}
 }

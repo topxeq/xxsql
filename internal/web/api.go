@@ -1934,7 +1934,7 @@ func (s *Server) handleAPIPluginInstall(w http.ResponseWriter, r *http.Request) 
 	}
 
 	// Create plugin files locally (since we don't have GitHub download yet)
-	if err := createPluginLocally(plugin); err != nil {
+	if err := s.createPluginLocally(plugin); err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to create plugin: "+err.Error())
 		return
 	}
@@ -1953,7 +1953,7 @@ func (s *Server) handleAPIPluginUninstall(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	if err := uninstallPlugin(name); err != nil {
+	if err := s.uninstallPlugin(name); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
@@ -2109,9 +2109,9 @@ func installPluginFromZIP(zipPath string) error {
 	return fmt.Errorf("ZIP import not yet implemented - use /api/plugins/install instead")
 }
 
-func uninstallPlugin(name string) error {
+func (s *Server) uninstallPlugin(name string) error {
 	// Get plugin info first
-	exec := executor.NewExecutor(singletonEngine)
+	exec := executor.NewExecutor(s.engine)
 	result, err := exec.Execute(fmt.Sprintf("SELECT tables FROM _sys_plugins WHERE name = '%s'", name))
 	if err != nil {
 		return err
@@ -2149,7 +2149,7 @@ func uninstallPlugin(name string) error {
 	return nil
 }
 
-func createPluginLocally(plugin map[string]interface{}) error {
+func (s *Server) createPluginLocally(plugin map[string]interface{}) error {
 	name := plugin["name"].(string)
 	version := plugin["version"].(string)
 	author := plugin["author"].(string)
@@ -2157,7 +2157,7 @@ func createPluginLocally(plugin map[string]interface{}) error {
 	category := plugin["category"].(string)
 	tables := plugin["tables"].(string)
 
-	exec := executor.NewExecutor(singletonEngine)
+	exec := executor.NewExecutor(s.engine)
 
 	// Create tables based on plugin type
 	switch name {
