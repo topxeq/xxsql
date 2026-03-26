@@ -1,0 +1,78 @@
+// Rate Limit Plugin - Manage Rules
+// GET /ms/ratelimit/rules - List rules
+// POST /ms/ratelimit/rules - Create/Update rule
+// Body for POST: {"name": "...", "keyPattern": "...", "maxRequests": 100, "windowSeconds": 60, "action": "block"}
+
+if (http.method() == "GET") {
+    var result = db.query("SELECT id, name, key_pattern, max_requests, window_seconds, action, enabled, created_at FROM _plugin_ratelimit_rules ORDER BY name")
+    var rules = []
+
+    if (result != null && result.rows != null) {
+        for (var i = 0; i < arrayLength(result.rows); i++) {
+            var row = result.rows[i]
+            rules = arrayPush(rules, {
+                "id": row[0],
+                "name": row[1],
+                "keyPattern": row[2],
+                "maxRequests": int(row[3]),
+                "windowSeconds": int(row[4]),
+                "action": row[5],
+                "enabled": row[6],
+                "createdAt": row[7]
+            })
+        }
+    }
+
+    http.json({"success": true, "rules": rules})
+} else if (http.method() == "POST") {
+    var data = http.bodyJSON()
+    if (data == null || data.name == null || data.keyPattern == null) {
+        http.status(400)
+        http.json({"success": false, "error": "Missing name or keyPattern"})
+    } else {
+        var name = string(data.name)
+        var keyPattern = string(data.keyPattern)
+        var maxRequests = 100
+        var windowSeconds = 60
+        var action = "block"
+        var enabled = true
+
+        if (data.maxRequests != null) {
+            maxRequests = int(data.maxRequests)
+        }
+        if (data.windowSeconds != null) {
+            windowSeconds = int(data.windowSeconds)
+        }
+        if (data.action != null) {
+            action = string(data.action)
+        }
+        if (data.enabled != null) {
+            enabled = bool(data.enabled)
+        }
+
+        // Check if rule exists
+        var existing = db.queryRow("SELECT id FROM _plugin_ratelimit_rules WHERE name = '" + name + "'")
+
+        if (existing != null) {
+            // Update
+            db.exec("UPDATE _plugin_ratelimit_rules SET key_pattern = '" + keyPattern + "', max_requests = " + string(maxRequests) + ", window_seconds = " + string(windowSeconds) + ", action = '" + action + "', enabled = " + string(enabled) + " WHERE name = '" + name + "'")
+            http.json({"success": true, "message": "Rule updated", "name": name})
+        } else {
+            // Create
+            db.exec("INSERT INTO _plugin_ratelimit_rules (name, key_pattern, max_requests, window_seconds, action, enabled) VALUES ('" + name + "', '" + keyPattern + "', " + string(maxRequests) + ", " + string(windowSeconds) + ", '" + action + "', " + string(enabled) + ")")
+            http.json({"success": true, "message": "Rule created", "name": name})
+        }
+    }
+} else if (http.method() == "DELETE") {
+    var data = http.bodyJSON()
+    if (data == null || data.name == null) {
+        http.status(400)
+        http.json({"success": false, "error": "Missing name"})
+    } else {
+        db.exec("DELETE FROM _plugin_ratelimit_rules WHERE name = '" + string(data.name) + "'")
+        http.json({"success": true, "message": "Rule deleted"})
+    }
+} else {
+    http.status(405)
+    http.json({"success": false, "error": "Method not allowed"})
+}

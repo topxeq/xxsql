@@ -1,0 +1,55 @@
+// Logging Plugin - Log Statistics
+// GET /ms/log/stats
+
+var totalResult = db.queryRow("SELECT COUNT(*) as total FROM _plugin_log_entries")
+var total = 0
+if (totalResult != null) {
+    total = int(totalResult[0])
+}
+
+var levelResult = db.query("SELECT level, COUNT(*) as count FROM _plugin_log_entries GROUP BY level ORDER BY count DESC")
+var byLevel = []
+if (levelResult != null && levelResult.rows != null) {
+    for (var i = 0; i < arrayLength(levelResult.rows); i++) {
+        var row = levelResult.rows[i]
+        byLevel = arrayPush(byLevel, {
+            "level": row[0],
+            "count": int(row[1])
+        })
+    }
+}
+
+var sourceResult = db.query("SELECT source, COUNT(*) as count FROM _plugin_log_entries WHERE source != '' GROUP BY source ORDER BY count DESC LIMIT 10")
+var bySource = []
+if (sourceResult != null && sourceResult.rows != null) {
+    for (var i = 0; i < arrayLength(sourceResult.rows); i++) {
+        var row = sourceResult.rows[i]
+        bySource = arrayPush(bySource, {
+            "source": row[0],
+            "count": int(row[1])
+        })
+    }
+}
+
+var todayResult = db.queryRow("SELECT COUNT(*) as count FROM _plugin_log_entries WHERE DATE(created_at) = DATE('now')")
+var today = 0
+if (todayResult != null) {
+    today = int(todayResult[0])
+}
+
+var lastHourResult = db.queryRow("SELECT COUNT(*) as count FROM _plugin_log_entries WHERE created_at > datetime('now', '-1 hour')")
+var lastHour = 0
+if (lastHourResult != null) {
+    lastHour = int(lastHourResult[0])
+}
+
+http.json({
+    "success": true,
+    "stats": {
+        "total": total,
+        "today": today,
+        "lastHour": lastHour,
+        "byLevel": byLevel,
+        "bySource": bySource
+    }
+})

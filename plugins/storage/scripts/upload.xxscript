@@ -1,0 +1,83 @@
+// Storage Plugin - Upload File
+// POST /ms/storage/upload
+// Body: {"filename": "...", "content": "base64...", "path": "uploads/", "userId": 1}
+
+var data = http.bodyJSON()
+if (data == null || data.filename == null || data.content == null) {
+    http.status(400)
+    http.json({"success": false, "error": "Missing filename or content"})
+} else {
+    var filename = string(data.filename)
+    var content = string(data.content)
+    var basePath = "uploads"
+    if (data.path != null) {
+        basePath = string(data.path)
+    }
+
+    // Decode base64 content
+    var decoded = base64Decode(content)
+    if (decoded.error != null) {
+        http.status(400)
+        http.json({"success": false, "error": "Invalid base64 content"})
+    } else {
+        // Generate unique filename
+        var ext = fileExt(filename)
+        var uniqueName = randomHex(8) + "_" + filename
+        if (ext != "" && !stringEndsWith(uniqueName, ext)) {
+            uniqueName = uniqueName + ext
+        }
+
+        // Create directory if needed
+        var dataDir = env("XXSQL_DATA_DIR")
+        if (dataDir == "") {
+            dataDir = "data"
+        }
+        var fullPath = dataDir + "/storage/" + basePath
+
+        // Ensure directory exists
+        dirCreate(fullPath)
+
+        // Save file
+        var filePath = fullPath + "/" + uniqueName
+        var saveResult = fileSave(filePath, content, "binary")
+
+        if (saveResult.error != null) {
+            http.status(500)
+            http.json({"success": false, "error": saveResult.error})
+        } else {
+            // Calculate hash
+            var hash = hashSHA256(content)
+
+            // Get MIME type
+            var mimeType = "application/octet-stream"
+            var ext2 = stringToLower(ext)
+            if (ext2 == ".txt") { mimeType = "text/plain" }
+            else if (ext2 == ".json") { mimeType = "application/json" }
+            else if (ext2 == ".pdf") { mimeType = "application/pdf" }
+            else if (ext2 == ".png") { mimeType = "image/png" }
+            else if (ext2 == ".jpg" || ext2 == ".jpeg") { mimeType = "image/jpeg" }
+            else if (ext2 == ".gif") { mimeType = "image/gif" }
+            else if (ext2 == ".csv") { mimeType = "text/csv" }
+            else if (ext2 == ".xml") { mimeType = "application/xml" }
+
+            // Save to database
+            var userId = "null"
+            if (data.userId != null) {
+                userId = string(int(data.userId))
+            }
+
+            var result = db.exec("INSERT INTO _plugin_storage_files (filename, original_name, path, size, mime_type, hash, user_id) VALUES ('" + uniqueName + "', '" + filename + "', '" + basePath + "', " + string(stringLength(content)) + ", '" + mimeType + "', '" + hash + "', " + userId + ")")
+
+            http.json({
+                "success": true,
+                "id": result.lastInsertId,
+                "filename": uniqueName,
+                "originalName": filename,
+                "path": basePath,
+                "size": stringLength(content),
+                "mimeType": mimeType,
+                "hash": hash
+            })
+        }
+    }
+}

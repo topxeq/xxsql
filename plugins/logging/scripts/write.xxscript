@@ -1,0 +1,39 @@
+// Logging Plugin - Write Log Entry
+// POST /ms/log/write
+// Body: {"level": "info", "source": "app", "message": "...", "data": {...}}
+
+var data = http.bodyJSON()
+if (data == null || data.message == null) {
+    http.status(400)
+    http.json({"success": false, "error": "Missing message"})
+} else {
+    var level = "info"
+    if (data.level != null) {
+        level = string(data.level)
+    }
+
+    var source = ""
+    if (data.source != null) {
+        source = string(data.source)
+    }
+
+    var message = string(data.message)
+    var extraData = ""
+    if (data.data != null) {
+        extraData = jsonStringify(data.data)
+    }
+
+    var ip = http.header("X-Real-IP")
+    if (ip == "") {
+        ip = http.header("X-Forwarded-For")
+    }
+
+    var result = db.exec("INSERT INTO _plugin_log_entries (level, source, message, data, ip_address) VALUES ('" + level + "', '" + source + "', '" + escapeSQL(message) + "', '" + extraData + "', '" + ip + "')")
+
+    http.json({
+        "success": true,
+        "id": result.lastInsertId,
+        "level": level,
+        "source": source
+    })
+}

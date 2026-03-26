@@ -1,0 +1,36 @@
+// Storage Plugin - Download File
+// GET /ms/storage/download?filename=... or ?id=...
+
+var filename = http.param("filename")
+var id = http.param("id")
+
+var fileInfo = null
+
+if (id != "") {
+    fileInfo = db.queryRow("SELECT id, filename, path, mime_type FROM _plugin_storage_files WHERE id = " + id)
+} else if (filename != "") {
+    fileInfo = db.queryRow("SELECT id, filename, path, mime_type FROM _plugin_storage_files WHERE filename = '" + filename + "'")
+}
+
+if (fileInfo == null) {
+    http.status(404)
+    http.json({"success": false, "error": "File not found"})
+} else {
+    var dataDir = env("XXSQL_DATA_DIR")
+    if (dataDir == "") {
+        dataDir = "data"
+    }
+    var filePath = dataDir + "/storage/" + string(fileInfo.path) + "/" + string(fileInfo.filename)
+
+    // Read file
+    var result = fileRead(filePath, "binary")
+    if (result.error != null) {
+        http.status(404)
+        http.json({"success": false, "error": "File not found on disk"})
+    } else {
+        // Set content type
+        http.header("Content-Type", string(fileInfo.mime_type))
+        http.header("Content-Disposition", "attachment; filename=\"" + string(fileInfo.filename) + "\"")
+        http.write(result.content)
+    }
+}

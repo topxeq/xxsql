@@ -1,0 +1,65 @@
+// Logging Plugin - Query Logs
+// GET /ms/log/query?level=info&source=app&limit=100&offset=0
+
+var level = http.param("level")
+var source = http.param("source")
+var limit = http.param("limit")
+var offset = http.param("offset")
+var startDate = http.param("startDate")
+var endDate = http.param("endDate")
+var search = http.param("search")
+
+if (limit == "") {
+    limit = "100"
+}
+if (offset == "") {
+    offset = "0"
+}
+
+var sql = "SELECT id, level, source, message, data, created_at, ip_address FROM _plugin_log_entries WHERE 1=1"
+
+if (level != "") {
+    sql = sql + " AND level = '" + level + "'"
+}
+if (source != "") {
+    sql = sql + " AND source = '" + source + "'"
+}
+if (startDate != "") {
+    sql = sql + " AND created_at >= '" + startDate + "'"
+}
+if (endDate != "") {
+    sql = sql + " AND created_at <= '" + endDate + "'"
+}
+if (search != "") {
+    sql = sql + " AND message LIKE '%" + search + "%'"
+}
+
+sql = sql + " ORDER BY created_at DESC LIMIT " + limit + " OFFSET " + offset
+
+var result = db.query(sql)
+var logs = []
+
+if (result != null && result.rows != null) {
+    for (var i = 0; i < arrayLength(result.rows); i++) {
+        var row = result.rows[i]
+        var entry = {
+            "id": row[0],
+            "level": row[1],
+            "source": row[2],
+            "message": row[3],
+            "data": row[4],
+            "createdAt": row[5],
+            "ipAddress": row[6]
+        }
+        if (row[4] != null && row[4] != "") {
+            entry.data = jsonParse(string(row[4]))
+        }
+        logs = arrayPush(logs, entry)
+    }
+}
+
+http.json({
+    "success": true,
+    "logs": logs,
+    "count": arrayLength(logs)
+})

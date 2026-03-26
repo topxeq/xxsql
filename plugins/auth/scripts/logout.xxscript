@@ -1,0 +1,21 @@
+// Auth Plugin - Logout Endpoint
+// POST /ms/auth/logout
+// Header: Authorization: Bearer <token>
+
+var token = http.header("Authorization")
+if (token != "" && stringStartsWith(token, "Bearer ")) {
+    token = stringSubstring(token, 7)
+}
+
+if (token == "") {
+    token = http.header("X-Auth-Token")
+}
+
+if (token == "") {
+    http.status(401)
+    http.json({"success": false, "error": "No token provided"})
+} else {
+    // Delete session
+    var result = db.exec("DELETE FROM _plugin_auth_sessions WHERE token = '" + token + "'")
+    http.json({"success": true, "message": "Logged out successfully"})
+}

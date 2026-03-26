@@ -1,0 +1,39 @@
+// Rate Limit Plugin - Reset Counter
+// POST /ms/ratelimit/reset
+// Body: {"key": "ip:127.0.0.1"} or {"all": true}
+
+var data = http.bodyJSON()
+if (data == null) {
+    http.status(400)
+    http.json({"success": false, "error": "Missing parameters"})
+} else {
+    if (data.all == true) {
+        // Reset all counters
+        var result = db.exec("DELETE FROM _plugin_ratelimit_counters")
+        http.json({
+            "success": true,
+            "message": "All counters reset",
+            "deleted": result.affected
+        })
+    } else if (data.key != null) {
+        // Reset specific counter
+        var key = string(data.key)
+        var result = db.exec("DELETE FROM _plugin_ratelimit_counters WHERE key = '" + key + "'")
+        if (result.affected > 0) {
+            http.json({
+                "success": true,
+                "message": "Counter reset",
+                "key": key
+            })
+        } else {
+            http.json({
+                "success": true,
+                "message": "Counter not found or already reset",
+                "key": key
+            })
+        }
+    } else {
+        http.status(400)
+        http.json({"success": false, "error": "Specify key or all=true"})
+    }
+}

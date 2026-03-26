@@ -1,0 +1,40 @@
+// Storage Plugin - Delete File
+// POST /ms/storage/delete
+// Body: {"filename": "..."} or {"id": 1}
+
+var data = http.bodyJSON()
+if (data == null) {
+    http.status(400)
+    http.json({"success": false, "error": "Missing parameters"})
+} else {
+    var fileInfo = null
+
+    if (data.id != null) {
+        fileInfo = db.queryRow("SELECT id, filename, path FROM _plugin_storage_files WHERE id = " + string(int(data.id)))
+    } else if (data.filename != null) {
+        fileInfo = db.queryRow("SELECT id, filename, path FROM _plugin_storage_files WHERE filename = '" + string(data.filename) + "'")
+    }
+
+    if (fileInfo == null) {
+        http.status(404)
+        http.json({"success": false, "error": "File not found"})
+    } else {
+        // Delete file from disk
+        var dataDir = env("XXSQL_DATA_DIR")
+        if (dataDir == "") {
+            dataDir = "data"
+        }
+        var filePath = dataDir + "/storage/" + string(fileInfo.path) + "/" + string(fileInfo.filename)
+        fileDelete(filePath)
+
+        // Delete from database
+        db.exec("DELETE FROM _plugin_storage_files WHERE id = " + string(fileInfo.id))
+
+        http.json({
+            "success": true,
+            "message": "File deleted",
+            "id": fileInfo.id,
+            "filename": fileInfo.filename
+        })
+    }
+}

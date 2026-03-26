@@ -1,0 +1,14 @@
+{
+    "name": "logging",
+    "version": "1.0.0",
+    "author": "XxSql Team",
+    "description": "Centralized logging service with query and filtering capabilities",
+    "category": "logging",
+    "tables": "_plugin_log_entries",
+    "endpoints": [
+        {"skey": "log/write", "script": "scripts/write.xxscript", "description": "Write log entry"},
+        {"skey": "log/query", "script": "scripts/query.xxscript", "description": "Query logs with filters"},
+        {"skey": "log/clear", "script": "scripts/clear.xxscript", "description": "Clear old logs"},
+        {"skey": "log/stats", "script": "scripts/stats.xxscript", "description": "Log statistics"}
+    ]
+}

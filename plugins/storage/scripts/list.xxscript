@@ -1,0 +1,40 @@
+// Storage Plugin - List Files
+// GET /ms/storage/list?path=uploads/&userId=1
+
+var basePath = http.param("path")
+var userId = http.param("userId")
+
+var sql = "SELECT id, filename, original_name, path, size, mime_type, created_at FROM _plugin_storage_files WHERE 1=1"
+
+if (basePath != "") {
+    sql = sql + " AND path = '" + basePath + "'"
+}
+if (userId != "") {
+    sql = sql + " AND user_id = " + userId
+}
+
+sql = sql + " ORDER BY created_at DESC"
+
+var result = db.query(sql)
+var files = []
+
+if (result != null && result.rows != null) {
+    for (var i = 0; i < arrayLength(result.rows); i++) {
+        var row = result.rows[i]
+        files = arrayPush(files, {
+            "id": row[0],
+            "filename": row[1],
+            "originalName": row[2],
+            "path": row[3],
+            "size": int(row[4]),
+            "mimeType": row[5],
+            "createdAt": row[6]
+        })
+    }
+}
+
+http.json({
+    "success": true,
+    "files": files,
+    "count": arrayLength(files)
+})

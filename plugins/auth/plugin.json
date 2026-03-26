@@ -1,0 +1,16 @@
+{
+    "name": "auth",
+    "version": "1.0.0",
+    "author": "XxSql Team",
+    "description": "User authentication with session management, login/register/logout endpoints",
+    "category": "auth",
+    "tables": "_plugin_auth_users,_plugin_auth_sessions",
+    "endpoints": [
+        {"skey": "auth/login", "script": "scripts/login.xxscript", "description": "User login"},
+        {"skey": "auth/register", "script": "scripts/register.xxscript", "description": "Register new user"},
+        {"skey": "auth/logout", "script": "scripts/logout.xxscript", "description": "User logout"},
+        {"skey": "auth/check", "script": "scripts/check.xxscript", "description": "Check authentication status"},
+        {"skey": "auth/user", "script": "scripts/user.xxscript", "description": "Get current user info"},
+        {"skey": "auth/change-password", "script": "scripts/change-password.xxscript", "description": "Change password"}
+    ]
+}

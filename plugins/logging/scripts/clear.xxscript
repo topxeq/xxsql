@@ -1,0 +1,43 @@
+// Logging Plugin - Clear Old Logs
+// POST /ms/log/clear
+// Body: {"olderThanDays": 30} or {"level": "debug"} or {"source": "app"}
+
+var data = http.bodyJSON()
+if (data == null) {
+    http.status(400)
+    http.json({"success": false, "error": "Missing parameters"})
+} else {
+    var sql = "DELETE FROM _plugin_log_entries WHERE 1=1"
+    var conditions = 0
+
+    if (data.olderThanDays != null) {
+        var days = int(data.olderThanDays)
+        if (days > 0) {
+            var cutoffDate = dateAdd(now(), -days, "day")
+            sql = sql + " AND created_at < '" + formatDate(cutoffDate, "2006-01-02") + "'"
+            conditions = conditions + 1
+        }
+    }
+
+    if (data.level != null) {
+        sql = sql + " AND level = '" + string(data.level) + "'"
+        conditions = conditions + 1
+    }
+
+    if (data.source != null) {
+        sql = sql + " AND source = '" + string(data.source) + "'"
+        conditions = conditions + 1
+    }
+
+    if (conditions == 0) {
+        http.status(400)
+        http.json({"success": false, "error": "No filter specified. Use olderThanDays, level, or source"})
+    } else {
+        var result = db.exec(sql)
+        http.json({
+            "success": true,
+            "deleted": result.affected,
+            "message": "Deleted " + string(result.affected) + " log entries"
+        })
+    }
+}

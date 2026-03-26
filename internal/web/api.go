@@ -832,26 +832,35 @@ func (s *Server) handleMicroservice(w http.ResponseWriter, r *http.Request) {
 	// skey can contain slashes, so we need to handle it specially
 	path := strings.TrimPrefix(r.URL.Path, "/ms/")
 
-	var tableName, skey string
-
-	// Check if path starts with a known system table
-	if strings.HasPrefix(path, "_sys_") {
-		// Format: /ms/<table>/<skey>
-		slashIdx := strings.Index(path, "/")
-		if slashIdx == -1 {
-			writeError(w, http.StatusBadRequest, "invalid path format: expected /ms/<table>/<skey>")
-			return
-		}
-		tableName = path[:slashIdx]
-		skey = path[slashIdx+1:]
-	} else {
-		// Format: /ms/<skey> - default to _sys_ms table
-		tableName = "_sys_ms"
-		skey = path
+	// Check for empty path after /ms/
+	if path == "" || path == "/" {
+		writeError(w, http.StatusBadRequest, "invalid path format")
+		return
 	}
 
-	if tableName == "" || skey == "" {
-		writeError(w, http.StatusBadRequest, "invalid path format")
+	var tableName, skey string
+
+	// Split path into parts
+	parts := strings.SplitN(path, "/", 2)
+	if len(parts) == 1 {
+		// Format: /ms/<skey> - default to _sys_ms table
+		tableName = "_sys_ms"
+		skey = parts[0]
+		// Check if this looks like a table name (the skey matches an existing table)
+		// If so, it's missing the actual skey
+		if _, err := s.engine.GetTable(skey); err == nil {
+			// skey matches an existing table name - this is /ms/<table> without skey
+			writeError(w, http.StatusBadRequest, "missing skey - use format /ms/<table>/<skey>")
+			return
+		}
+	} else {
+		// Format: /ms/<table>/<skey>
+		tableName = parts[0]
+		skey = parts[1]
+	}
+
+	if skey == "" {
+		writeError(w, http.StatusBadRequest, "invalid path format - missing skey")
 		return
 	}
 

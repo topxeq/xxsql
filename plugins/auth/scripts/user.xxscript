@@ -1,0 +1,36 @@
+// Auth Plugin - Get Current User Info
+// GET /ms/auth/user
+// Header: Authorization: Bearer <token>
+
+var token = http.header("Authorization")
+if (token != "" && stringStartsWith(token, "Bearer ")) {
+    token = stringSubstring(token, 7)
+}
+
+if (token == "") {
+    token = http.header("X-Auth-Token")
+}
+
+if (token == "") {
+    http.status(401)
+    http.json({"success": false, "error": "No token provided"})
+} else {
+    var session = db.queryRow("SELECT s.user_id, u.username, u.email, u.role, u.created_at, u.last_login FROM _plugin_auth_sessions s JOIN _plugin_auth_users u ON s.user_id = u.id WHERE s.token = '" + token + "' AND s.expires_at > NOW()")
+
+    if (session == null) {
+        http.status(401)
+        http.json({"success": false, "error": "Invalid or expired token"})
+    } else {
+        http.json({
+            "success": true,
+            "user": {
+                "id": session.user_id,
+                "username": session.username,
+                "email": session.email,
+                "role": session.role,
+                "createdAt": session.created_at,
+                "lastLogin": session.last_login
+            }
+        })
+    }
+}

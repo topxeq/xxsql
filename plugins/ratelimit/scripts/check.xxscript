@@ -1,0 +1,99 @@
+// Rate Limit Plugin - Check Request
+// POST /ms/ratelimit/check
+// Body: {"key": "ip:127.0.0.1", "rule": "default"} or {"key": "user:123", "rule": "api"}
+
+var data = http.bodyJSON()
+if (data == null || data.key == null) {
+    http.status(400)
+    http.json({"success": false, "error": "Missing key"})
+} else {
+    var key = string(data.key)
+    var ruleName = "default"
+    if (data.rule != null) {
+        ruleName = string(data.rule)
+    }
+
+    // Get rule
+    var rule = db.queryRow("SELECT id, max_requests, window_seconds, action FROM _plugin_ratelimit_rules WHERE name = '" + ruleName + "' AND enabled = true")
+
+    var maxRequests = 100
+    var windowSeconds = 60
+    var action = "block"
+
+    if (rule != null) {
+        maxRequests = int(rule.max_requests)
+        windowSeconds = int(rule.window_seconds)
+        action = string(rule.action)
+    }
+
+    // Check counter
+    var now = now()
+    var windowStart = dateAdd(now, -windowSeconds, "second")
+
+    // Clean up expired counters
+    db.exec("DELETE FROM _plugin_ratelimit_counters WHERE expires_at < '" + formatDate(now, "2006-01-02 15:04:05") + "'")
+
+    // Get or create counter
+    var counter = db.queryRow("SELECT id, count, window_start FROM _plugin_ratelimit_counters WHERE key = '" + key + "'")
+
+    if (counter == null) {
+        // Create new counter
+        var expiresAt = dateAdd(now, windowSeconds, "second")
+        db.exec("INSERT INTO _plugin_ratelimit_counters (key, count, window_start, expires_at) VALUES ('" + key + "', 1, '" + formatDate(now, "2006-01-02 15:04:05") + "', '" + formatDate(expiresAt, "2006-01-02 15:04:05") + "')")
+        http.json({
+            "allowed": true,
+            "key": key,
+            "count": 1,
+            "limit": maxRequests,
+            "remaining": maxRequests - 1,
+            "resetAt": formatDate(expiresAt, "2006-01-02 15:04:05")
+        })
+    } else {
+        var windowStartTime = string(counter.window_start)
+
+        // Check if we need to reset the window
+        if (windowStartTime < formatDate(windowStart, "2006-01-02 15:04:05")) {
+            // Reset counter
+            var expiresAt = dateAdd(now, windowSeconds, "second")
+            db.exec("UPDATE _plugin_ratelimit_counters SET count = 1, window_start = '" + formatDate(now, "2006-01-02 15:04:05") + "', expires_at = '" + formatDate(expiresAt, "2006-01-02 15:04:05") + "' WHERE key = '" + key + "'")
+            http.json({
+                "allowed": true,
+                "key": key,
+                "count": 1,
+                "limit": maxRequests,
+                "remaining": maxRequests - 1,
+                "resetAt": formatDate(expiresAt, "2006-01-02 15:04:05")
+            })
+        } else {
+            var currentCount = int(counter.count)
+
+            if (currentCount >= maxRequests) {
+                // Rate limit exceeded
+                var retryAfter = windowSeconds - int(dateDiff(now, windowStartTime, "second"))
+                http.status(429)
+                http.json({
+                    "allowed": false,
+                    "key": key,
+                    "count": currentCount,
+                    "limit": maxRequests,
+                    "remaining": 0,
+                    "retryAfter": retryAfter,
+                    "action": action
+                })
+            } else {
+                // Increment counter
+                var newCount = currentCount + 1
+                db.exec("UPDATE _plugin_ratelimit_counters SET count = " + string(newCount) + " WHERE key = '" + key + "'")
+                var expiresAt = dateAdd(stringToTime(windowStartTime), windowSeconds, "second")
+                http.json({
+                    "allowed": true,
+                    "key": key,
+                    "count": newCount,
+                    "limit": maxRequests,
+                    "remaining": maxRequests - newCount,
+                    "resetAt": formatDate(expiresAt, "2006-01-02 15:04:05")
+                })
+            }
+        }
+    }
+}

@@ -1,0 +1,35 @@
+// Storage Plugin - Get File Info
+// GET /ms/storage/info?filename=... or ?id=1
+
+var filename = http.param("filename")
+var id = http.param("id")
+
+var fileInfo = null
+
+if (id != "") {
+    fileInfo = db.queryRow("SELECT id, filename, original_name, path, size, mime_type, hash, user_id, metadata, created_at, updated_at FROM _plugin_storage_files WHERE id = " + id)
+} else if (filename != "") {
+    fileInfo = db.queryRow("SELECT id, filename, original_name, path, size, mime_type, hash, user_id, metadata, created_at, updated_at FROM _plugin_storage_files WHERE filename = '" + filename + "'")
+}
+
+if (fileInfo == null) {
+    http.status(404)
+    http.json({"success": false, "error": "File not found"})
+} else {
+    http.json({
+        "success": true,
+        "file": {
+            "id": fileInfo[0],
+            "filename": fileInfo[1],
+            "originalName": fileInfo[2],
+            "path": fileInfo[3],
+            "size": int(fileInfo[4]),
+            "mimeType": fileInfo[5],
+            "hash": fileInfo[6],
+            "userId": fileInfo[7],
+            "metadata": fileInfo[8],
+            "createdAt": fileInfo[9],
+            "updatedAt": fileInfo[10]
+        }
+    })
+}

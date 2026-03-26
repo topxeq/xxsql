@@ -157,11 +157,28 @@ http.json({"result": result})`,
 				if err := json.Unmarshal([]byte(body), &result); err != nil {
 					t.Fatalf("Failed to parse JSON: %v", err)
 				}
-				if result["sum"].(float64) != 8 {
-					t.Errorf("Expected sum 8, got %v", result["sum"])
+				// Handle both int and float64 from JSON
+				sum, ok := result["sum"].(float64)
+				if !ok {
+					if sumInt, ok := result["sum"].(int); ok {
+						sum = float64(sumInt)
+					} else {
+						t.Fatalf("sum is not a number: %T", result["sum"])
+					}
 				}
-				if result["product"].(float64) != 15 {
-					t.Errorf("Expected product 15, got %v", result["product"])
+				if sum != 8 {
+					t.Errorf("Expected sum 8, got %v", sum)
+				}
+				product, ok := result["product"].(float64)
+				if !ok {
+					if productInt, ok := result["product"].(int); ok {
+						product = float64(productInt)
+					} else {
+						t.Fatalf("product is not a number: %T", result["product"])
+					}
+				}
+				if product != 15 {
+					t.Errorf("Expected product 15, got %v", product)
 				}
 			},
 		},
@@ -189,8 +206,16 @@ http.json({"result": result})`,
 					t.Errorf("Expected row to be object, got %T", resultArr[0])
 					return
 				}
-				if row["sum"].(float64) != 2 {
-					t.Errorf("Expected sum 2, got %v", row["sum"])
+				sumVal, ok := row["sum"].(float64)
+				if !ok {
+					if sumInt, ok := row["sum"].(int); ok {
+						sumVal = float64(sumInt)
+					} else {
+						t.Fatalf("sum is not a number: %T", row["sum"])
+					}
+				}
+				if sumVal != 2 {
+					t.Errorf("Expected sum 2, got %v", sumVal)
 				}
 			},
 		},
@@ -360,8 +385,14 @@ http.json(result)
 			t.Fatalf("Failed to parse JSON: %v", err)
 		}
 
-		if result["count"].(float64) != 3 {
-			t.Errorf("Expected count 3, got %v", result["count"])
+		countVal, ok := result["count"].(float64)
+		if !ok {
+			if countInt, ok := result["count"].(int); ok {
+				countVal = float64(countInt)
+			}
+		}
+		if countVal != 3 {
+			t.Errorf("Expected count 3, got %v", countVal)
 		}
 	})
 
@@ -382,8 +413,14 @@ http.json(result)
 			t.Fatalf("Failed to parse JSON: %v", err)
 		}
 
-		if result["count"].(float64) != 2 {
-			t.Errorf("Expected count 2, got %v", result["count"])
+		countVal2, ok := result["count"].(float64)
+		if !ok {
+			if countInt, ok := result["count"].(int); ok {
+				countVal2 = float64(countInt)
+			}
+		}
+		if countVal2 != 2 {
+			t.Errorf("Expected count 2, got %v", countVal2)
 		}
 	})
 }

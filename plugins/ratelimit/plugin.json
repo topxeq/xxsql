@@ -1,0 +1,13 @@
+{
+    "name": "ratelimit",
+    "version": "1.0.0",
+    "author": "XxSql Team",
+    "description": "Request rate limiting with configurable rules per IP or user",
+    "category": "utility",
+    "tables": "_plugin_ratelimit_rules,_plugin_ratelimit_counters",
+    "endpoints": [
+        {"skey": "ratelimit/check", "script": "scripts/check.xxscript", "description": "Check if request is allowed"},
+        {"skey": "ratelimit/rules", "script": "scripts/rules.xxscript", "description": "Manage rate limit rules"},
+        {"skey": "ratelimit/reset", "script": "scripts/reset.xxscript", "description": "Reset rate limit counter"}
+    ]
+}

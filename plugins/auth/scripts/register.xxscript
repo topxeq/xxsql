@@ -1,0 +1,58 @@
+// Auth Plugin - Register Endpoint
+// POST /ms/auth/register
+// Body: {"username": "...", "password": "...", "email": "..."}
+
+var data = http.bodyJSON()
+if (data == null || data.username == null || data.password == null) {
+    http.status(400)
+    http.json({"success": false, "error": "Missing username or password"})
+} else {
+    var username = string(data.username)
+    var password = string(data.password)
+    var email = ""
+    if (data.email != null) {
+        email = string(data.email)
+    }
+
+    // Validate username
+    if (stringLength(username) < 3) {
+        http.status(400)
+        http.json({"success": false, "error": "Username must be at least 3 characters"})
+    } else if (stringLength(password) < 6) {
+        http.status(400)
+        http.json({"success": false, "error": "Password must be at least 6 characters"})
+    } else {
+        // Check if username exists
+        var existing = db.queryRow("SELECT id FROM _plugin_auth_users WHERE username = '" + username + "'")
+        if (existing != null) {
+            http.status(409)
+            http.json({"success": false, "error": "Username already exists"})
+        } else if (email != "") {
+            // Check if email exists
+            existing = db.queryRow("SELECT id FROM _plugin_auth_users WHERE email = '" + email + "'")
+            if (existing != null) {
+                http.status(409)
+                http.json({"success": false, "error": "Email already registered"})
+            }
+        }
+
+        if (http.status() != 409) {
+            // Hash password
+            var passwordHash = hashPassword(password)
+
+            // Insert user
+            var result = db.exec("INSERT INTO _plugin_auth_users (username, email, password_hash, role) VALUES ('" + username + "', '" + email + "', '" + passwordHash + "', 'user')")
+
+            if (result.error != null) {
+                http.status(500)
+                http.json({"success": false, "error": "Failed to create user"})
+            } else {
+                http.json({
+                    "success": true,
+                    "message": "User registered successfully",
+                    "userId": result.lastInsertId
+                })
+            }
+        }
+    }
+}

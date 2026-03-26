@@ -1,0 +1,15 @@
+{
+    "name": "storage",
+    "version": "1.0.0",
+    "author": "XxSql Team",
+    "description": "File storage service with upload, download, and management",
+    "category": "storage",
+    "tables": "_plugin_storage_files",
+    "endpoints": [
+        {"skey": "storage/upload", "script": "scripts/upload.xxscript", "description": "Upload file"},
+        {"skey": "storage/download", "script": "scripts/download.xxscript", "description": "Download file"},
+        {"skey": "storage/list", "script": "scripts/list.xxscript", "description": "List files"},
+        {"skey": "storage/delete", "script": "scripts/delete.xxscript", "description": "Delete file"},
+        {"skey": "storage/info", "script": "scripts/info.xxscript", "description": "Get file info"}
+    ]
+}

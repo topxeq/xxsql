@@ -1,0 +1,45 @@
+// Auth Plugin - Check Authentication Status
+// GET /ms/auth/check
+// Header: Authorization: Bearer <token>
+
+var token = http.header("Authorization")
+if (token != "" && stringStartsWith(token, "Bearer ")) {
+    token = stringSubstring(token, 7)
+}
+
+if (token == "") {
+    token = http.header("X-Auth-Token")
+}
+
+if (token == "") {
+    http.json({"authenticated": false, "error": "No token provided"})
+} else {
+    // Find valid session
+    var session = db.queryRow("SELECT s.id, s.user_id, s.expires_at, u.username, u.role, u.enabled FROM _plugin_auth_sessions s JOIN _plugin_auth_users u ON s.user_id = u.id WHERE s.token = '" + token + "'")
+
+    if (session == null) {
+        http.json({"authenticated": false, "error": "Invalid token"})
+    } else if (session.enabled == false) {
+        http.json({"authenticated": false, "error": "Account is disabled"})
+    } else {
+        // Check expiration
+        var expiresAt = string(session.expires_at)
+        var now = formatDate(now(), "2006-01-02 15:04:05")
+
+        if (expiresAt < now) {
+            // Delete expired session
+            db.exec("DELETE FROM _plugin_auth_sessions WHERE token = '" + token + "'")
+            http.json({"authenticated": false, "error": "Session expired"})
+        } else {
+            http.json({
+                "authenticated": true,
+                "user": {
+                    "id": session.user_id,
+                    "username": session.username,
+                    "role": session.role
+                },
+                "expiresAt": expiresAt
+            })
+        }
+    }
+}

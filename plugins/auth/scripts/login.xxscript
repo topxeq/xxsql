@@ -1,0 +1,59 @@
+// Auth Plugin - Login Endpoint
+// POST /ms/auth/login
+// Body: {"username": "...", "password": "..."}
+
+var data = http.bodyJSON()
+if (data == null || data.username == null || data.password == null) {
+    http.status(400)
+    http.json({"success": false, "error": "Missing username or password"})
+} else {
+    var username = string(data.username)
+    var password = string(data.password)
+
+    // Find user
+    var user = db.queryRow("SELECT id, username, password_hash, role, enabled FROM _plugin_auth_users WHERE username = '" + username + "'")
+
+    if (user == null) {
+        http.status(401)
+        http.json({"success": false, "error": "Invalid username or password"})
+    } else if (user.enabled == false) {
+        http.status(403)
+        http.json({"success": false, "error": "Account is disabled"})
+    } else {
+        // Verify password
+        var valid = verifyPassword(password, string(user.password_hash))
+        if (valid != true) {
+            http.status(401)
+            http.json({"success": false, "error": "Invalid username or password"})
+        } else {
+            // Generate session token
+            var token = randomToken(32)
+            var expiresAt = dateAdd(now(), 24, "hour")
+
+            // Create session
+            var ip = http.header("X-Real-IP")
+            if (ip == "") {
+                ip = http.header("X-Forwarded-For")
+            }
+            if (ip == "") {
+                ip = "unknown"
+            }
+
+            db.exec("INSERT INTO _plugin_auth_sessions (user_id, token, expires_at, ip_address) VALUES (" + string(user.id) + ", '" + token + "', '" + expiresAt + "', '" + ip + "')")
+
+            // Update last login
+            db.exec("UPDATE _plugin_auth_users SET last_login = NOW() WHERE id = " + string(user.id))
+
+            http.json({
+                "success": true,
+                "token": token,
+                "user": {
+                    "id": user.id,
+                    "username": user.username,
+                    "role": user.role
+                },
+                "expiresAt": expiresAt
+            })
+        }
+    }
+}
