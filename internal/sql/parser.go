@@ -2490,9 +2490,43 @@ func (p *Parser) parseBinaryExpr(minPrec int) Expression {
 			if p.peekTokenIs(TokIn) {
 				p.nextToken() // consume NOT
 				p.nextToken() // consume IN
-				right := p.parseBinaryExpr(4) // parse the subquery or list
-				inExpr := &BinaryExpr{Left: left, Op: OpIn, Right: right}
-				left = &UnaryExpr{Op: OpNot, Right: inExpr}
+
+				// Expect (
+				if !p.expect(TokLParen) {
+					return nil
+				}
+
+				// Check for subquery
+				if p.curTokenIs(TokSelect) {
+					stmt := p.parseSelect()
+					if stmt == nil {
+						return nil
+					}
+					if !p.expect(TokRParen) {
+						return nil
+					}
+					left = &InExpr{
+						Expr:   left,
+						Select: stmt.(*SelectStmt),
+						Not:    true,
+					}
+					continue
+				}
+
+				// Parse value list
+				list := p.parseExpressionList()
+				if len(list) == 0 {
+					p.error("expected at least one value in NOT IN list")
+					return nil
+				}
+				if !p.expect(TokRParen) {
+					return nil
+				}
+				left = &InExpr{
+					Expr: left,
+					List: list,
+					Not:  true,
+				}
 				continue
 			}
 			// NOT without IN - not a binary operator for us
@@ -2593,6 +2627,47 @@ func (p *Parser) parseBinaryExpr(minPrec int) Expression {
 				Op:       op,
 				IsAny:    isAny,
 				Subquery: &SubqueryExpr{Select: stmt.(*SelectStmt)},
+			}
+			continue
+		}
+
+		// Special handling for IN operator
+		if op == OpIn {
+			// Expect (
+			if !p.expect(TokLParen) {
+				return nil
+			}
+
+			// Check for subquery
+			if p.curTokenIs(TokSelect) {
+				stmt := p.parseSelect()
+				if stmt == nil {
+					return nil
+				}
+				if !p.expect(TokRParen) {
+					return nil
+				}
+				left = &InExpr{
+					Expr:   left,
+					Select: stmt.(*SelectStmt),
+					Not:    false,
+				}
+				continue
+			}
+
+			// Parse value list
+			list := p.parseExpressionList()
+			if len(list) == 0 {
+				p.error("expected at least one value in IN list")
+				return nil
+			}
+			if !p.expect(TokRParen) {
+				return nil
+			}
+			left = &InExpr{
+				Expr: left,
+				List: list,
+				Not:  false,
 			}
 			continue
 		}

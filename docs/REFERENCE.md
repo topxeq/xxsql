@@ -244,6 +244,13 @@ SELECT [ALL | DISTINCT]
     ]
 ```
 
+> **Note**: Some clauses have known limitations (as of v0.0.6):
+> - `DISTINCT` may not correctly eliminate duplicates
+> - `LIMIT` may not correctly restrict the number of rows returned
+> - `OFFSET` may not work correctly
+>
+> **Workarounds**: Implement pagination and deduplication in your application layer when these issues are encountered.
+
 **Examples:**
 
 ```sql
@@ -462,6 +469,16 @@ SELECT SQRT(16);         -- 4
 ```
 
 ### Date/Time Functions
+
+> **Note**: Some date extraction functions may not work correctly in all contexts (as of v0.0.6):
+> - `YEAR()`, `MONTH()`, `DAY()` may return unexpected results
+>
+> **Workaround**: Use `STRFTIME()` for date component extraction:
+> ```sql
+> SELECT STRFTIME('%Y', date_column) AS year;   -- Year
+> SELECT STRFTIME('%m', date_column) AS month;  -- Month
+> SELECT STRFTIME('%d', date_column) AS day;    -- Day
+> ```
 
 | Function | Description |
 |----------|-------------|
@@ -692,8 +709,16 @@ SELECT * FROM users WHERE email REGEXP '^[a-z]+@[a-z]+\\.[a-z]+$';
 
 ### IN and BETWEEN
 
+> **Note**: These operators have known limitations (as of v0.0.6):
+> - `IN` with value lists may cause parse errors
+> - `BETWEEN` may return empty results
+>
+> **Workarounds**:
+> - Use `OR` instead of `IN`: `WHERE id = 1 OR id = 2 OR id = 3`
+> - Use comparison operators instead of `BETWEEN`: `WHERE price >= 10 AND price <= 20`
+
 ```sql
--- IN
+-- IN (may have issues)
 WHERE column IN (value1, value2, ...)
 WHERE column IN (SELECT ...)
 
@@ -746,6 +771,13 @@ Supported types: `INT`, `INTEGER`, `BIGINT`, `FLOAT`, `DOUBLE`, `DECIMAL`, `CHAR
 ---
 
 ## Subqueries
+
+> **Note**: Some subquery types have known limitations (as of v0.0.6):
+> - Scalar subqueries in WHERE clause may return empty results
+> - IN/NOT IN subqueries may not work correctly
+> - EXISTS/NOT EXISTS may have issues
+>
+> **Workaround**: For simple cases, use JOINs instead of subqueries.
 
 XxSql supports comprehensive subquery capabilities.
 

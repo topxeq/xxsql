@@ -656,13 +656,57 @@ func (e *Executor) executeSelect(stmt *sql.SelectStmt) (*Result, error) {
 		result.Rows = append(result.Rows, resultRow)
 	}
 
+	// Apply DISTINCT if present
+	if stmt.Distinct {
+		result.Rows = e.applyDistinct(result.Rows)
+	}
+
 	// Apply ORDER BY if present
 	if len(stmt.OrderBy) > 0 {
 		result.Rows = e.sortRows(stmt.OrderBy, resultCols, result.Rows)
 	}
 
+	// Apply LIMIT/OFFSET
+	if stmt.Limit != nil {
+		offset := 0
+		if stmt.Offset != nil {
+			offset = int(*stmt.Offset)
+		}
+		limit := int(*stmt.Limit)
+		if offset < len(result.Rows) {
+			end := offset + limit
+			if end > len(result.Rows) {
+				end = len(result.Rows)
+			}
+			result.Rows = result.Rows[offset:end]
+		} else {
+			result.Rows = nil
+		}
+	}
+
 	result.RowCount = len(result.Rows)
 	return result, nil
+}
+
+// applyDistinct removes duplicate rows from the result set.
+func (e *Executor) applyDistinct(rows [][]interface{}) [][]interface{} {
+	if len(rows) == 0 {
+		return rows
+	}
+
+	seen := make(map[string]bool)
+	result := make([][]interface{}, 0, len(rows))
+
+	for _, row := range rows {
+		// Create a key from the row values
+		key := e.rowKey(row)
+		if !seen[key] {
+			seen[key] = true
+			result = append(result, row)
+		}
+	}
+
+	return result
 }
 
 // sortRows sorts the result rows according to ORDER BY clause.
@@ -4578,33 +4622,49 @@ func (e *Executor) executeUpdateInternal(stmt *sql.UpdateStmt) (*Result, error) 
 		colIdxMap[strings.ToLower(col.Name)] = i
 	}
 
-	// Build updates map (column index -> new value)
+	// Build column name to info map for expression evaluation
+	colNameMap := make(map[string]*types.ColumnInfo)
+	for _, col := range tblInfo.Columns {
+		colNameMap[strings.ToLower(col.Name)] = col
+	}
+
+	// Check if any assignment contains column references
+	hasColumnRefs := false
+	for _, a := range stmt.Assignments {
+		if containsColumnRef(a.Value) {
+			hasColumnRefs = true
+			break
+		}
+	}
+
+	// Build updates map (column index -> new value) for non-column-ref expressions
+	// For expressions with column refs, we'll compute them per-row
 	updates := make(map[int]types.Value)
+	updateExprs := make(map[int]sql.Expression) // Store expressions that need row-level evaluation
+
 	for _, a := range stmt.Assignments {
 		idx, ok := colIdxMap[strings.ToLower(a.Column)]
 		if !ok {
 			return nil, fmt.Errorf("unknown column: %s", a.Column)
 		}
 
-		// Convert expression to value
-		val, err := e.expressionToValue(a.Value, tblInfo.Columns[idx])
-		if err != nil {
-			return nil, fmt.Errorf("invalid value for column %s: %w", a.Column, err)
-		}
-
-		// Validate NOT NULL constraint
-		if !tblInfo.Columns[idx].Nullable && val.Null {
-			return nil, fmt.Errorf("column '%s' cannot be null", tblInfo.Columns[idx].Name)
-		}
-
-		// Validate UNIQUE constraint (if not NULL)
-		if tblInfo.Columns[idx].Unique && !val.Null {
-			if e.valueExistsInColumn(tbl, idx, val) {
-				return nil, fmt.Errorf("duplicate entry '%s' for key '%s'", val.String(), tblInfo.Columns[idx].Name)
+		if containsColumnRef(a.Value) {
+			// Store the expression for row-level evaluation
+			updateExprs[idx] = a.Value
+		} else {
+			// Convert expression to value (no column refs, can pre-compute)
+			val, err := e.expressionToValue(a.Value, tblInfo.Columns[idx])
+			if err != nil {
+				return nil, fmt.Errorf("invalid value for column %s: %w", a.Column, err)
 			}
-		}
 
-		updates[idx] = val
+			// Validate NOT NULL constraint
+			if !tblInfo.Columns[idx].Nullable && val.Null {
+				return nil, fmt.Errorf("column '%s' cannot be null", tblInfo.Columns[idx].Name)
+			}
+
+			updates[idx] = val
+		}
 	}
 
 	// Build predicate function
@@ -4618,6 +4678,87 @@ func (e *Executor) executeUpdateInternal(stmt *sql.UpdateStmt) (*Result, error) 
 		// No WHERE clause = update all rows
 		predicate = func(r *row.Row) bool {
 			return true
+		}
+	}
+
+	// Helper function to evaluate expression for a row and convert to Value
+	evaluateExprToValue := func(expr sql.Expression, r *row.Row, targetCol *types.ColumnInfo) (types.Value, error) {
+		result, err := e.evaluateExpression(expr, r, colNameMap, tblInfo.Columns)
+		if err != nil {
+			return types.Value{}, err
+		}
+		return e.interfaceToValue(result, targetCol), nil
+	}
+
+	// Check UNIQUE constraints before updating
+	// First, collect all unique columns
+	uniqueColIndices := make(map[int]string) // colIdx -> colName
+	for i, col := range tblInfo.Columns {
+		if col.Unique {
+			uniqueColIndices[i] = col.Name
+		}
+	}
+
+	// If there are unique columns and updates that affect them, validate
+	if len(uniqueColIndices) > 0 {
+		// Get all current rows to check for duplicates
+		currentRows, err := tbl.Scan()
+		if err != nil {
+			return nil, fmt.Errorf("scan error: %w", err)
+		}
+
+		// For each row that will be updated, check if the new value violates UNIQUE constraint
+		for _, r := range currentRows {
+			if !predicate(r) {
+				continue
+			}
+
+			// Check each unique column
+			for colIdx, colName := range uniqueColIndices {
+				// Check if this column is being updated
+				newVal, isBeingUpdated := updates[colIdx]
+				if !isBeingUpdated {
+					// Column not being updated in simple updates, check updateExprs
+					if expr, hasExpr := updateExprs[colIdx]; hasExpr {
+						// Evaluate expression for this row
+						evalVal, err := evaluateExprToValue(expr, r, tblInfo.Columns[colIdx])
+						if err != nil {
+							return nil, fmt.Errorf("failed to evaluate expression for column %s: %w", colName, err)
+						}
+						newVal = evalVal
+						isBeingUpdated = true
+					}
+				}
+
+				if isBeingUpdated {
+					// Skip NULL values (UNIQUE constraint typically allows multiple NULLs)
+					if newVal.Null {
+						continue
+					}
+
+					// Check if this value already exists in another row
+					for _, otherRow := range currentRows {
+						// Skip the same row (by comparing all values)
+						sameRow := true
+						for i := range r.Values {
+							if !e.valuesEqual(r.Values[i], otherRow.Values[i]) {
+								sameRow = false
+								break
+							}
+						}
+						if sameRow {
+							continue
+						}
+
+						// Check if value matches
+						if colIdx < len(otherRow.Values) && !otherRow.Values[colIdx].Null {
+							if e.valuesEqual(newVal, otherRow.Values[colIdx]) {
+								return nil, fmt.Errorf("UNIQUE constraint violation: column '%s' already has value '%v'", colName, e.valueToInterface(newVal))
+							}
+						}
+					}
+				}
+			}
 		}
 	}
 
@@ -4719,44 +4860,121 @@ func (e *Executor) executeUpdateInternal(stmt *sql.UpdateStmt) (*Result, error) 
 	// Execute update
 	var affected int
 
-	// If updating through a view with CHECK OPTION, validate each row
-	if viewInfo != nil && viewInfo.CheckOption != "" {
-		// Get all rows and validate CHECK OPTION
-		rows, err := tbl.Scan()
-		if err != nil {
-			return nil, fmt.Errorf("scan error: %w", err)
+	// If we have column references in expressions, use UpdateWithFunc
+	if hasColumnRefs || len(updateExprs) > 0 {
+		// Create update function that computes values per-row
+		updateFunc := func(r *row.Row) (map[int]types.Value, error) {
+			rowUpdates := make(map[int]types.Value)
+
+			// First, copy pre-computed values
+			for idx, val := range updates {
+				rowUpdates[idx] = val
+			}
+
+			// Then, evaluate expressions with column refs for this row
+			for idx, expr := range updateExprs {
+				val, err := evaluateExprToValue(expr, r, tblInfo.Columns[idx])
+				if err != nil {
+					return nil, fmt.Errorf("failed to evaluate expression for column %s: %w", tblInfo.Columns[idx].Name, err)
+				}
+
+				// Validate NOT NULL constraint
+				if !tblInfo.Columns[idx].Nullable && val.Null {
+					return nil, fmt.Errorf("column '%s' cannot be null", tblInfo.Columns[idx].Name)
+				}
+
+				rowUpdates[idx] = val
+			}
+
+			return rowUpdates, nil
 		}
 
-		for _, r := range rows {
-			if !predicate(r) {
-				continue
+		// If updating through a view with CHECK OPTION, validate each row first
+		if viewInfo != nil && viewInfo.CheckOption != "" {
+			rows, err := tbl.Scan()
+			if err != nil {
+				return nil, fmt.Errorf("scan error: %w", err)
 			}
 
-			// Build new values after update
-			newVals := make([]types.Value, len(r.Values))
-			copy(newVals, r.Values)
-			for idx, val := range updates {
-				newVals[idx] = val
-			}
+			for _, r := range rows {
+				if !predicate(r) {
+					continue
+				}
 
-			// Build values map for CHECK OPTION validation
-			valuesMap := make(map[string]interface{})
-			for i, col := range tblInfo.Columns {
-				if !newVals[i].Null {
-					valuesMap[strings.ToLower(col.Name)] = e.valueToInterface(newVals[i])
+				// Compute updates for this row
+				rowUpdates, err := updateFunc(r)
+				if err != nil {
+					return nil, err
+				}
+
+				// Build new values after update
+				newVals := make([]types.Value, len(r.Values))
+				copy(newVals, r.Values)
+				for idx, val := range rowUpdates {
+					newVals[idx] = val
+				}
+
+				// Build values map for CHECK OPTION validation
+				valuesMap := make(map[string]interface{})
+				for i, col := range tblInfo.Columns {
+					if !newVals[i].Null {
+						valuesMap[strings.ToLower(col.Name)] = e.valueToInterface(newVals[i])
+					}
+				}
+
+				// Validate CHECK OPTION
+				if err := e.validateCheckOption(viewInfo, valuesMap, "UPDATE"); err != nil {
+					return nil, err
 				}
 			}
+		}
 
-			// Validate CHECK OPTION
-			if err := e.validateCheckOption(viewInfo, valuesMap, "UPDATE"); err != nil {
-				return nil, err
+		affected, err = tbl.UpdateWithFunc(predicate, updateFunc)
+		if err != nil {
+			return nil, fmt.Errorf("update error: %w", err)
+		}
+	} else {
+		// No column references - use simple update with pre-computed values
+
+		// If updating through a view with CHECK OPTION, validate each row
+		if viewInfo != nil && viewInfo.CheckOption != "" {
+			// Get all rows and validate CHECK OPTION
+			rows, err := tbl.Scan()
+			if err != nil {
+				return nil, fmt.Errorf("scan error: %w", err)
+			}
+
+			for _, r := range rows {
+				if !predicate(r) {
+					continue
+				}
+
+				// Build new values after update
+				newVals := make([]types.Value, len(r.Values))
+				copy(newVals, r.Values)
+				for idx, val := range updates {
+					newVals[idx] = val
+				}
+
+				// Build values map for CHECK OPTION validation
+				valuesMap := make(map[string]interface{})
+				for i, col := range tblInfo.Columns {
+					if !newVals[i].Null {
+						valuesMap[strings.ToLower(col.Name)] = e.valueToInterface(newVals[i])
+					}
+				}
+
+				// Validate CHECK OPTION
+				if err := e.validateCheckOption(viewInfo, valuesMap, "UPDATE"); err != nil {
+					return nil, err
+				}
 			}
 		}
-	}
 
-	affected, err = tbl.Update(predicate, updates)
-	if err != nil {
-		return nil, fmt.Errorf("update error: %w", err)
+		affected, err = tbl.Update(predicate, updates)
+		if err != nil {
+			return nil, fmt.Errorf("update error: %w", err)
+		}
 	}
 
 	// Fire AFTER UPDATE triggers
@@ -10817,6 +11035,177 @@ func (e *Executor) evaluateFunction(fc *sql.FunctionCall, r *row.Row, columnMap 
 			return nil, fmt.Errorf("LAST_DAY: invalid argument type")
 		}
 
+	case "DAYNAME":
+		// Return the name of the weekday
+		if len(fc.Args) == 0 {
+			return time.Now().Weekday().String(), nil
+		}
+		arg, err := evalExpr(fc.Args[0])
+		if err != nil {
+			return nil, err
+		}
+		if arg == nil {
+			return nil, nil
+		}
+		switch v := arg.(type) {
+		case string:
+			t, err := parseDateTime(v)
+			if err != nil {
+				return nil, err
+			}
+			return t.Weekday().String(), nil
+		case time.Time:
+			return v.Weekday().String(), nil
+		default:
+			return nil, fmt.Errorf("DAYNAME: invalid argument type")
+		}
+
+	case "MONTHNAME":
+		// Return the name of the month
+		if len(fc.Args) == 0 {
+			return time.Now().Month().String(), nil
+		}
+		arg, err := evalExpr(fc.Args[0])
+		if err != nil {
+			return nil, err
+		}
+		if arg == nil {
+			return nil, nil
+		}
+		switch v := arg.(type) {
+		case string:
+			t, err := parseDateTime(v)
+			if err != nil {
+				return nil, err
+			}
+			return t.Month().String(), nil
+		case time.Time:
+			return v.Month().String(), nil
+		default:
+			return nil, fmt.Errorf("MONTHNAME: invalid argument type")
+		}
+
+	case "YEARWEEK":
+		// Return year and week number as YYYYWW
+		if len(fc.Args) == 0 {
+			now := time.Now()
+			year, week := now.ISOWeek()
+			return year*100 + week, nil
+		}
+		arg, err := evalExpr(fc.Args[0])
+		if err != nil {
+			return nil, err
+		}
+		if arg == nil {
+			return nil, nil
+		}
+		switch v := arg.(type) {
+		case string:
+			t, err := parseDateTime(v)
+			if err != nil {
+				return nil, err
+			}
+			year, week := t.ISOWeek()
+			return year*100 + week, nil
+		case time.Time:
+			year, week := v.ISOWeek()
+			return year*100 + week, nil
+		default:
+			return nil, fmt.Errorf("YEARWEEK: invalid argument type")
+		}
+
+	case "TO_DAYS":
+		// Convert date to number of days since year 0
+		if len(fc.Args) == 0 {
+			return nil, fmt.Errorf("TO_DAYS requires 1 argument")
+		}
+		arg, err := evalExpr(fc.Args[0])
+		if err != nil {
+			return nil, err
+		}
+		if arg == nil {
+			return nil, nil
+		}
+		switch v := arg.(type) {
+		case string:
+			t, err := parseDateTime(v)
+			if err != nil {
+				return nil, err
+			}
+			// Days since year 0 (MySQL convention: day 1 is 0000-01-01)
+			days := t.YearDay() + int(t.Year())*365 + t.Year()/4 - t.Year()/100 + t.Year()/400
+			return days, nil
+		case time.Time:
+			days := v.YearDay() + int(v.Year())*365 + v.Year()/4 - v.Year()/100 + v.Year()/400
+			return days, nil
+		default:
+			return nil, fmt.Errorf("TO_DAYS: invalid argument type")
+		}
+
+	case "FROM_DAYS":
+		// Convert number of days to date
+		if len(fc.Args) == 0 {
+			return nil, fmt.Errorf("FROM_DAYS requires 1 argument")
+		}
+		arg, err := evalExpr(fc.Args[0])
+		if err != nil {
+			return nil, err
+		}
+		if arg == nil {
+			return nil, nil
+		}
+		var days int
+		switch v := arg.(type) {
+		case int:
+			days = v
+		case int64:
+			days = int(v)
+		case float64:
+			days = int(v)
+		default:
+			return nil, fmt.Errorf("FROM_DAYS: invalid argument type")
+		}
+		// Approximate conversion - days since year 0
+		year := days / 366
+		remainingDays := days - year*365 - year/4 + year/100 - year/400
+		t := time.Date(year, 1, 1, 0, 0, 0, 0, time.UTC).AddDate(0, 0, remainingDays)
+		return t.Format("2006-01-02"), nil
+
+	case "STR_TO_DATE":
+		// Convert string to date using format
+		if len(fc.Args) < 2 {
+			return nil, fmt.Errorf("STR_TO_DATE requires 2 arguments")
+		}
+		arg, err := evalExpr(fc.Args[0])
+		if err != nil {
+			return nil, err
+		}
+		if arg == nil {
+			return nil, nil
+		}
+		formatArg, err := evalExpr(fc.Args[1])
+		if err != nil {
+			return nil, err
+		}
+		if formatArg == nil {
+			return nil, fmt.Errorf("STR_TO_DATE: format cannot be null")
+		}
+		str, ok := arg.(string)
+		if !ok {
+			return nil, fmt.Errorf("STR_TO_DATE: first argument must be string")
+		}
+		format, ok := formatArg.(string)
+		if !ok {
+			return nil, fmt.Errorf("STR_TO_DATE: second argument must be string")
+		}
+		// Convert MySQL format to Go format
+		goFormat := convertMySQLDateFormatToGo(format)
+		t, err := time.Parse(goFormat, str)
+		if err != nil {
+			return nil, err
+		}
+		return t.Format("2006-01-02 15:04:05"), nil
+
 	// ========== String Functions ==========
 	case "TRIM":
 		if len(fc.Args) == 0 {
@@ -13170,6 +13559,52 @@ func matchLikePattern(str, pattern, escapeChar string) bool {
 	return matched
 }
 
+// containsColumnRef checks if an expression contains a column reference.
+// This is used to determine if UPDATE expressions need row-level evaluation.
+func containsColumnRef(expr sql.Expression) bool {
+	if expr == nil {
+		return false
+	}
+
+	switch ex := expr.(type) {
+	case *sql.ColumnRef:
+		return true
+	case *sql.BinaryExpr:
+		return containsColumnRef(ex.Left) || containsColumnRef(ex.Right)
+	case *sql.UnaryExpr:
+		return containsColumnRef(ex.Right)
+	case *sql.FunctionCall:
+		for _, arg := range ex.Args {
+			if containsColumnRef(arg) {
+				return true
+			}
+		}
+	case *sql.ParenExpr:
+		return containsColumnRef(ex.Expr)
+	case *sql.CaseExpr:
+		if containsColumnRef(ex.Expr) {
+			return true
+		}
+		for _, when := range ex.Whens {
+			if containsColumnRef(when.Condition) || containsColumnRef(when.Result) {
+				return true
+			}
+		}
+		if containsColumnRef(ex.Else) {
+			return true
+		}
+	case *sql.CastExpr:
+		return containsColumnRef(ex.Expr)
+	case *sql.SubqueryExpr:
+		// Subqueries might reference outer columns
+		return true
+	case *sql.ExistsExpr:
+		return true
+	}
+
+	return false
+}
+
 // expressionToValue converts an expression to a storage value.
 func (e *Executor) expressionToValue(expr sql.Expression, col *types.ColumnInfo) (types.Value, error) {
 	switch ex := expr.(type) {
@@ -14345,6 +14780,37 @@ func parseDateTime(s string) (time.Time, error) {
 	return time.Time{}, fmt.Errorf("cannot parse datetime: %s", s)
 }
 
+// convertMySQLDateFormatToGo converts MySQL date format to Go format
+func convertMySQLDateFormatToGo(mysqlFormat string) string {
+	// MySQL format specifiers to Go format specifiers
+	replacements := map[string]string{
+		"%Y": "2006",
+		"%y": "06",
+		"%m": "01",
+		"%c": "1",
+		"%d": "02",
+		"%e": "2",
+		"%H": "15",
+		"%h": "03",
+		"%I": "03",
+		"%i": "04",
+		"%s": "05",
+		"%S": "05",
+		"%p": "PM",
+		"%M": "January",
+		"%b": "Jan",
+		"%W": "Monday",
+		"%a": "Mon",
+		"%%": "%",
+	}
+
+	result := mysqlFormat
+	for mysql, goFormat := range replacements {
+		result = strings.ReplaceAll(result, mysql, goFormat)
+	}
+	return result
+}
+
 // timestampDiff returns the difference between two timestamps in the specified unit
 func timestampDiff(unit string, t1, t2 time.Time) int64 {
 	if t1.IsZero() || t2.IsZero() {
@@ -14695,6 +15161,10 @@ func (e *Executor) interfaceToValue(val interface{}, col *types.ColumnInfo) type
 	case int64:
 		return types.NewIntValue(v)
 	case float64:
+		// If target column is INT, convert to int64
+		if col != nil && (col.Type == types.TypeInt || col.Type == types.TypeSeq) {
+			return types.NewIntValue(int64(v))
+		}
 		return types.NewFloatValue(v)
 	case string:
 		return types.NewStringValue(v, col.Type)

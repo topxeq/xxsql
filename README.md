@@ -2203,6 +2203,52 @@ SELECT CAST('123' AS INT), CAST(0xdeadbeef AS BLOB);
 - [ ] Subquery optimization (decorrelation, result caching)
 - [ ] Transaction isolation levels
 
+## Known Limitations
+
+Based on comprehensive testing, the following limitations are documented:
+
+### SQL Syntax Limitations
+
+| Feature | Status | Notes |
+|---------|--------|-------|
+| `IN` operator | ⚠️ Partial | `WHERE id IN (1, 2, 3)` returns parse error |
+| `BETWEEN` operator | ⚠️ Partial | Returns empty results in some cases |
+| `LIMIT` clause | ⚠️ Partial | May not restrict result set correctly |
+| `DISTINCT` | ⚠️ Partial | May not eliminate duplicates correctly |
+| Subqueries in WHERE | ⚠️ Limited | Scalar subqueries may return empty results |
+
+### Row Size Limit
+
+- Maximum row size: **3500 bytes**
+- Large TEXT/BLOB values should be stored in separate tables or split across rows
+
+### Date Function Limitations
+
+| Function | Status |
+|----------|--------|
+| `YEAR()` | ⚠️ May not work in all contexts |
+| `MONTH()` | ⚠️ May not work in all contexts |
+| `DAY()` | ⚠️ May not work in all contexts |
+
+### Concurrency Considerations
+
+- Table-level locking is used (not row-level)
+- For high-concurrency scenarios, prefer atomic operations:
+  ```sql
+  -- Good: Atomic increment
+  UPDATE counter SET val = val + 1 WHERE id = 1;
+
+  -- Avoid: Read-modify-write pattern (may cause lost updates)
+  SELECT val FROM counter WHERE id = 1;
+  -- application: newVal = val + 1
+  UPDATE counter SET val = newVal WHERE id = 1;
+  ```
+
+### Type Conversion
+
+- The database may accept string values for INT columns (implicit conversion)
+- Always ensure correct data types in INSERT statements
+
 ## Contributing
 
 Contributions are welcome! Please feel free to submit issues and pull requests.

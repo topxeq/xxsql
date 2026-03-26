@@ -202,6 +202,12 @@ func NewTempTable(name string, columns []*types.ColumnInfo) *Table {
 	return t
 }
 
+// SetDataFile sets the data file for the table.
+// This is used for temp tables to enable persistence during the session.
+func (t *Table) SetDataFile(f *os.File) {
+	t.dataFile = f
+}
+
 // createPrimaryKeyIndex creates a primary key index if the table has a primary key.
 // For composite primary keys, we don't create a btree index (not supported yet),
 // but we still track the primary key columns in info.PrimaryKey.
@@ -1488,6 +1494,90 @@ func (t *Table) Update(predicate func(*row.Row) bool, updates map[int]types.Valu
 						p.InsertRow(newRowData)
 					} else {
 						// Need a new page
+						newPage := t.newPage()
+						newPage.InsertRow(newRowData)
+						t.writePage(newPage)
+					}
+				}
+
+				affected++
+			}
+		}
+
+		// Write page if modified
+		if p.Modified {
+			t.writePage(p)
+			p.Modified = false
+		}
+	}
+
+	if affected > 0 {
+		t.info.ModifiedAt = time.Now()
+	}
+
+	return affected, nil
+}
+
+// UpdateWithFunc updates rows using a function that computes new values based on the current row.
+// This is used for expressions like "SET col = col + 1" where the new value depends on the current row.
+func (t *Table) UpdateWithFunc(predicate func(*row.Row) bool, updateFunc func(*row.Row) (map[int]types.Value, error)) (int, error) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+
+	if t.info.State != TableStateActive {
+		return 0, fmt.Errorf("table is not active")
+	}
+
+	var affected int
+
+	// Iterate through all pages
+	for pageID := page.PageID(1); pageID < t.info.NextPageID; pageID++ {
+		p, err := t.getPage(pageID)
+		if err != nil {
+			continue
+		}
+
+		// Read all rows from page
+		rowCount := p.RowCount()
+		for i := 0; i < rowCount; i++ {
+			rowData, err := p.GetRow(i)
+			if err != nil {
+				continue
+			}
+
+			r, err := row.DeserializeRow(rowData, t.info.Columns)
+			if err != nil {
+				continue
+			}
+
+			// Check if row matches predicate
+			if predicate(r) {
+				// Call update function to get the updates for this specific row
+				updates, err := updateFunc(r)
+				if err != nil {
+					continue
+				}
+
+				// Apply updates
+				for colIdx, val := range updates {
+					if colIdx < len(r.Values) {
+						r.Values[colIdx] = val
+					}
+				}
+
+				// Re-serialize and update
+				newRowData, err := row.SerializeRow(r.ID, r.Values)
+				if err != nil {
+					continue
+				}
+
+				// Try to update in place
+				if err := p.UpdateRow(i, newRowData); err != nil {
+					// If the new data is larger, we need to delete and reinsert
+					p.DeleteRow(i)
+					if p.FreeSpace() >= uint16(len(newRowData)+4) {
+						p.InsertRow(newRowData)
+					} else {
 						newPage := t.newPage()
 						newPage.InsertRow(newRowData)
 						t.writePage(newPage)

@@ -213,6 +213,17 @@ func (e *Engine) CreateTempTable(name string, columns []*types.ColumnInfo) error
 
 	// Create an in-memory table for temp data
 	tbl := table.NewTempTable(name, columns)
+
+	// Create a temporary data file for the temp table
+	// This allows the temp table to be written to and read from
+	tempFile, err := os.CreateTemp("", "xxsql-temp-table-*.db")
+	if err != nil {
+		return fmt.Errorf("failed to create temp file: %w", err)
+	}
+
+	// Set the data file for the temp table
+	tbl.SetDataFile(tempFile)
+
 	e.tempTables[name] = tbl
 
 	return nil
