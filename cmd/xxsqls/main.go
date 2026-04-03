@@ -7,6 +7,7 @@ import (
 	"net"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"syscall"
 
 	"github.com/topxeq/xxsql/internal/config"
@@ -24,15 +25,20 @@ var (
 
 // Command-line flags
 var (
-	flagConfig      = flag.String("config", "", "Path to configuration file")
-	flagVersion     = flag.Bool("version", false, "Print version information")
-	flagInitConfig  = flag.Bool("init-config", false, "Print example configuration to stdout")
-	flagLogLevel    = flag.String("log-level", "", "Override log level (DEBUG, INFO, WARN, ERROR)")
-	flagDataDir     = flag.String("data-dir", "", "Override data directory")
-	flagBind        = flag.String("bind", "", "Override bind address")
-	flagPrivatePort = flag.Int("private-port", 0, "Override private protocol port")
-	flagMySQLPort   = flag.Int("mysql-port", 0, "Override MySQL compatible port")
-	flagHTTPPort    = flag.Int("http-port", 0, "Override HTTP API port")
+	flagConfig        = flag.String("config", "", "Path to configuration file")
+	flagVersion       = flag.Bool("version", false, "Print version information")
+	flagInitConfig    = flag.Bool("init-config", false, "Print example configuration to stdout")
+	flagLogLevel      = flag.String("log-level", "", "Override log level (DEBUG, INFO, WARN, ERROR)")
+	flagDataDir       = flag.String("data-dir", "", "Override data directory")
+	flagBind          = flag.String("bind", "", "Override bind address")
+	flagPrivatePort   = flag.Int("private-port", 0, "Override private protocol port")
+	flagMySQLPort     = flag.Int("mysql-port", 0, "Override MySQL compatible port")
+	flagHTTPPort      = flag.Int("http-port", 0, "Override HTTP API port")
+	flagInstallService   = flag.Bool("install-service", false, "Install as system service")
+	flagUninstallService = flag.Bool("uninstall-service", false, "Uninstall system service")
+	flagServiceName   = flag.String("service-name", "xxsql", "Service name (for install/uninstall)")
+	flagServiceUser   = flag.String("service-user", "", "Service user (for install, default: xxsql)")
+	flagServiceStatus = flag.Bool("service-status", false, "Check service status")
 )
 
 // Global server instance
@@ -62,6 +68,28 @@ func run() int {
 			return 1
 		}
 		fmt.Println(string(cfg))
+		return 0
+	}
+
+	// Handle service management flags
+	if *flagInstallService {
+		if err := handleServiceInstall(); err != nil {
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			return 1
+		}
+		return 0
+	}
+
+	if *flagUninstallService {
+		if err := handleServiceUninstall(); err != nil {
+			fmt.Fprintf(os.Stderr, "Error: %v\n", err)
+			return 1
+		}
+		return 0
+	}
+
+	if *flagServiceStatus {
+		handleServiceStatus()
 		return 0
 	}
 
@@ -213,4 +241,55 @@ func checkPortsAvailable(cfg *config.Config) error {
 		}
 	}
 	return nil
+}
+
+// handleServiceInstall handles the -install-service flag
+func handleServiceInstall() error {
+	// Determine config path
+	configPath := *flagConfig
+	if configPath == "" {
+		// Use default config path
+		configPath = "/etc/xxsql/xxsql.json"
+	}
+
+	// Check if config file exists, if not generate a default one
+	if _, err := os.Stat(configPath); os.IsNotExist(err) {
+		fmt.Printf("Config file not found at %s, generating default config...\n", configPath)
+
+		// Create directory if needed
+		configDir := filepath.Dir(configPath)
+		if err := os.MkdirAll(configDir, 0755); err != nil {
+			return fmt.Errorf("failed to create config directory: %w", err)
+		}
+
+		// Generate default config
+		cfg, err := config.GenerateExampleConfig()
+		if err != nil {
+			return fmt.Errorf("failed to generate config: %w", err)
+		}
+
+		if err := os.WriteFile(configPath, cfg, 0644); err != nil {
+			return fmt.Errorf("failed to write config: %w", err)
+		}
+
+		fmt.Printf("Generated default config at %s\n", configPath)
+	}
+
+	return installService(*flagServiceName, *flagServiceUser, configPath)
+}
+
+// handleServiceUninstall handles the -uninstall-service flag
+func handleServiceUninstall() error {
+	return uninstallService(*flagServiceName)
+}
+
+// handleServiceStatus handles the -service-status flag
+func handleServiceStatus() {
+	name := *flagServiceName
+	installed := checkServiceInstalled(name)
+	status := getServiceStatus(name)
+
+	fmt.Printf("Service: %s\n", name)
+	fmt.Printf("Installed: %v\n", installed)
+	fmt.Printf("Status: %s\n", status)
 }

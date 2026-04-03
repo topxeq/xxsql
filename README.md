@@ -2011,6 +2011,11 @@ Start both instances:
 | `-log-level` | Log level (DEBUG, INFO, WARN, ERROR) |
 | `-version` | Print version information |
 | `-init-config` | Print example configuration |
+| `-install-service` | Install as system service |
+| `-uninstall-service` | Uninstall system service |
+| `-service-name` | Service name (default: xxsql) |
+| `-service-user` | Service user (default: xxsql) |
+| `-service-status` | Check service status |
 
 ## Development
 

@@ -124,9 +124,63 @@ docker run -d \
     xxsql:latest
 ```
 
-### Systemd Service (Linux)
+### Service Installation
 
-Create a systemd service file for automatic startup:
+XxSql provides built-in service installation for easy deployment as a system service.
+
+#### Linux (systemd)
+
+```bash
+# Install as service (requires sudo)
+sudo ./xxsqls -install-service
+
+# Install with custom config
+sudo ./xxsqls -install-service -config /etc/xxsql/production.json
+
+# Install with custom service name
+sudo ./xxsqls -install-service -service-name xxsql-prod
+
+# Check service status
+sudo ./xxsqls -service-status
+
+# Uninstall service
+sudo ./xxsqls -uninstall-service
+```
+
+The service will be installed at `/etc/systemd/system/xxsql.service` and enabled to start on boot.
+
+#### Windows
+
+```cmd
+# Run as Administrator
+xxsqls.exe -install-service
+
+# With custom config
+xxsqls.exe -install-service -config C:\xxsql\production.json
+
+# Check service status
+xxsqls.exe -service-status
+
+# Uninstall service
+xxsqls.exe -uninstall-service
+```
+
+#### macOS (launchd)
+
+```bash
+# Install as service (requires sudo)
+sudo ./xxsqls -install-service
+
+# Check service status
+sudo ./xxsqls -service-status
+
+# Uninstall service
+sudo ./xxsqls -uninstall-service
+```
+
+### Manual Systemd Service Setup (Linux)
+
+If you prefer manual setup, create a systemd service file:
 
 ```bash
 sudo nano /etc/systemd/system/xxsql.service
