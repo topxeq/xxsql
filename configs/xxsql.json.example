@@ -1,8 +1,7 @@
 {
   "server": {
     "name": "xxsql",
-    "data_dir": "./data",
-    "pid_file": "./xxsql.pid"
+    "data_dir": "./data"
   },
   "network": {
     "private_port": 9527,

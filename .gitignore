@@ -31,7 +31,6 @@ Thumbs.db
 
 # Project specific
 data/
-*.pid
 *.log
 *.log.*
 *.gz

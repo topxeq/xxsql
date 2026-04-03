@@ -81,9 +81,6 @@ func (l *Loader) applyEnvironment(cfg *Config) error {
 	if v := os.Getenv(l.envKey("DATA_DIR")); v != "" {
 		cfg.Server.DataDir = v
 	}
-	if v := os.Getenv(l.envKey("PID_FILE")); v != "" {
-		cfg.Server.PIDFile = v
-	}
 
 	// Network config
 	if v := os.Getenv(l.envKey("PRIVATE_PORT")); v != "" {

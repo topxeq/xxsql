@@ -299,21 +299,6 @@ func TestServerAllPortsEnabled(t *testing.T) {
 	time.Sleep(100 * time.Millisecond)
 }
 
-func TestCreatePIDFile_Twice(t *testing.T) {
-	tmpDir := t.TempDir()
-	pidFile := tmpDir + "/test.pid"
-
-	if err := CreatePIDFile(pidFile); err != nil {
-		t.Fatalf("First CreatePIDFile failed: %v", err)
-	}
-
-	if err := CreatePIDFile(pidFile); err != nil {
-		t.Fatalf("Second CreatePIDFile should overwrite: %v", err)
-	}
-
-	RemovePIDFile(pidFile)
-}
-
 func TestServerStopWithoutStart(t *testing.T) {
 	cfg := config.DefaultConfig()
 	logger := log.NewLogger(log.WithLevel(log.INFO))
@@ -715,26 +700,6 @@ func TestServer_NextConnectionID(t *testing.T) {
 	if id2 <= id1 {
 		t.Errorf("Connection IDs should increment: id1=%d, id2=%d", id1, id2)
 	}
-}
-
-// ============================================================================
-// PID File Tests
-// ============================================================================
-
-func TestCreatePIDFile_EmptyPath(t *testing.T) {
-	if err := CreatePIDFile(""); err != nil {
-		t.Errorf("CreatePIDFile with empty path should not error: %v", err)
-	}
-}
-
-func TestRemovePIDFile_EmptyPath(t *testing.T) {
-	// Should not panic
-	RemovePIDFile("")
-}
-
-func TestRemovePIDFile_NonExistent(t *testing.T) {
-	// Should not error
-	RemovePIDFile("/tmp/nonexistent-pid-file-12345.pid")
 }
 
 // ============================================================================

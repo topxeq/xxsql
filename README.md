@@ -1814,8 +1814,7 @@ Configuration file example (`configs/xxsql.json`):
 {
   "server": {
     "name": "xxsql",
-    "data_dir": "./data",
-    "pid_file": "./xxsql.pid"
+    "data_dir": "./data"
   },
   "network": {
     "private_port": 9527,
@@ -1943,6 +1942,61 @@ The `network` section controls which services are started:
 - `XXSQL_PRIVATE_ENABLED` - Enable/disable private protocol server
 - `XXSQL_MYSQL_ENABLED` - Enable/disable MySQL protocol server
 - `XXSQL_HTTP_ENABLED` - Enable/disable HTTP API server
+
+### Running Multiple Instances
+
+XxSql supports running multiple database instances on a single host by configuring different ports for each instance.
+
+**Key points:**
+
+1. **Port-based instance detection**: XxSql checks port availability at startup before any write operations. If any enabled port is already in use, the server will exit immediately with an error.
+
+2. **No PID file required**: XxSql does not use PID files for instance management. Instead, it relies on port binding to prevent accidental duplicate instances. This approach:
+   - Avoids stale PID file issues after crashes
+   - Simplifies deployment and configuration
+   - Allows flexible multi-instance setups
+
+3. **Each instance needs unique ports and data directory**:
+
+**Example: Running two instances**
+
+Instance 1 configuration (`instance1.json`):
+```json
+{
+  "server": {
+    "name": "xxsql-instance1",
+    "data_dir": "./data1"
+  },
+  "network": {
+    "private_port": 9527,
+    "mysql_port": 3306,
+    "http_port": 8080
+  }
+}
+```
+
+Instance 2 configuration (`instance2.json`):
+```json
+{
+  "server": {
+    "name": "xxsql-instance2",
+    "data_dir": "./data2"
+  },
+  "network": {
+    "private_port": 9528,
+    "mysql_port": 3307,
+    "http_port": 8081
+  }
+}
+```
+
+Start both instances:
+```bash
+./xxsqls -config instance1.json &
+./xxsqls -config instance2.json &
+```
+
+**Note**: While XxSql can detect port conflicts at startup, users are responsible for ensuring different `data_dir` paths for each instance to avoid data corruption.
 
 ### Command-Line Options
 

@@ -4,6 +4,7 @@ package main
 import (
 	"flag"
 	"fmt"
+	"net"
 	"os"
 	"os/signal"
 	"syscall"
@@ -82,12 +83,11 @@ func run() int {
 	logger.Info("XxSql Server v%s starting...", Version)
 	logger.Info("Configuration loaded from: %s", getConfigPath())
 
-	// Create PID file
-	if err := server.CreatePIDFile(cfg.Server.PIDFile); err != nil {
-		logger.Error("Failed to create PID file: %v", err)
+	// Check ports availability before any write operations
+	if err := checkPortsAvailable(cfg); err != nil {
+		logger.Error("Port check failed: %v", err)
 		return 1
 	}
-	defer server.RemovePIDFile(cfg.Server.PIDFile)
 
 	// Ensure data directory exists
 	if err := os.MkdirAll(cfg.Server.DataDir, 0755); err != nil {
@@ -187,4 +187,30 @@ func getConfigPath() string {
 		return *flagConfig
 	}
 	return "defaults"
+}
+
+// checkPortsAvailable checks if all enabled ports are available before starting.
+func checkPortsAvailable(cfg *config.Config) error {
+	ports := []struct {
+		name    string
+		port    int
+		enabled bool
+		bind    string
+	}{
+		{"private", cfg.Network.PrivatePort, cfg.Network.IsPrivateEnabled(), cfg.Network.GetPrivateBind()},
+		{"mysql", cfg.Network.MySQLPort, cfg.Network.IsMySQLEnabled(), cfg.Network.GetMySQLBind()},
+		{"http", cfg.Network.HTTPPort, cfg.Network.IsHTTPEnabled(), cfg.Network.GetHTTPBind()},
+	}
+
+	for _, p := range ports {
+		if p.enabled && p.port > 0 {
+			addr := fmt.Sprintf("%s:%d", p.bind, p.port)
+			listener, err := net.Listen("tcp", addr)
+			if err != nil {
+				return fmt.Errorf("port %d (%s) is already in use: %w", p.port, p.name, err)
+			}
+			listener.Close()
+		}
+	}
+	return nil
 }

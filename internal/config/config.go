@@ -25,7 +25,6 @@ type Config struct {
 type ServerConfig struct {
 	Name    string `json:"name"`     // Server instance name
 	DataDir string `json:"data_dir"` // Data directory path
-	PIDFile string `json:"pid_file"` // PID file path
 }
 
 // NetworkConfig contains network-related configuration.
@@ -217,7 +216,6 @@ func DefaultConfig() *Config {
 		Server: ServerConfig{
 			Name:    "xxsql",
 			DataDir: "./data",
-			PIDFile: "./xxsql.pid",
 		},
 		Network: NetworkConfig{
 			PrivatePort:    9527,

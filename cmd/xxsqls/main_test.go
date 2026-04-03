@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"net"
 	"os"
 	"syscall"
 	"testing"
@@ -380,21 +381,20 @@ func TestRun_ServerStartStop(t *testing.T) {
 	tmpDir := t.TempDir()
 	configPath := tmpDir + "/test-config.json"
 
-	// Create a valid config
-	exampleCfg, _ := config.GenerateExampleConfig()
-	os.WriteFile(configPath, exampleCfg, 0644)
+	// Create a valid config with non-standard ports to avoid conflicts
+	validConfig := `{
+		"server": {"data_dir": "` + tmpDir + `"},
+		"network": {"private_port": 19600, "mysql_port": 0, "http_port": 0, "mysql_enabled": false, "http_enabled": false},
+		"log": {"level": "INFO"},
+		"auth": {"enabled": false}
+	}`
+	os.WriteFile(configPath, []byte(validConfig), 0644)
 
 	flagVersion = ptrBool(false)
 	flagInitConfig = ptrBool(false)
 	flagConfig = ptrString(configPath)
-	flagDataDir = ptrString(tmpDir)
-	flagPrivatePort = ptrInt(19600)
-	flagMySQLPort = ptrInt(0)
-	flagHTTPPort = ptrInt(0)
 	defer func() {
 		flagConfig = ptrString("")
-		flagDataDir = ptrString("")
-		flagPrivatePort = ptrInt(0)
 	}()
 
 	// Run server in goroutine and send signal
@@ -541,43 +541,6 @@ func TestRun_SIGHUP_ConfigError(t *testing.T) {
 	}
 }
 
-func TestRun_PIDFileError(t *testing.T) {
-	// Test PID file creation error by using a path that can't be created
-	tmpDir := t.TempDir()
-	configPath := tmpDir + "/config.json"
-
-	validConfig := `{
-		"server": {"data_dir": "` + tmpDir + `", "pid_file": "/nonexistent/path/xxsql.pid"},
-		"network": {"private_port": 19604, "mysql_port": 0, "http_port": 0, "mysql_enabled": false, "http_enabled": false},
-		"log": {"level": "INFO"},
-		"auth": {"enabled": false}
-	}`
-	os.WriteFile(configPath, []byte(validConfig), 0644)
-
-	flagVersion = ptrBool(false)
-	flagInitConfig = ptrBool(false)
-	flagConfig = ptrString(configPath)
-	defer func() { flagConfig = ptrString("") }()
-
-	// Capture stderr
-	oldStderr := os.Stderr
-	r, w, _ := os.Pipe()
-	os.Stderr = w
-
-	exitCode := run()
-
-	w.Close()
-	os.Stderr = oldStderr
-
-	var buf bytes.Buffer
-	buf.ReadFrom(r)
-
-	// Should fail because PID file path is invalid
-	if exitCode != 1 {
-		t.Errorf("exitCode: got %d, want 1", exitCode)
-	}
-}
-
 func TestRun_DataDirError(t *testing.T) {
 	// Test data directory creation error
 	tmpDir := t.TempDir()
@@ -643,5 +606,57 @@ func TestRun_DataDirPermissionError(t *testing.T) {
 	// Should fail due to permission error
 	if exitCode != 1 {
 		t.Errorf("exitCode: got %d, want 1", exitCode)
+	}
+}
+
+func TestCheckPortsAvailable(t *testing.T) {
+	// Test that checkPortsAvailable detects port in use
+	trueVal := true
+
+	// Test case 1: All ports available
+	cfg := &config.Config{
+		Network: config.NetworkConfig{
+			PrivatePort:    19610,
+			MySQLPort:      19611,
+			HTTPPort:       19612,
+			PrivateEnabled: &trueVal,
+			MySQLEnabled:   &trueVal,
+			HTTPEnabled:    &trueVal,
+		},
+	}
+
+	if err := checkPortsAvailable(cfg); err != nil {
+		t.Errorf("checkPortsAvailable should succeed when ports are available: %v", err)
+	}
+
+	// Test case 2: Port already in use
+	listener, err := net.Listen("tcp", "0.0.0.0:19613")
+	if err != nil {
+		t.Fatalf("failed to start listener: %v", err)
+	}
+	defer listener.Close()
+
+	cfg2 := &config.Config{
+		Network: config.NetworkConfig{
+			PrivatePort:    19613,
+			PrivateEnabled: &trueVal,
+		},
+	}
+
+	if err := checkPortsAvailable(cfg2); err == nil {
+		t.Error("checkPortsAvailable should fail when port is in use")
+	}
+
+	// Test case 3: Disabled ports should be skipped
+	falseVal := false
+	cfg3 := &config.Config{
+		Network: config.NetworkConfig{
+			PrivatePort:    19613, // This port is in use but disabled
+			PrivateEnabled: &falseVal,
+		},
+	}
+
+	if err := checkPortsAvailable(cfg3); err != nil {
+		t.Errorf("checkPortsAvailable should skip disabled ports: %v", err)
 	}
 }

@@ -184,8 +184,7 @@ XxSql uses a JSON configuration file. Generate a default configuration:
 {
   "server": {
     "name": "xxsql",                    // Server name (for identification)
-    "data_dir": "./data",               // Data directory path
-    "pid_file": "./xxsql.pid"           // PID file location
+    "data_dir": "./data"                // Data directory path
   },
 
   "network": {
@@ -451,6 +450,112 @@ ps aux | grep xxsqls
 netstat -tlnp | grep xxsql
 ```
 
+### Instance Management
+
+#### No PID File Design
+
+XxSql does not use PID files for instance management. Instead, it uses **port-based detection** to prevent duplicate instances:
+
+- **Startup check**: Before any write operations, XxSql checks if all enabled ports are available
+- **Immediate exit**: If any port is in use, the server exits immediately with an error
+- **No stale files**: Eliminates issues with stale PID files after crashes or improper shutdowns
+
+This design provides several benefits:
+- **Simpler deployment**: No need to manage PID file locations and permissions
+- **Crash-safe**: No orphaned PID files after unexpected termination
+- **Multi-instance friendly**: Easy to run multiple instances with different port configurations
+
+#### Running Multiple Instances
+
+To run multiple XxSql instances on the same host:
+
+1. **Create separate configurations** with unique ports and data directories:
+
+**Instance 1** (`/etc/xxsql/instance1.json`):
+```json
+{
+  "server": {
+    "name": "xxsql-prod",
+    "data_dir": "/var/lib/xxsql/prod"
+  },
+  "network": {
+    "private_port": 9527,
+    "mysql_port": 3306,
+    "http_port": 8080
+  }
+}
+```
+
+**Instance 2** (`/etc/xxsql/instance2.json`):
+```json
+{
+  "server": {
+    "name": "xxsql-test",
+    "data_dir": "/var/lib/xxsql/test"
+  },
+  "network": {
+    "private_port": 9528,
+    "mysql_port": 3307,
+    "http_port": 8081
+  }
+}
+```
+
+2. **Start each instance** with its configuration:
+```bash
+./xxsqls -config /etc/xxsql/instance1.json
+./xxsqls -config /etc/xxsql/instance2.json
+```
+
+3. **Create separate systemd services** (recommended for production):
+```bash
+# Create service files
+sudo tee /etc/systemd/system/xxsql-prod.service << EOF
+[Unit]
+Description=XxSql Production Instance
+After=network.target
+
+[Service]
+Type=simple
+User=xxsql
+ExecStart=/usr/local/bin/xxsqls -config /etc/xxsql/instance1.json
+Restart=always
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+sudo tee /etc/systemd/system/xxsql-test.service << EOF
+[Unit]
+Description=XxSql Test Instance
+After=network.target
+
+[Service]
+Type=simple
+User=xxsql
+ExecStart=/usr/local/bin/xxsqls -config /etc/xxsql/instance2.json
+Restart=always
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+sudo systemctl daemon-reload
+sudo systemctl enable xxsql-prod xxsql-test
+sudo systemctl start xxsql-prod xxsql-test
+```
+
+#### Preventing Accidental Duplicate Instances
+
+If you attempt to start a second instance with the same ports, XxSql will detect the conflict and exit:
+
+```bash
+$ ./xxsqls -config /etc/xxsql/instance1.json
+[ERROR] Port check failed: port 3306 (mysql) is already in use: listen tcp 0.0.0.0:3306: bind: address already in use
+```
+
+**Important**: XxSql only detects port conflicts. Users must ensure each instance has a unique `data_dir` to avoid data corruption.
+
 ---
 
 ## Backup and Recovery
@@ -554,10 +659,7 @@ No absolute paths are stored in any of these files, making the data directory co
 # Method 1: Using systemctl (if configured as service)
 sudo systemctl stop xxsql
 
-# Method 2: Using PID file
-kill $(cat /var/run/xxsql.pid)
-
-# Method 3: Find and kill process
+# Method 2: Find and kill process
 pkill xxsqls
 
 # Verify server is stopped
@@ -601,8 +703,7 @@ cat > /etc/xxsql/xxsql.json << 'EOF'
 {
   "server": {
     "name": "xxsql",
-    "data_dir": "/var/lib/xxsql/data",
-    "pid_file": "/var/run/xxsql.pid"
+    "data_dir": "/var/lib/xxsql/data"
   },
   "network": {
     "private_port": 9527,
@@ -1152,7 +1253,6 @@ du -sh /var/lib/xxsql/*
 
 # Process info
 ps aux | grep xxsqls
-cat /var/run/xxsql.pid
 ```
 
 ### Getting Help

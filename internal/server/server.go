@@ -7,7 +7,6 @@ import (
 	"encoding/hex"
 	"fmt"
 	"net"
-	"os"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -640,23 +639,6 @@ func (s *HTTPServer) Stop() error {
 		s.web.Stop()
 	}
 	return nil
-}
-
-// CreatePIDFile creates a PID file.
-func CreatePIDFile(path string) error {
-	if path == "" {
-		return nil
-	}
-
-	pid := os.Getpid()
-	return os.WriteFile(path, []byte(fmt.Sprintf("%d\n", pid)), 0644)
-}
-
-// RemovePIDFile removes the PID file.
-func RemovePIDFile(path string) {
-	if path != "" {
-		os.Remove(path)
-	}
 }
 
 // generateRandomPassword generates a random password of the specified length.

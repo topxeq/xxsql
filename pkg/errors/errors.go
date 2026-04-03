@@ -102,7 +102,6 @@ const (
 	ErrBackupError          = 6009
 	ErrConfigError          = 6010
 	ErrLogFileError         = 6011
-	ErrPIDFileError         = 6012
 )
 
 // SQL state codes (SQL standard)

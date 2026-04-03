@@ -61,7 +61,6 @@ func TestApplyEnvironment_AllEnvVars(t *testing.T) {
 	envVars := map[string]string{
 		"XXSQL_SERVER_NAME":      "env-test-server",
 		"XXSQL_DATA_DIR":         "/env/data/dir",
-		"XXSQL_PID_FILE":         "/var/run/xxsql.pid",
 		"XXSQL_PRIVATE_PORT":     "9001",
 		"XXSQL_MYSQL_PORT":       "3307",
 		"XXSQL_HTTP_PORT":        "8081",
@@ -98,9 +97,6 @@ func TestApplyEnvironment_AllEnvVars(t *testing.T) {
 	}
 	if cfg.Server.DataDir != "/env/data/dir" {
 		t.Errorf("Server.DataDir = %s, want /env/data/dir", cfg.Server.DataDir)
-	}
-	if cfg.Server.PIDFile != "/var/run/xxsql.pid" {
-		t.Errorf("Server.PIDFile = %s, want /var/run/xxsql.pid", cfg.Server.PIDFile)
 	}
 	if cfg.Network.PrivatePort != 9001 {
 		t.Errorf("Network.PrivatePort = %d, want 9001", cfg.Network.PrivatePort)
