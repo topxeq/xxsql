@@ -226,10 +226,10 @@ func (s *Server) handlePage(name string) http.HandlerFunc {
 		}
 
 		data := map[string]interface{}{
-			"Page":     name,
-			"User":     session.Username,
-			"Server":   s.config.Server.Name,
-			"Version":  "0.0.1",
+			"Page":    name,
+			"User":    session.Username,
+			"Server":  s.config.Server.Name,
+			"Version": "0.0.1",
 		}
 
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")

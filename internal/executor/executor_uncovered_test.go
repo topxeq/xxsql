@@ -441,7 +441,7 @@ func TestJsonTypeExtra(t *testing.T) {
 		{`true`, "BOOLEAN"},
 		{`false`, "BOOLEAN"},
 		{`42`, "INTEGER"},
-		{`3.14`, "INTEGER"}, // jsonType treats all numbers as INTEGER
+		{`3.14`, "INTEGER"},   // jsonType treats all numbers as INTEGER
 		{`"hello"`, "STRING"}, // jsonType returns STRING, not TEXT
 		{`[]`, "ARRAY"},
 		{`{}`, "OBJECT"},
@@ -589,11 +589,11 @@ func TestJsonLengthExtra(t *testing.T) {
 // TestJsonMergePatch tests the jsonMergePatch function
 func TestJsonMergePatch(t *testing.T) {
 	tests := []struct {
-		name        string
-		target      map[string]interface{}
-		patch       map[string]interface{}
-		checkKey    string
-		checkValue  interface{}
+		name       string
+		target     map[string]interface{}
+		patch      map[string]interface{}
+		checkKey   string
+		checkValue interface{}
 	}{
 		{
 			name:       "add field",
@@ -617,11 +617,11 @@ func TestJsonMergePatch(t *testing.T) {
 			checkValue: nil, // should not exist
 		},
 		{
-			name:        "nested merge",
-			target:      map[string]interface{}{"obj": map[string]interface{}{"x": 1, "y": 2}},
-			patch:       map[string]interface{}{"obj": map[string]interface{}{"y": 3, "z": 4}},
-			checkKey:    "obj",
-			checkValue:  "map", // just check it exists and is a map
+			name:       "nested merge",
+			target:     map[string]interface{}{"obj": map[string]interface{}{"x": 1, "y": 2}},
+			patch:      map[string]interface{}{"obj": map[string]interface{}{"y": 3, "z": 4}},
+			checkKey:   "obj",
+			checkValue: "map", // just check it exists and is a map
 		},
 	}
 
@@ -916,8 +916,8 @@ func TestSoundexDifferenceExtra(t *testing.T) {
 		expected int
 	}{
 		{"Robert", "Rupert", 4}, // Same soundex
-		{"Robert", "Rubin", 2},   // Different
-		{"", "", 4},              // Both produce "0000", all 4 match
+		{"Robert", "Rubin", 2},  // Different
+		{"", "", 4},             // Both produce "0000", all 4 match
 	}
 
 	for _, tt := range tests {
@@ -1202,7 +1202,7 @@ func TestTimeToJulianDay(t *testing.T) {
 		expected float64 // approximate, since Julian days can have fractional parts
 	}{
 		{time.Date(2000, 1, 1, 12, 0, 0, 0, time.UTC), 2451545.0}, // J2000.0
-		{time.Date(1970, 1, 1, 0, 0, 0, 0, time.UTC), 2440587.5}, // Unix epoch
+		{time.Date(1970, 1, 1, 0, 0, 0, 0, time.UTC), 2440587.5},  // Unix epoch
 	}
 
 	for _, tt := range tests {
@@ -1534,8 +1534,8 @@ func TestCastExpressions(t *testing.T) {
 
 	// CAST to INT
 	tests := []struct {
-		sql      string
-		check    func(interface{}) bool
+		sql   string
+		check func(interface{}) bool
 	}{
 		{"SELECT CAST('42' AS INT)", func(v interface{}) bool { return v == int64(42) }},
 		{"SELECT CAST(42.7 AS INT)", func(v interface{}) bool { return v == int64(42) }},
@@ -1577,8 +1577,8 @@ func TestCastToFloat(t *testing.T) {
 	exec.SetDatabase("testdb")
 
 	tests := []struct {
-		sql      string
-		check    func(interface{}) bool
+		sql   string
+		check func(interface{}) bool
 	}{
 		{"SELECT CAST('3.14' AS FLOAT)", func(v interface{}) bool {
 			f, ok := v.(float64)
@@ -1620,8 +1620,8 @@ func TestCastToString(t *testing.T) {
 	exec.SetDatabase("testdb")
 
 	tests := []struct {
-		sql       string
-		expected  string
+		sql      string
+		expected string
 	}{
 		{"SELECT CAST(42 AS VARCHAR)", "42"},
 		{"SELECT CAST(3.14 AS CHAR)", "3.14"},
@@ -4457,6 +4457,7 @@ func TestUnion(t *testing.T) {
 		})
 	}
 }
+
 // TestIFNullFunction tests IFNULL function
 func TestIFNullFunction(t *testing.T) {
 	tmpDir, err := os.MkdirTemp("", "xxsql-ifnull-*")
@@ -8479,7 +8480,6 @@ func TestCompareValuesWithCollationMore(t *testing.T) {
 	})
 }
 
-
 // TestEvaluateExpressionWithParamsMore tests evaluateExpressionWithParams with more cases
 func TestEvaluateExpressionWithParamsMore(t *testing.T) {
 	e := NewExecutor(nil)
@@ -8876,9 +8876,9 @@ func TestEvaluateIfExprConditionTypes(t *testing.T) {
 
 	t.Run("condition is int (non-zero)", func(t *testing.T) {
 		ifExpr := &sql.IfExpr{
-			Condition:  &sql.Literal{Value: int64(5), Type: sql.LiteralNumber},
-			ThenExpr:   &sql.Literal{Value: "truthy", Type: sql.LiteralString},
-			ElseExpr:   &sql.Literal{Value: "falsy", Type: sql.LiteralString},
+			Condition: &sql.Literal{Value: int64(5), Type: sql.LiteralNumber},
+			ThenExpr:  &sql.Literal{Value: "truthy", Type: sql.LiteralString},
+			ElseExpr:  &sql.Literal{Value: "falsy", Type: sql.LiteralString},
 		}
 		result, err := e.evaluateIfExpr(ifExpr, nil)
 		if err != nil {
@@ -8891,9 +8891,9 @@ func TestEvaluateIfExprConditionTypes(t *testing.T) {
 
 	t.Run("condition is int (zero)", func(t *testing.T) {
 		ifExpr := &sql.IfExpr{
-			Condition:  &sql.Literal{Value: int64(0), Type: sql.LiteralNumber},
-			ThenExpr:   &sql.Literal{Value: "truthy", Type: sql.LiteralString},
-			ElseExpr:   &sql.Literal{Value: "falsy", Type: sql.LiteralString},
+			Condition: &sql.Literal{Value: int64(0), Type: sql.LiteralNumber},
+			ThenExpr:  &sql.Literal{Value: "truthy", Type: sql.LiteralString},
+			ElseExpr:  &sql.Literal{Value: "falsy", Type: sql.LiteralString},
 		}
 		result, err := e.evaluateIfExpr(ifExpr, nil)
 		if err != nil {
@@ -8907,9 +8907,9 @@ func TestEvaluateIfExprConditionTypes(t *testing.T) {
 
 	t.Run("condition is float64 (non-zero)", func(t *testing.T) {
 		ifExpr := &sql.IfExpr{
-			Condition:  &sql.Literal{Value: 3.14, Type: sql.LiteralNumber},
-			ThenExpr:   &sql.Literal{Value: "truthy", Type: sql.LiteralString},
-			ElseExpr:   &sql.Literal{Value: "falsy", Type: sql.LiteralString},
+			Condition: &sql.Literal{Value: 3.14, Type: sql.LiteralNumber},
+			ThenExpr:  &sql.Literal{Value: "truthy", Type: sql.LiteralString},
+			ElseExpr:  &sql.Literal{Value: "falsy", Type: sql.LiteralString},
 		}
 		result, err := e.evaluateIfExpr(ifExpr, nil)
 		if err != nil {
@@ -8922,9 +8922,9 @@ func TestEvaluateIfExprConditionTypes(t *testing.T) {
 
 	t.Run("condition is string (non-empty)", func(t *testing.T) {
 		ifExpr := &sql.IfExpr{
-			Condition:  &sql.Literal{Value: "hello", Type: sql.LiteralString},
-			ThenExpr:   &sql.Literal{Value: "truthy", Type: sql.LiteralString},
-			ElseExpr:   &sql.Literal{Value: "falsy", Type: sql.LiteralString},
+			Condition: &sql.Literal{Value: "hello", Type: sql.LiteralString},
+			ThenExpr:  &sql.Literal{Value: "truthy", Type: sql.LiteralString},
+			ElseExpr:  &sql.Literal{Value: "falsy", Type: sql.LiteralString},
 		}
 		result, err := e.evaluateIfExpr(ifExpr, nil)
 		if err != nil {
@@ -8937,9 +8937,9 @@ func TestEvaluateIfExprConditionTypes(t *testing.T) {
 
 	t.Run("condition is empty string", func(t *testing.T) {
 		ifExpr := &sql.IfExpr{
-			Condition:  &sql.Literal{Value: "", Type: sql.LiteralString},
-			ThenExpr:   &sql.Literal{Value: "truthy", Type: sql.LiteralString},
-			ElseExpr:   &sql.Literal{Value: "falsy", Type: sql.LiteralString},
+			Condition: &sql.Literal{Value: "", Type: sql.LiteralString},
+			ThenExpr:  &sql.Literal{Value: "truthy", Type: sql.LiteralString},
+			ElseExpr:  &sql.Literal{Value: "falsy", Type: sql.LiteralString},
 		}
 		result, err := e.evaluateIfExpr(ifExpr, nil)
 		if err != nil {
@@ -8952,9 +8952,9 @@ func TestEvaluateIfExprConditionTypes(t *testing.T) {
 
 	t.Run("condition is nil (elseExpr nil)", func(t *testing.T) {
 		ifExpr := &sql.IfExpr{
-			Condition:  &sql.Literal{Value: nil, Type: sql.LiteralNull},
-			ThenExpr:   &sql.Literal{Value: "truthy", Type: sql.LiteralString},
-			ElseExpr:   nil,
+			Condition: &sql.Literal{Value: nil, Type: sql.LiteralNull},
+			ThenExpr:  &sql.Literal{Value: "truthy", Type: sql.LiteralString},
+			ElseExpr:  nil,
 		}
 		result, err := e.evaluateIfExpr(ifExpr, nil)
 		if err != nil {
@@ -8967,9 +8967,9 @@ func TestEvaluateIfExprConditionTypes(t *testing.T) {
 
 	t.Run("condition is non-nil object", func(t *testing.T) {
 		ifExpr := &sql.IfExpr{
-			Condition:  &sql.Literal{Value: []int{1, 2, 3}, Type: sql.LiteralBlob},
-			ThenExpr:   &sql.Literal{Value: "truthy", Type: sql.LiteralString},
-			ElseExpr:   &sql.Literal{Value: "falsy", Type: sql.LiteralString},
+			Condition: &sql.Literal{Value: []int{1, 2, 3}, Type: sql.LiteralBlob},
+			ThenExpr:  &sql.Literal{Value: "truthy", Type: sql.LiteralString},
+			ElseExpr:  &sql.Literal{Value: "falsy", Type: sql.LiteralString},
 		}
 		result, err := e.evaluateIfExpr(ifExpr, nil)
 		if err != nil {
@@ -9291,10 +9291,10 @@ func TestCompareValuesNumericJoin(t *testing.T) {
 // TestToFloat64Join tests toFloat64 function from join.go
 func TestToFloat64Join(t *testing.T) {
 	tests := []struct {
-		name      string
-		input     interface{}
-		expected  float64
-		expectOk  bool
+		name     string
+		input    interface{}
+		expected float64
+		expectOk bool
 	}{
 		{"int", int(42), 42.0, true},
 		{"int8", int8(10), 10.0, true},
@@ -10398,8 +10398,8 @@ func TestEvaluateBinaryExprWithoutRowExtra(t *testing.T) {
 
 	t.Run("cast right", func(t *testing.T) {
 		expr := &sql.BinaryExpr{
-			Left:  &sql.Literal{Value: int64(10)},
-			Op:    sql.OpAdd,
+			Left: &sql.Literal{Value: int64(10)},
+			Op:   sql.OpAdd,
 			Right: &sql.CastExpr{
 				Expr: &sql.Literal{Value: 5},
 				Type: &sql.DataType{Name: "INT"},
@@ -10868,8 +10868,8 @@ func TestEvaluateExprForRowExtra(t *testing.T) {
 
 	t.Run("column ref from outer context", func(t *testing.T) {
 		exec := &Executor{
-			currentTable:  "orders",
-			outerContext:  map[string]interface{}{"users.id": int64(99)},
+			currentTable: "orders",
+			outerContext: map[string]interface{}{"users.id": int64(99)},
 		}
 		expr := &sql.ColumnRef{Name: "id", Table: "users"}
 		result, err := exec.evaluateExprForRow(expr, testRow, columns, colIdxMap)
@@ -11532,8 +11532,8 @@ func TestEvaluateExpressionExtra(t *testing.T) {
 
 	t.Run("collate expression", func(t *testing.T) {
 		expr := &sql.CollateExpr{
-			Expr:     &sql.Literal{Value: "test"},
-			Collate:  "NOCASE",
+			Expr:    &sql.Literal{Value: "test"},
+			Collate: "NOCASE",
 		}
 		result, err := exec.evaluateExpression(expr, testRow, columnMap, columnOrder)
 		if err != nil {
@@ -12207,7 +12207,7 @@ func TestEvaluateWhereForRowAdditional(t *testing.T) {
 		r.Values[2] = types.NewBoolValue(true)
 
 		expr := &sql.UnaryExpr{
-			Op:    sql.OpNot,
+			Op: sql.OpNot,
 			Right: &sql.BinaryExpr{
 				Left:  &sql.ColumnRef{Name: "id"},
 				Op:    sql.OpEq,
@@ -12661,8 +12661,8 @@ func TestEvaluateExpressionWithRow(t *testing.T) {
 
 	t.Run("CollateExpr", func(t *testing.T) {
 		expr := &sql.CollateExpr{
-			Expr:     &sql.Literal{Value: "test"},
-			Collate:  "NOCASE",
+			Expr:    &sql.Literal{Value: "test"},
+			Collate: "NOCASE",
 		}
 		result, err := exec.evaluateExpression(expr, r, columnMap, columns)
 		if err != nil {
@@ -14220,10 +14220,10 @@ func TestSoundexDifference(t *testing.T) {
 		s1, s2   string
 		expected int
 	}{
-		{"Robert", "Rupert", 4},   // Same soundex
-		{"Robert", "Rubin", 2},    // Similar
-		{"Smith", "Smythe", 4},    // Same soundex
-		{"John", "Joan", 3},       // Similar
+		{"Robert", "Rupert", 4},        // Same soundex
+		{"Robert", "Rubin", 2},         // Similar
+		{"Smith", "Smythe", 4},         // Same soundex
+		{"John", "Joan", 3},            // Similar
 		{"completely", "different", 0}, // Different
 	}
 
@@ -14239,7 +14239,7 @@ func TestSoundexDifference(t *testing.T) {
 func TestMatchLikePatternMore(t *testing.T) {
 	tests := []struct {
 		input, pattern string
-		expected        bool
+		expected       bool
 	}{
 		{"hello", "hello", true},
 		{"hello", "h%", true},
@@ -25675,4 +25675,3 @@ func TestTriggerWithNewRef(t *testing.T) {
 		}
 	})
 }
-

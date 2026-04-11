@@ -88,17 +88,17 @@ func (s Severity) String() string {
 
 // Event represents an audit event.
 type Event struct {
-	Timestamp   time.Time              `json:"timestamp"`
-	EventType   EventType              `json:"event_type"`
-	Severity    Severity               `json:"severity"`
-	User        string                 `json:"user,omitempty"`
-	SourceIP    string                 `json:"source_ip,omitempty"`
-	ConnectionID uint64                `json:"connection_id,omitempty"`
-	Database    string                 `json:"database,omitempty"`
-	Table       string                 `json:"table,omitempty"`
-	Permission  string                 `json:"permission,omitempty"`
-	Message     string                 `json:"message,omitempty"`
-	Details     map[string]interface{} `json:"details,omitempty"`
+	Timestamp    time.Time              `json:"timestamp"`
+	EventType    EventType              `json:"event_type"`
+	Severity     Severity               `json:"severity"`
+	User         string                 `json:"user,omitempty"`
+	SourceIP     string                 `json:"source_ip,omitempty"`
+	ConnectionID uint64                 `json:"connection_id,omitempty"`
+	Database     string                 `json:"database,omitempty"`
+	Table        string                 `json:"table,omitempty"`
+	Permission   string                 `json:"permission,omitempty"`
+	Message      string                 `json:"message,omitempty"`
+	Details      map[string]interface{} `json:"details,omitempty"`
 }
 
 // AuditLogger provides audit logging functionality.
@@ -106,7 +106,7 @@ type AuditLogger struct {
 	mu         sync.Mutex
 	file       *os.File
 	filePath   string
-	maxSize    int64  // Max file size in bytes
+	maxSize    int64 // Max file size in bytes
 	maxBackups int
 	buffer     []Event
 	flushInt   time.Duration
@@ -348,13 +348,13 @@ func (al *AuditLogger) Query(filter *AuditFilter) ([]Event, error) {
 
 // AuditFilter provides filtering for audit queries.
 type AuditFilter struct {
-	EventType   *EventType
-	Severity    *Severity
-	User        string
-	SourceIP    string
-	StartTime   *time.Time
-	EndTime     *time.Time
-	Limit       int
+	EventType *EventType
+	Severity  *Severity
+	User      string
+	SourceIP  string
+	StartTime *time.Time
+	EndTime   *time.Time
+	Limit     int
 }
 
 // Match checks if an event matches the filter.

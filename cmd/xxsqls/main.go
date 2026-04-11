@@ -25,20 +25,20 @@ var (
 
 // Command-line flags
 var (
-	flagConfig        = flag.String("config", "", "Path to configuration file")
-	flagVersion       = flag.Bool("version", false, "Print version information")
-	flagInitConfig    = flag.Bool("init-config", false, "Print example configuration to stdout")
-	flagLogLevel      = flag.String("log-level", "", "Override log level (DEBUG, INFO, WARN, ERROR)")
-	flagDataDir       = flag.String("data-dir", "", "Override data directory")
-	flagBind          = flag.String("bind", "", "Override bind address")
-	flagPrivatePort   = flag.Int("private-port", 0, "Override private protocol port")
-	flagMySQLPort     = flag.Int("mysql-port", 0, "Override MySQL compatible port")
-	flagHTTPPort      = flag.Int("http-port", 0, "Override HTTP API port")
+	flagConfig           = flag.String("config", "", "Path to configuration file")
+	flagVersion          = flag.Bool("version", false, "Print version information")
+	flagInitConfig       = flag.Bool("init-config", false, "Print example configuration to stdout")
+	flagLogLevel         = flag.String("log-level", "", "Override log level (DEBUG, INFO, WARN, ERROR)")
+	flagDataDir          = flag.String("data-dir", "", "Override data directory")
+	flagBind             = flag.String("bind", "", "Override bind address")
+	flagPrivatePort      = flag.Int("private-port", 0, "Override private protocol port")
+	flagMySQLPort        = flag.Int("mysql-port", 0, "Override MySQL compatible port")
+	flagHTTPPort         = flag.Int("http-port", 0, "Override HTTP API port")
 	flagInstallService   = flag.Bool("install-service", false, "Install as system service")
 	flagUninstallService = flag.Bool("uninstall-service", false, "Uninstall system service")
-	flagServiceName   = flag.String("service-name", "xxsql", "Service name (for install/uninstall)")
-	flagServiceUser   = flag.String("service-user", "", "Service user (for install, default: xxsql)")
-	flagServiceStatus = flag.Bool("service-status", false, "Check service status")
+	flagServiceName      = flag.String("service-name", "xxsql", "Service name (for install/uninstall)")
+	flagServiceUser      = flag.String("service-user", "", "Service user (for install, default: xxsql)")
+	flagServiceStatus    = flag.Bool("service-status", false, "Check service status")
 )
 
 // Global server instance

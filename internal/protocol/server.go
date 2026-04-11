@@ -11,13 +11,13 @@ import (
 
 // ServerConfig holds server configuration.
 type ServerConfig struct {
-	Bind            string
-	Port            int
-	MaxConnections  int
-	ReadTimeout     time.Duration
-	WriteTimeout    time.Duration
-	MaxMessageSize  uint32
-	AcceptBacklog   int
+	Bind           string
+	Port           int
+	MaxConnections int
+	ReadTimeout    time.Duration
+	WriteTimeout   time.Duration
+	MaxMessageSize uint32
+	AcceptBacklog  int
 }
 
 // DefaultServerConfig returns the default server configuration.
@@ -35,21 +35,21 @@ func DefaultServerConfig() *ServerConfig {
 
 // Server is a TCP server for the private protocol.
 type Server struct {
-	config     *ServerConfig
-	listener   net.Listener
-	running    int32 // atomic
-	connCount  int32 // atomic
-	conns      map[*ConnectionHandler]struct{}
-	connsMu    sync.RWMutex
-	ctx        context.Context
-	cancel     context.CancelFunc
-	wg         sync.WaitGroup
+	config    *ServerConfig
+	listener  net.Listener
+	running   int32 // atomic
+	connCount int32 // atomic
+	conns     map[*ConnectionHandler]struct{}
+	connsMu   sync.RWMutex
+	ctx       context.Context
+	cancel    context.CancelFunc
+	wg        sync.WaitGroup
 
 	// Handlers
-	onHandshake func(conn *ConnectionHandler, req *HandshakeRequest) (*HandshakeResponse, error)
-	onAuth      func(conn *ConnectionHandler, req *AuthRequest) (*AuthResponse, error)
-	onQuery     func(conn *ConnectionHandler, req *QueryRequest) (*QueryResponse, error)
-	onConnect   func(conn *ConnectionHandler)
+	onHandshake  func(conn *ConnectionHandler, req *HandshakeRequest) (*HandshakeResponse, error)
+	onAuth       func(conn *ConnectionHandler, req *AuthRequest) (*AuthResponse, error)
+	onQuery      func(conn *ConnectionHandler, req *QueryRequest) (*QueryResponse, error)
+	onConnect    func(conn *ConnectionHandler)
 	onDisconnect func(conn *ConnectionHandler)
 }
 

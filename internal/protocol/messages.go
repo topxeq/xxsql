@@ -510,14 +510,14 @@ func DecodeQueryRequest(payload []byte) (*QueryRequest, error) {
 
 // QueryResponse is sent by the server with query results.
 type QueryResponse struct {
-	Status      byte
-	Message     string
-	Columns     []ColumnInfo
-	Rows        [][]interface{}
-	RowCount    uint32
-	Affected    uint32
+	Status       byte
+	Message      string
+	Columns      []ColumnInfo
+	Rows         [][]interface{}
+	RowCount     uint32
+	Affected     uint32
 	LastInsertID uint64
-	ExecuteTime uint32 // milliseconds
+	ExecuteTime  uint32 // milliseconds
 }
 
 // ColumnInfo describes a result column.

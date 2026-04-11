@@ -9,11 +9,11 @@ import (
 
 // Lexer tokenizes SQL input.
 type Lexer struct {
-	input  string    // input string
-	pos    int       // current position in input
-	line   int       // current line number (1-based)
-	column int       // current column number (1-based)
-	width  int       // width of last rune read
+	input  string // input string
+	pos    int    // current position in input
+	line   int    // current line number (1-based)
+	column int    // current column number (1-based)
+	width  int    // width of last rune read
 }
 
 // NewLexer creates a new lexer for the given input.

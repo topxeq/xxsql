@@ -548,8 +548,8 @@ func TestServer_SetHandlers(t *testing.T) {
 // TestServer_Connections tests getting active connections
 func TestServer_Connections(t *testing.T) {
 	config := &ServerConfig{
-		Bind:          "127.0.0.1",
-		Port:          19540,
+		Bind:           "127.0.0.1",
+		Port:           19540,
 		MaxConnections: 10,
 	}
 
@@ -597,8 +597,8 @@ func TestDecodeHandshakeRequest_TooShort(t *testing.T) {
 // TestDecodeHandshakeRequest_InvalidClientVersion tests decoding with invalid client version length
 func TestDecodeHandshakeRequest_InvalidClientVersion(t *testing.T) {
 	buf := make([]byte, 6)
-	binary.BigEndian.PutUint16(buf[0:2], 1)        // ProtocolVersion
-	binary.BigEndian.PutUint16(buf[2:4], 100)      // ClientVersion length (too large)
+	binary.BigEndian.PutUint16(buf[0:2], 1)   // ProtocolVersion
+	binary.BigEndian.PutUint16(buf[2:4], 100) // ClientVersion length (too large)
 	buf[4] = 0
 	buf[5] = 0
 
@@ -625,11 +625,11 @@ func TestDecodeHandshakeRequest_InvalidClientInfo(t *testing.T) {
 // TestDecodeHandshakeRequest_InvalidExtension tests decoding with invalid extension length
 func TestDecodeHandshakeRequest_InvalidExtension(t *testing.T) {
 	buf := make([]byte, 12)
-	binary.BigEndian.PutUint16(buf[0:2], 1)   // ProtocolVersion
-	binary.BigEndian.PutUint16(buf[2:4], 2)   // ClientVersion length
-	copy(buf[4:6], "v1")                      // ClientVersion
-	binary.BigEndian.PutUint16(buf[6:8], 0)   // ClientInfo length (empty)
-	binary.BigEndian.PutUint16(buf[8:10], 1)  // Extension count
+	binary.BigEndian.PutUint16(buf[0:2], 1)     // ProtocolVersion
+	binary.BigEndian.PutUint16(buf[2:4], 2)     // ClientVersion length
+	copy(buf[4:6], "v1")                        // ClientVersion
+	binary.BigEndian.PutUint16(buf[6:8], 0)     // ClientInfo length (empty)
+	binary.BigEndian.PutUint16(buf[8:10], 1)    // Extension count
 	binary.BigEndian.PutUint16(buf[10:12], 100) // Extension length (too large)
 
 	_, err := DecodeHandshakeRequest(buf)
@@ -649,8 +649,8 @@ func TestDecodeHandshakeResponse_TooShort(t *testing.T) {
 // TestDecodeHandshakeResponse_InvalidServerVersion tests decoding with invalid server version
 func TestDecodeHandshakeResponse_InvalidServerVersion(t *testing.T) {
 	buf := make([]byte, 8)
-	binary.BigEndian.PutUint16(buf[0:2], 1)    // ProtocolVersion
-	binary.BigEndian.PutUint16(buf[2:4], 100)  // ServerVersion length (too large)
+	binary.BigEndian.PutUint16(buf[0:2], 1)   // ProtocolVersion
+	binary.BigEndian.PutUint16(buf[2:4], 100) // ServerVersion length (too large)
 
 	_, err := DecodeHandshakeResponse(buf)
 	if err == nil {
@@ -661,12 +661,12 @@ func TestDecodeHandshakeResponse_InvalidServerVersion(t *testing.T) {
 // TestDecodeHandshakeResponse_InvalidAuthChallenge tests decoding with invalid auth challenge
 func TestDecodeHandshakeResponse_InvalidAuthChallenge(t *testing.T) {
 	buf := make([]byte, 12)
-	binary.BigEndian.PutUint16(buf[0:2], 1)   // ProtocolVersion
-	binary.BigEndian.PutUint16(buf[2:4], 2)   // ServerVersion length
-	copy(buf[4:6], "v1")                     // ServerVersion
-	buf[6] = 1                               // Supported
-	buf[7] = 0                               // Downgrade
-	buf[8] = 100                             // AuthChallenge length (too large)
+	binary.BigEndian.PutUint16(buf[0:2], 1) // ProtocolVersion
+	binary.BigEndian.PutUint16(buf[2:4], 2) // ServerVersion length
+	copy(buf[4:6], "v1")                    // ServerVersion
+	buf[6] = 1                              // Supported
+	buf[7] = 0                              // Downgrade
+	buf[8] = 100                            // AuthChallenge length (too large)
 
 	_, err := DecodeHandshakeResponse(buf)
 	if err == nil {
@@ -695,9 +695,9 @@ func TestDecodeAuthRequest_InvalidUsername(t *testing.T) {
 // TestDecodeAuthRequest_InvalidPassword tests decoding with invalid password length
 func TestDecodeAuthRequest_InvalidPassword(t *testing.T) {
 	buf := make([]byte, 5)
-	buf[0] = 2                     // Username length
-	copy(buf[1:3], "u1")           // Username
-	buf[3] = 100                   // Password length (too large)
+	buf[0] = 2           // Username length
+	copy(buf[1:3], "u1") // Username
+	buf[3] = 100         // Password length (too large)
 
 	_, err := DecodeAuthRequest(buf)
 	if err == nil {
@@ -708,10 +708,10 @@ func TestDecodeAuthRequest_InvalidPassword(t *testing.T) {
 // TestDecodeAuthRequest_InvalidDatabase tests decoding with invalid database length
 func TestDecodeAuthRequest_InvalidDatabase(t *testing.T) {
 	buf := make([]byte, 8)
-	buf[0] = 2                     // Username length
-	copy(buf[1:3], "u1")           // Username
-	buf[3] = 2                     // Password length
-	copy(buf[4:6], "pw")           // Password
+	buf[0] = 2                                // Username length
+	copy(buf[1:3], "u1")                      // Username
+	buf[3] = 2                                // Password length
+	copy(buf[4:6], "pw")                      // Password
 	binary.BigEndian.PutUint16(buf[6:8], 100) // Database length (too large)
 
 	_, err := DecodeAuthRequest(buf)
@@ -745,7 +745,7 @@ func TestDecodeAuthResponse_InvalidSessionID(t *testing.T) {
 	buf := make([]byte, 12)
 	buf[0] = StatusOK
 	binary.BigEndian.PutUint16(buf[1:3], 2)   // Message length
-	copy(buf[3:5], "OK")                     // Message
+	copy(buf[3:5], "OK")                      // Message
 	binary.BigEndian.PutUint16(buf[5:7], 100) // SessionID length (too large)
 
 	_, err := DecodeAuthResponse(buf)
@@ -778,10 +778,10 @@ func TestDecodeQueryRequest_InvalidSQL(t *testing.T) {
 // TestDecodeQueryRequest_InvalidParam tests decoding with invalid param length
 func TestDecodeQueryRequest_InvalidParam(t *testing.T) {
 	buf := make([]byte, 12)
-	binary.BigEndian.PutUint32(buf[0:4], 3)   // SQL length
-	copy(buf[4:7], "SQL")                    // SQL
-	buf[7] = 0                               // Flags
-	binary.BigEndian.PutUint16(buf[8:10], 1) // Param count
+	binary.BigEndian.PutUint32(buf[0:4], 3)     // SQL length
+	copy(buf[4:7], "SQL")                       // SQL
+	buf[7] = 0                                  // Flags
+	binary.BigEndian.PutUint16(buf[8:10], 1)    // Param count
 	binary.BigEndian.PutUint16(buf[10:12], 100) // Param length (too large)
 
 	_, err := DecodeQueryRequest(buf)
@@ -833,9 +833,9 @@ func TestDecodeErrorPayload_InvalidMessage(t *testing.T) {
 // TestDecodeErrorPayload_InvalidDetail tests decoding with invalid detail length
 func TestDecodeErrorPayload_InvalidDetail(t *testing.T) {
 	buf := make([]byte, 12)
-	binary.BigEndian.PutUint32(buf[0:4], 1)  // Code
-	binary.BigEndian.PutUint16(buf[4:6], 2)  // Message length
-	copy(buf[6:8], "OK")                    // Message
+	binary.BigEndian.PutUint32(buf[0:4], 1)    // Code
+	binary.BigEndian.PutUint16(buf[4:6], 2)    // Message length
+	copy(buf[6:8], "OK")                       // Message
 	binary.BigEndian.PutUint16(buf[8:10], 100) // Detail length (too large)
 
 	_, err := DecodeErrorPayload(buf)
@@ -930,16 +930,16 @@ func TestAuthRequest_EmptyDatabase(t *testing.T) {
 // TestQueryResponse_WithColumns tests query response with columns
 func TestQueryResponse_WithColumns(t *testing.T) {
 	resp := &QueryResponse{
-		Status:   StatusOK,
-		Message:  "OK",
-		Columns:  []ColumnInfo{
+		Status:  StatusOK,
+		Message: "OK",
+		Columns: []ColumnInfo{
 			{Name: "id", Type: "INT", Nullable: false},
 			{Name: "name", Type: "VARCHAR", Nullable: true},
 		},
-		RowCount:    10,
-		Affected:    0,
+		RowCount:     10,
+		Affected:     0,
 		LastInsertID: 0,
-		ExecuteTime: 50,
+		ExecuteTime:  50,
 	}
 
 	encoded := resp.Encode()
@@ -984,8 +984,8 @@ func TestErrorPayload_EmptyDetail(t *testing.T) {
 // TestServer_MaxConnections tests max connection limit
 func TestServer_MaxConnections(t *testing.T) {
 	config := &ServerConfig{
-		Bind:          "127.0.0.1",
-		Port:          19541,
+		Bind:           "127.0.0.1",
+		Port:           19541,
 		MaxConnections: 2,
 	}
 

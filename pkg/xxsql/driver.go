@@ -51,9 +51,9 @@ func (d *xxsqlDriver) OpenConnector(dsn string) (driver.Connector, error) {
 	}
 
 	return &connector{
-		dsn:  dsn,
-		cfg:  cfg,
-		drv:  d,
+		dsn: dsn,
+		cfg: cfg,
+		drv: d,
 	}, nil
 }
 

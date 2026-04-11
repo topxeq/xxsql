@@ -1756,3 +1756,323 @@ func TestGeneratedColumns(t *testing.T) {
 		}
 	})
 }
+
+// TestXxScriptTrigger tests XxScript-based triggers
+func TestXxScriptTrigger(t *testing.T) {
+	// Create temp directory
+	tmpDir, err := os.MkdirTemp("", "xxsql-script-trigger-test-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	// Create storage engine
+	engine := storage.NewEngine(tmpDir)
+	if err := engine.Open(); err != nil {
+		t.Fatalf("Failed to open engine: %v", err)
+	}
+	defer engine.Close()
+
+	// Create executor
+	exec := executor.NewExecutor(engine)
+
+	// Create log table for trigger testing
+	_, err = exec.Execute(`
+		CREATE TABLE trigger_log (
+			id INT PRIMARY KEY,
+			action VARCHAR(50),
+			record_id INT,
+			created_at VARCHAR(50)
+		)
+	`)
+	if err != nil {
+		t.Fatalf("Failed to create log table: %v", err)
+	}
+
+	// Create main table
+	_, err = exec.Execute(`
+		CREATE TABLE products (
+			id INT PRIMARY KEY,
+			name VARCHAR(100),
+			price FLOAT
+		)
+	`)
+	if err != nil {
+		t.Fatalf("Failed to create products table: %v", err)
+	}
+
+	// Create XxScript trigger for INSERT
+	_, err = exec.Execute(`
+		CREATE TRIGGER log_insert AFTER INSERT ON products FOR EACH ROW AS $$
+			var id = 0
+			if NEW != null && NEW.id != null {
+				id = NEW.id
+			}
+			db.exec("INSERT INTO trigger_log VALUES (" + string(id) + ", 'INSERT', " + string(id) + ", 'now')")
+		$$
+	`)
+	if err != nil {
+		t.Fatalf("Failed to create INSERT trigger: %v", err)
+	}
+
+	// Insert a record
+	_, err = exec.Execute("INSERT INTO products VALUES (1, 'Widget', 9.99)")
+	if err != nil {
+		t.Fatalf("Failed to insert product: %v", err)
+	}
+
+	// Verify trigger fired - check log table
+	result, err := exec.Execute("SELECT * FROM trigger_log")
+	if err != nil {
+		t.Fatalf("Failed to select from log: %v", err)
+	}
+	if len(result.Rows) != 1 {
+		t.Errorf("Expected 1 log entry, got %d", len(result.Rows))
+	} else {
+		t.Logf("Log entry: %v", result.Rows[0])
+	}
+}
+
+func TestXxScriptTriggerUpdateDelete(t *testing.T) {
+	// Create temp directory
+	tmpDir, err := os.MkdirTemp("", "xxsql-trigger-test-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	// Create storage engine
+	engine := storage.NewEngine(tmpDir)
+	if err := engine.Open(); err != nil {
+		t.Fatalf("Failed to open engine: %v", err)
+	}
+	defer engine.Close()
+
+	// Create executor
+	exec := executor.NewExecutor(engine)
+
+	// Create log table for trigger testing
+	_, err = exec.Execute(`
+		CREATE TABLE trigger_log (
+			id INT PRIMARY KEY,
+			action VARCHAR(50),
+			old_name VARCHAR(100),
+			new_name VARCHAR(100)
+		)
+	`)
+	if err != nil {
+		t.Fatalf("Failed to create log table: %v", err)
+	}
+
+	// Create main table
+	_, err = exec.Execute(`
+		CREATE TABLE items (
+			id INT PRIMARY KEY,
+			name VARCHAR(100),
+			quantity INT
+		)
+	`)
+	if err != nil {
+		t.Fatalf("Failed to create items table: %v", err)
+	}
+
+	// Insert initial data
+	_, err = exec.Execute("INSERT INTO items VALUES (1, 'Widget', 10)")
+	if err != nil {
+		t.Fatalf("Failed to insert item: %v", err)
+	}
+	_, err = exec.Execute("INSERT INTO items VALUES (2, 'Gadget', 20)")
+	if err != nil {
+		t.Fatalf("Failed to insert item: %v", err)
+	}
+
+	// Create UPDATE trigger with OLD and NEW
+	_, err = exec.Execute(`
+		CREATE TRIGGER log_update AFTER UPDATE ON items FOR EACH ROW AS $$
+			var oldName = ""
+			var newName = ""
+			if OLD != null && OLD.name != null {
+				oldName = OLD.name
+			}
+			if NEW != null && NEW.name != null {
+				newName = NEW.name
+			}
+			var sql = "INSERT INTO trigger_log VALUES (1, 'UPD', '" + oldName + "', '" + newName + "')"
+			db.exec(sql)
+		$$
+	`)
+	if err != nil {
+		t.Fatalf("Failed to create UPDATE trigger: %v", err)
+	}
+
+	// Create DELETE trigger with OLD
+	_, err = exec.Execute(`
+		CREATE TRIGGER log_delete AFTER DELETE ON items FOR EACH ROW AS $$
+			var oldName = ""
+			if OLD != null && OLD.name != null {
+				oldName = OLD.name
+			}
+			var sql = "INSERT INTO trigger_log VALUES (2, 'DEL', '" + oldName + "', '')"
+			db.exec(sql)
+		$$
+	`)
+	if err != nil {
+		t.Fatalf("Failed to create DELETE trigger: %v", err)
+	}
+
+	// Test UPDATE trigger
+	_, err = exec.Execute("UPDATE items SET name = 'SuperWidget' WHERE id = 1")
+	if err != nil {
+		t.Fatalf("Failed to update item: %v", err)
+	}
+
+	// Verify UPDATE trigger fired
+	result, err := exec.Execute("SELECT * FROM trigger_log")
+	if err != nil {
+		t.Fatalf("Failed to select from log: %v", err)
+	}
+	t.Logf("All log entries: %v", result.Rows)
+
+	// Check UPDATE log entry exists
+	foundUpdate := false
+	for _, row := range result.Rows {
+		if row[1].(string) == "UPD" {
+			foundUpdate = true
+			t.Logf("UPDATE log entry: %v", row)
+			if row[2].(string) != "Widget" {
+				t.Errorf("Expected old_name 'Widget', got '%s'", row[2])
+			}
+			if row[3].(string) != "SuperWidget" {
+				t.Errorf("Expected new_name 'SuperWidget', got '%s'", row[3])
+			}
+		}
+	}
+	if !foundUpdate {
+		t.Error("UPDATE trigger did not fire")
+	}
+
+	// Test DELETE trigger
+	_, err = exec.Execute("DELETE FROM items WHERE id = 2")
+	if err != nil {
+		t.Fatalf("Failed to delete item: %v", err)
+	}
+
+	// Verify DELETE trigger fired
+	result, err = exec.Execute("SELECT * FROM trigger_log")
+	if err != nil {
+		t.Fatalf("Failed to select from log: %v", err)
+	}
+	t.Logf("All log entries after DELETE: %v", result.Rows)
+
+	// Check DELETE log entry exists
+	foundDelete := false
+	for _, row := range result.Rows {
+		if row[1].(string) == "DEL" {
+			foundDelete = true
+			t.Logf("DELETE log entry: %v", row)
+			if row[2].(string) != "Gadget" {
+				t.Errorf("Expected old_name 'Gadget', got '%s'", row[2])
+			}
+		}
+	}
+	if !foundDelete {
+		t.Error("DELETE trigger did not fire")
+	}
+}
+
+func TestStoredProcedure(t *testing.T) {
+	// Create temp directory
+	tmpDir, err := os.MkdirTemp("", "xxsql-procedure-test-*")
+	if err != nil {
+		t.Fatalf("Failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	// Create storage engine
+	engine := storage.NewEngine(tmpDir)
+	if err := engine.Open(); err != nil {
+		t.Fatalf("Failed to open engine: %v", err)
+	}
+	defer engine.Close()
+
+	// Create executor
+	exec := executor.NewExecutor(engine)
+
+	// Create test table
+	_, err = exec.Execute(`
+		CREATE TABLE users (
+			id INT PRIMARY KEY,
+			name VARCHAR(100),
+			age INT
+		)
+	`)
+	if err != nil {
+		t.Fatalf("Failed to create table: %v", err)
+	}
+
+	// Create a stored procedure
+	_, err = exec.Execute(`
+		CREATE PROCEDURE add_user(id INT, name VARCHAR, age INT)
+		AS $$
+			db.exec("INSERT INTO users VALUES (" + string(id) + ", '" + name + "', " + string(age) + ")")
+			return "User added"
+		$$
+	`)
+	if err != nil {
+		t.Fatalf("Failed to create procedure: %v", err)
+	}
+
+	// Call the stored procedure
+	result, err := exec.Execute("CALL add_user(1, 'Alice', 30)")
+	if err != nil {
+		t.Fatalf("Failed to call procedure: %v", err)
+	}
+	t.Logf("Call result: %v", result)
+
+	// Verify user was added
+	result, err = exec.Execute("SELECT * FROM users")
+	if err != nil {
+		t.Fatalf("Failed to select users: %v", err)
+	}
+	if len(result.Rows) != 1 {
+		t.Errorf("Expected 1 user, got %d", len(result.Rows))
+	} else {
+		t.Logf("User: %v", result.Rows[0])
+		if result.Rows[0][1].(string) != "Alice" {
+			t.Errorf("Expected name 'Alice', got '%s'", result.Rows[0][1])
+		}
+	}
+
+	// Test procedure that returns a value
+	_, err = exec.Execute(`
+		CREATE PROCEDURE get_user_count()
+		AS $$
+			var result = db.query("SELECT COUNT(*) as cnt FROM users")
+			if result != null && len(result) > 0 {
+				return result[0]["cnt"]
+			}
+			return 0
+		$$
+	`)
+	if err != nil {
+		t.Fatalf("Failed to create get_user_count procedure: %v", err)
+	}
+
+	result, err = exec.Execute("CALL get_user_count()")
+	if err != nil {
+		t.Fatalf("Failed to call get_user_count: %v", err)
+	}
+	t.Logf("User count: %v", result.Rows)
+
+	// Test DROP PROCEDURE
+	_, err = exec.Execute("DROP PROCEDURE add_user")
+	if err != nil {
+		t.Fatalf("Failed to drop procedure: %v", err)
+	}
+
+	// Verify procedure is gone
+	_, err = exec.Execute("CALL add_user(2, 'Bob', 25)")
+	if err == nil {
+		t.Error("Expected error calling dropped procedure")
+	}
+}

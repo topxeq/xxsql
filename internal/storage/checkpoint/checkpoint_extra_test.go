@@ -14,7 +14,7 @@ import (
 
 // mockRecoveryHandler implements RecoveryHandler for testing
 type mockRecoveryHandler struct {
-	inserts  []struct {
+	inserts []struct {
 		table string
 		data  []byte
 	}

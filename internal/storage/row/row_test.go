@@ -28,13 +28,13 @@ func TestNewRow(t *testing.T) {
 
 func TestRow_Size(t *testing.T) {
 	tests := []struct {
-		name     string
-		row      *Row
-		minSize  int
+		name    string
+		row     *Row
+		minSize int
 	}{
 		{
-			name: "empty row",
-			row:  NewRow(1, []*types.ColumnInfo{}),
+			name:    "empty row",
+			row:     NewRow(1, []*types.ColumnInfo{}),
 			minSize: RowHeaderSize,
 		},
 		{

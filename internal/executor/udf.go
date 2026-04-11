@@ -12,9 +12,9 @@ import (
 
 // UDFManager manages user-defined functions.
 type UDFManager struct {
-	mu       sync.RWMutex
+	mu        sync.RWMutex
 	functions map[string]*sql.UserFunction
-	dataDir  string
+	dataDir   string
 }
 
 // NewUDFManager creates a new UDF manager.
@@ -84,10 +84,10 @@ func (m *UDFManager) Exists(name string) bool {
 
 // functionJSON is used for JSON serialization.
 type functionJSON struct {
-	Name       string          `json:"name"`
-	Parameters []paramJSON     `json:"parameters"`
-	ReturnType string          `json:"return_type"`
-	Body       string          `json:"body"`
+	Name       string      `json:"name"`
+	Parameters []paramJSON `json:"parameters"`
+	ReturnType string      `json:"return_type"`
+	Body       string      `json:"body"`
 }
 
 type paramJSON struct {

@@ -18,8 +18,8 @@ type BTree struct {
 	NextPageID page.PageID
 
 	// Node cache
-	nodes    map[page.PageID]*Node
-	nodeMu   sync.RWMutex
+	nodes  map[page.PageID]*Node
+	nodeMu sync.RWMutex
 
 	// Page manager interface
 	pageManager PageManager

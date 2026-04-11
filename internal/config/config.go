@@ -113,8 +113,8 @@ type StorageConfig struct {
 
 // WorkerConfig contains worker configuration (deprecated, use WorkerPoolConfig).
 type WorkerConfig struct {
-	PoolSize      int `json:"pool_size"`       // Worker pool size (default: 32)
-	MaxConnection int `json:"max_connection"`  // Max connections per worker (default: 200)
+	PoolSize      int `json:"pool_size"`      // Worker pool size (default: 32)
+	MaxConnection int `json:"max_connection"` // Max connections per worker (default: 200)
 }
 
 // LogConfig contains logging configuration.
@@ -129,10 +129,10 @@ type LogConfig struct {
 
 // AuthConfig contains authentication configuration.
 type AuthConfig struct {
-	Enabled       bool   `json:"enabled"`         // Enable authentication
-	AdminPassword string `json:"admin_password"`  // Admin password hash
-	AdminUser     string `json:"admin_user"`      // Admin username
-	SessionTimeouSec int `json:"session_timeout_sec"` // Session timeout in seconds
+	Enabled          bool   `json:"enabled"`             // Enable authentication
+	AdminPassword    string `json:"admin_password"`      // Admin password hash
+	AdminUser        string `json:"admin_user"`          // Admin username
+	SessionTimeouSec int    `json:"session_timeout_sec"` // Session timeout in seconds
 }
 
 // SecurityConfig contains security configuration.
@@ -150,17 +150,17 @@ type SecurityConfig struct {
 	RateLimitBlockMin    int  `json:"rate_limit_block_min"`
 
 	// Password policy
-	PasswordMinLength    int  `json:"password_min_length"`
-	PasswordRequireUpper bool `json:"password_require_upper"`
-	PasswordRequireLower bool `json:"password_require_lower"`
-	PasswordRequireDigit bool `json:"password_require_digit"`
+	PasswordMinLength      int  `json:"password_min_length"`
+	PasswordRequireUpper   bool `json:"password_require_upper"`
+	PasswordRequireLower   bool `json:"password_require_lower"`
+	PasswordRequireDigit   bool `json:"password_require_digit"`
 	PasswordRequireSpecial bool `json:"password_require_special"`
-	PasswordExpireDays   int  `json:"password_expire_days"`
-	PasswordHistoryCount int  `json:"password_history_count"`
+	PasswordExpireDays     int  `json:"password_expire_days"`
+	PasswordHistoryCount   int  `json:"password_history_count"`
 
 	// TLS
 	TLSEnabled  bool   `json:"tls_enabled"`
-	TLSMode     string `json:"tls_mode"`     // disabled, optional, required, verify_ca
+	TLSMode     string `json:"tls_mode"` // disabled, optional, required, verify_ca
 	TLSCertFile string `json:"tls_cert_file"`
 	TLSKeyFile  string `json:"tls_key_file"`
 	TLSCAFile   string `json:"tls_ca_file"`
@@ -180,10 +180,10 @@ type BackupConfig struct {
 
 // RecoveryConfig contains recovery configuration.
 type RecoveryConfig struct {
-	WALSyncIntervalMs  int `json:"wal_sync_interval_ms"`  // WAL sync interval in ms
+	WALSyncIntervalMs     int `json:"wal_sync_interval_ms"`    // WAL sync interval in ms
 	CheckpointIntervalSec int `json:"checkpoint_interval_sec"` // Checkpoint interval in seconds
-	CheckpointPages    int `json:"checkpoint_pages"`      // Pages threshold for checkpoint
-	WALRetentionSec    int `json:"wal_retention_sec"`     // WAL retention time in seconds
+	CheckpointPages       int `json:"checkpoint_pages"`        // Pages threshold for checkpoint
+	WALRetentionSec       int `json:"wal_retention_sec"`       // WAL retention time in seconds
 }
 
 // SafetyConfig contains safety configuration.
@@ -203,10 +203,10 @@ type ConnectionConfig struct {
 
 // WorkerPoolConfig contains worker pool configuration.
 type WorkerPoolConfig struct {
-	WorkerCount    int           `json:"worker_count"`    // Number of workers
-	TaskQueueSize  int           `json:"task_queue_size"` // Task queue size per worker
-	TaskTimeout    time.Duration `json:"task_timeout"`    // Task execution timeout
-	Strategy       string        `json:"strategy"`        // Load balancing strategy
+	WorkerCount   int           `json:"worker_count"`    // Number of workers
+	TaskQueueSize int           `json:"task_queue_size"` // Task queue size per worker
+	TaskTimeout   time.Duration `json:"task_timeout"`    // Task execution timeout
+	Strategy      string        `json:"strategy"`        // Load balancing strategy
 }
 
 // DefaultConfig returns a Config with all default values applied.
@@ -253,24 +253,24 @@ func DefaultConfig() *Config {
 			SessionTimeouSec: 3600,
 		},
 		Security: SecurityConfig{
-			AuditEnabled:         true,
-			AuditFile:            "audit.log",
-			AuditMaxSizeMB:       100,
-			AuditMaxBackups:      10,
-			RateLimitEnabled:     true,
-			RateLimitMaxAttempts: 5,
-			RateLimitWindowMin:   15,
-			RateLimitBlockMin:    30,
-			PasswordMinLength:     8,
-			PasswordRequireUpper:  true,
-			PasswordRequireLower:  true,
-			PasswordRequireDigit:  true,
+			AuditEnabled:           true,
+			AuditFile:              "audit.log",
+			AuditMaxSizeMB:         100,
+			AuditMaxBackups:        10,
+			RateLimitEnabled:       true,
+			RateLimitMaxAttempts:   5,
+			RateLimitWindowMin:     15,
+			RateLimitBlockMin:      30,
+			PasswordMinLength:      8,
+			PasswordRequireUpper:   true,
+			PasswordRequireLower:   true,
+			PasswordRequireDigit:   true,
 			PasswordRequireSpecial: false,
-			PasswordExpireDays:    0,
-			PasswordHistoryCount:  5,
-			TLSEnabled:           false,
-			TLSMode:             "optional",
-			IPAccessMode:         "allow_all",
+			PasswordExpireDays:     0,
+			PasswordHistoryCount:   5,
+			TLSEnabled:             false,
+			TLSMode:                "optional",
+			IPAccessMode:           "allow_all",
 		},
 		Backup: BackupConfig{
 			AutoIntervalHours: 24,
@@ -278,10 +278,10 @@ func DefaultConfig() *Config {
 			BackupDir:         "./backup",
 		},
 		Recovery: RecoveryConfig{
-			WALSyncIntervalMs:    100,
+			WALSyncIntervalMs:     100,
 			CheckpointIntervalSec: 300,
-			CheckpointPages:      1000,
-			WALRetentionSec:      86400,
+			CheckpointPages:       1000,
+			WALRetentionSec:       86400,
 		},
 		Safety: SafetyConfig{
 			EnableChecksum:      true,
@@ -295,10 +295,10 @@ func DefaultConfig() *Config {
 			IdleTimeout:      28800,
 		},
 		WorkerPool: WorkerPoolConfig{
-			WorkerCount:    32,
-			TaskQueueSize:  1000,
-			TaskTimeout:    30 * time.Second,
-			Strategy:       "round_robin",
+			WorkerCount:   32,
+			TaskQueueSize: 1000,
+			TaskTimeout:   30 * time.Second,
+			Strategy:      "round_robin",
 		},
 	}
 }

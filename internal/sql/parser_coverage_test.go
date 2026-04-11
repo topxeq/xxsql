@@ -457,9 +457,9 @@ func TestParseExpressionWithOperators(t *testing.T) {
 // TestParsePragmaStatementExtra tests PRAGMA statement parsing
 func TestParsePragmaStatementExtra(t *testing.T) {
 	tests := []struct {
-		input       string
-		name        string
-		valueCheck  func(interface{}) bool
+		input      string
+		name       string
+		valueCheck func(interface{}) bool
 	}{
 		{"PRAGMA journal_mode", "journal_mode", nil},
 		{"PRAGMA journal_mode = WAL", "journal_mode", func(v interface{}) bool {
@@ -572,7 +572,7 @@ func TestASTStringMethods(t *testing.T) {
 
 	// Test InsertStmt.String()
 	ins := &InsertStmt{
-		Table:  "users",
+		Table:   "users",
 		Columns: []string{"id", "name"},
 		Values: [][]Expression{
 			{&Literal{Value: 1}, &Literal{Value: "test"}},
@@ -1342,7 +1342,7 @@ func TestASTStringMethodsComplete(t *testing.T) {
 
 	// Test InsertStmt.String()
 	ins := &InsertStmt{
-		Table: "users",
+		Table:   "users",
 		Columns: []string{"id", "name"},
 		Values: [][]Expression{
 			{&Literal{Value: 1, Type: LiteralNumber}, &Literal{Value: "test", Type: LiteralString}},
@@ -2151,7 +2151,7 @@ func TestJoinClauseStringExtra(t *testing.T) {
 	jc := &JoinClause{
 		Type:  JoinInner,
 		Table: &TableRef{Name: "orders"},
-		On: &BinaryExpr{Left: &ColumnRef{Name: "id"}, Op: OpEq, Right: &ColumnRef{Name: "user_id"}},
+		On:    &BinaryExpr{Left: &ColumnRef{Name: "id"}, Op: OpEq, Right: &ColumnRef{Name: "user_id"}},
 	}
 	_ = jc.String()
 }
@@ -2728,14 +2728,15 @@ func containsHelper(s, substr string) bool {
 	}
 	return false
 }
+
 // TestParseCreateFTS tests CREATE FTS statement parsing
 
 // TestParseCreateFTSFinal tests CREATE FTS statement parsing
 func TestParseCreateFTSFinal(t *testing.T) {
 	tests := []struct {
-		name     string
-		input    string
-		wantErr  bool
+		name    string
+		input   string
+		wantErr bool
 	}{
 		{
 			name:    "create fts index",
@@ -2767,9 +2768,9 @@ func TestParseCreateFTSFinal(t *testing.T) {
 // TestParseCreateViewFinal tests CREATE VIEW statement parsing
 func TestParseCreateViewFinal(t *testing.T) {
 	tests := []struct {
-		name     string
-		input    string
-		wantErr  bool
+		name    string
+		input   string
+		wantErr bool
 	}{
 		{
 			name:    "create simple view",

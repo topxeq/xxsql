@@ -65,14 +65,14 @@ func ParseLevel(s string) Level {
 
 // Logger is a thread-safe logger with configurable output and rotation.
 type Logger struct {
-	mu          sync.Mutex
-	level       Level
-	output      io.Writer
-	file        *os.File
-	rotate      *Rotator
-	showCaller  bool
-	timeFormat  string
-	prefix      string
+	mu         sync.Mutex
+	level      Level
+	output     io.Writer
+	file       *os.File
+	rotate     *Rotator
+	showCaller bool
+	timeFormat string
+	prefix     string
 }
 
 // Option is a functional option for Logger configuration.

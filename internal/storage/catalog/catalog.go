@@ -19,12 +19,13 @@ const (
 
 // Catalog manages all table metadata.
 type Catalog struct {
-	dataDir  string
-	tables   map[string]*table.Table
-	views    map[string]*ViewInfo
-	triggers map[string]*TriggerInfo
-	fts      map[string]*FTSInfo // FTS indexes
-	mu       sync.RWMutex
+	dataDir    string
+	tables     map[string]*table.Table
+	views      map[string]*ViewInfo
+	triggers   map[string]*TriggerInfo
+	fts        map[string]*FTSInfo       // FTS indexes
+	procedures map[string]*ProcedureInfo // Stored procedures
+	mu         sync.RWMutex
 }
 
 // ViewInfo stores view definition.
@@ -43,7 +44,8 @@ type TriggerInfo struct {
 	TableName   string
 	Granularity int // 0=FOR EACH ROW, 1=FOR EACH STATEMENT
 	WhenClause  string
-	Body        string
+	Body        string // SQL trigger body
+	ScriptBody  string // XxScript trigger body (when using AS $$ ... $$ syntax)
 }
 
 // FTSInfo stores FTS index definition.
@@ -54,14 +56,29 @@ type FTSInfo struct {
 	Tokenizer string   // Tokenizer type
 }
 
+// ProcedureParamInfo stores parameter info for stored procedures.
+type ProcedureParamInfo struct {
+	Name string // Parameter name
+	Type string // Data type
+	Mode int    // 0=IN, 1=OUT, 2=INOUT
+}
+
+// ProcedureInfo stores stored procedure definition.
+type ProcedureInfo struct {
+	Name   string               // Procedure name
+	Params []ProcedureParamInfo // Parameters
+	Body   string               // XxScript body
+}
+
 // NewCatalog creates a new catalog.
 func NewCatalog(dataDir string) *Catalog {
 	return &Catalog{
-		dataDir:  dataDir,
-		tables:   make(map[string]*table.Table),
-		views:    make(map[string]*ViewInfo),
-		triggers: make(map[string]*TriggerInfo),
-		fts:      make(map[string]*FTSInfo),
+		dataDir:    dataDir,
+		tables:     make(map[string]*table.Table),
+		views:      make(map[string]*ViewInfo),
+		triggers:   make(map[string]*TriggerInfo),
+		fts:        make(map[string]*FTSInfo),
+		procedures: make(map[string]*ProcedureInfo),
 	}
 }
 
@@ -117,6 +134,11 @@ func (c *Catalog) Open() error {
 		return err
 	}
 
+	// Load stored procedures
+	if err := c.loadProcedures(); err != nil {
+		return err
+	}
+
 	return nil
 }
 
@@ -132,6 +154,7 @@ func (c *Catalog) Close() error {
 	c.views = make(map[string]*ViewInfo)
 	c.triggers = make(map[string]*TriggerInfo)
 	c.fts = make(map[string]*FTSInfo)
+	c.procedures = make(map[string]*ProcedureInfo)
 
 	return nil
 }
@@ -389,7 +412,7 @@ func (c *Catalog) loadViews() error {
 }
 
 // CreateTrigger creates a new trigger.
-func (c *Catalog) CreateTrigger(name string, timing, event int, tableName string, granularity int, whenClause, body string) error {
+func (c *Catalog) CreateTrigger(name string, timing, event int, tableName string, granularity int, whenClause, body, scriptBody string) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
@@ -405,6 +428,7 @@ func (c *Catalog) CreateTrigger(name string, timing, event int, tableName string
 		Granularity: granularity,
 		WhenClause:  whenClause,
 		Body:        body,
+		ScriptBody:  scriptBody,
 	}
 	return c.saveTriggers()
 }
@@ -626,6 +650,112 @@ func (c *Catalog) loadFTS() error {
 
 	for _, fts := range ftsInfos {
 		c.fts[fts.Name] = fts
+	}
+	return nil
+}
+
+// ============================================================================
+// Stored Procedures
+// ============================================================================
+
+// CreateProcedure creates a new stored procedure.
+func (c *Catalog) CreateProcedure(name string, params []ProcedureParamInfo, body string) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	if _, exists := c.procedures[name]; exists {
+		return fmt.Errorf("procedure already exists: %s", name)
+	}
+
+	c.procedures[name] = &ProcedureInfo{
+		Name:   name,
+		Params: params,
+		Body:   body,
+	}
+	return c.saveProcedures()
+}
+
+// DropProcedure drops a stored procedure.
+func (c *Catalog) DropProcedure(name string) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	if _, exists := c.procedures[name]; !exists {
+		return fmt.Errorf("procedure not found: %s", name)
+	}
+
+	delete(c.procedures, name)
+	return c.saveProcedures()
+}
+
+// GetProcedure returns a stored procedure by name.
+func (c *Catalog) GetProcedure(name string) (*ProcedureInfo, error) {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+
+	p, exists := c.procedures[name]
+	if !exists {
+		return nil, fmt.Errorf("procedure not found: %s", name)
+	}
+
+	return p, nil
+}
+
+// ProcedureExists checks if a stored procedure exists.
+func (c *Catalog) ProcedureExists(name string) bool {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+
+	_, exists := c.procedures[name]
+	return exists
+}
+
+// ListProcedures returns all procedure names.
+func (c *Catalog) ListProcedures() []string {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+
+	names := make([]string, 0, len(c.procedures))
+	for name := range c.procedures {
+		names = append(names, name)
+	}
+	return names
+}
+
+// saveProcedures saves procedures to disk.
+func (c *Catalog) saveProcedures() error {
+	procInfos := make([]*ProcedureInfo, 0, len(c.procedures))
+	for _, p := range c.procedures {
+		procInfos = append(procInfos, p)
+	}
+
+	data, err := json.MarshalIndent(procInfos, "", "  ")
+	if err != nil {
+		return err
+	}
+
+	procPath := filepath.Join(c.dataDir, "procedures.json")
+	return os.WriteFile(procPath, data, 0644)
+}
+
+// loadProcedures loads procedures from disk.
+func (c *Catalog) loadProcedures() error {
+	procPath := filepath.Join(c.dataDir, "procedures.json")
+	data, err := os.ReadFile(procPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return err
+	}
+
+	var procInfos []*ProcedureInfo
+	if err := json.Unmarshal(data, &procInfos); err != nil {
+		return err
+	}
+
+	for _, p := range procInfos {
+		c.procedures[p.Name] = p
 	}
 	return nil
 }

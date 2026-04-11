@@ -269,7 +269,7 @@ func (c *conn) parseResultSet(response []byte) (*rows, error) {
 	if response[0] == OKPacket {
 		// Query returned no rows (e.g., INSERT)
 		return &rows{
-			columns: []string{},
+			columns:  []string{},
 			colTypes: []byte{},
 			rowData:  nil,
 		}, nil

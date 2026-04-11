@@ -29,10 +29,10 @@ type Expression interface {
 
 // CTEDefinition represents a single CTE (Common Table Expression) definition.
 type CTEDefinition struct {
-	Name      string      // CTE name
-	Columns   []string    // Optional column names
-	Query     Statement   // The subquery defining the CTE
-	Recursive bool        // Whether this is a recursive CTE
+	Name      string    // CTE name
+	Columns   []string  // Optional column names
+	Query     Statement // The subquery defining the CTE
+	Recursive bool      // Whether this is a recursive CTE
 }
 
 func (c *CTEDefinition) String() string {
@@ -58,7 +58,7 @@ func (c *CTEDefinition) String() string {
 // WITH cte_name AS (SELECT ...) SELECT * FROM cte_name
 type WithStmt struct {
 	CTEs      []CTEDefinition // List of CTE definitions
-	MainQuery Statement        // The main query that uses the CTEs
+	MainQuery Statement       // The main query that uses the CTEs
 }
 
 func (s *WithStmt) node()      {}
@@ -104,15 +104,15 @@ func (w *WithClause) String() string {
 
 // SelectStmt represents a SELECT statement.
 type SelectStmt struct {
-	Distinct   bool
-	Columns    []Expression // SELECT columns
-	From       *FromClause  // FROM clause
-	Where      Expression   // WHERE condition
-	GroupBy    []Expression // GROUP BY columns
-	Having     Expression   // HAVING condition
-	OrderBy    []*OrderByItem
-	Limit      *int
-	Offset     *int
+	Distinct bool
+	Columns  []Expression // SELECT columns
+	From     *FromClause  // FROM clause
+	Where    Expression   // WHERE condition
+	GroupBy  []Expression // GROUP BY columns
+	Having   Expression   // HAVING condition
+	OrderBy  []*OrderByItem
+	Limit    *int
+	Offset   *int
 }
 
 func (s *SelectStmt) node()      {}
@@ -359,7 +359,7 @@ func (s *DeleteStmt) String() string {
 // CreateTableStmt represents a CREATE TABLE statement.
 type CreateTableStmt struct {
 	IfNotExists bool
-	Temp        bool              // TEMP or TEMPORARY keyword
+	Temp        bool // TEMP or TEMPORARY keyword
 	TableName   string
 	Columns     []*ColumnDef
 	Constraints []*TableConstraint
@@ -562,7 +562,7 @@ type AddColumnAction struct {
 	Column *ColumnDef
 }
 
-func (a *AddColumnAction) node()       {}
+func (a *AddColumnAction) node()        {}
 func (a *AddColumnAction) alterAction() {}
 func (a *AddColumnAction) String() string {
 	return fmt.Sprintf("ADD COLUMN %s", a.Column.String())
@@ -573,7 +573,7 @@ type DropColumnAction struct {
 	ColumnName string
 }
 
-func (a *DropColumnAction) node()       {}
+func (a *DropColumnAction) node()        {}
 func (a *DropColumnAction) alterAction() {}
 func (a *DropColumnAction) String() string {
 	return fmt.Sprintf("DROP COLUMN %s", a.ColumnName)
@@ -584,7 +584,7 @@ type ModifyColumnAction struct {
 	Column *ColumnDef
 }
 
-func (a *ModifyColumnAction) node()       {}
+func (a *ModifyColumnAction) node()        {}
 func (a *ModifyColumnAction) alterAction() {}
 func (a *ModifyColumnAction) String() string {
 	return fmt.Sprintf("MODIFY COLUMN %s", a.Column.String())
@@ -596,7 +596,7 @@ type RenameColumnAction struct {
 	NewName string
 }
 
-func (a *RenameColumnAction) node()       {}
+func (a *RenameColumnAction) node()        {}
 func (a *RenameColumnAction) alterAction() {}
 func (a *RenameColumnAction) String() string {
 	return fmt.Sprintf("RENAME COLUMN %s TO %s", a.OldName, a.NewName)
@@ -607,7 +607,7 @@ type RenameTableAction struct {
 	NewName string
 }
 
-func (a *RenameTableAction) node()       {}
+func (a *RenameTableAction) node()        {}
 func (a *RenameTableAction) alterAction() {}
 func (a *RenameTableAction) String() string {
 	return fmt.Sprintf("RENAME TO %s", a.NewName)
@@ -618,7 +618,7 @@ type AddConstraintAction struct {
 	Constraint *TableConstraint
 }
 
-func (a *AddConstraintAction) node()       {}
+func (a *AddConstraintAction) node()        {}
 func (a *AddConstraintAction) alterAction() {}
 func (a *AddConstraintAction) String() string {
 	return fmt.Sprintf("ADD %s", a.Constraint.String())
@@ -629,7 +629,7 @@ type DropConstraintAction struct {
 	ConstraintName string
 }
 
-func (a *DropConstraintAction) node()       {}
+func (a *DropConstraintAction) node()        {}
 func (a *DropConstraintAction) alterAction() {}
 func (a *DropConstraintAction) String() string {
 	return fmt.Sprintf("DROP CONSTRAINT %s", a.ConstraintName)
@@ -673,9 +673,9 @@ func (s *UseStmt) String() string {
 
 // ShowStmt represents a SHOW statement.
 type ShowStmt struct {
-	Type    string // TABLES, DATABASES, COLUMNS, etc.
-	Like    string
-	From    string // table name for SHOW COLUMNS
+	Type string // TABLES, DATABASES, COLUMNS, etc.
+	Like string
+	From string // table name for SHOW COLUMNS
 }
 
 func (s *ShowStmt) node()      {}
@@ -719,10 +719,10 @@ func (s *ShowCreateTableStmt) String() string {
 
 // UnionStmt represents a UNION statement.
 type UnionStmt struct {
-	Left     Statement
-	Right    Statement
-	All      bool
-	Op       SetOperation // UNION, INTERSECT, or EXCEPT
+	Left  Statement
+	Right Statement
+	All   bool
+	Op    SetOperation // UNION, INTERSECT, or EXCEPT
 }
 
 // SetOperation represents a set operation type.
@@ -785,10 +785,10 @@ func (c *FromClause) String() string {
 
 // JoinClause represents a JOIN clause.
 type JoinClause struct {
-	Type   JoinType
-	Table  *TableRef
-	On     Expression
-	Using  []string
+	Type  JoinType
+	Table *TableRef
+	On    Expression
+	Using []string
 }
 
 func (c *JoinClause) node() {}
@@ -839,8 +839,8 @@ const (
 type OrderByItem struct {
 	Expr       Expression
 	Ascending  bool
-	NullsFirst bool // NULLS FIRST specified
-	NullsLast  bool // NULLS LAST specified
+	NullsFirst bool   // NULLS FIRST specified
+	NullsLast  bool   // NULLS LAST specified
 	Collate    string // COLLATE collation name
 }
 
@@ -882,13 +882,13 @@ func (a *Assignment) String() string {
 type ColumnDef struct {
 	Name            string
 	Type            *DataType
-	Nullable        bool  // true if NULL allowed (default true)
+	Nullable        bool // true if NULL allowed (default true)
 	Default         Expression
 	AutoIncr        bool
 	PrimaryKey      bool
 	Unique          bool
 	Comment         string
-	Collate         string    // COLLATE collation name
+	Collate         string     // COLLATE collation name
 	GeneratedExpr   Expression // GENERATED ALWAYS AS expression
 	GeneratedStored bool       // true if STORED, false if VIRTUAL
 }
@@ -934,11 +934,11 @@ func (c *ColumnDef) String() string {
 
 // DataType represents a data type.
 type DataType struct {
-	Name     string
-	Size     int    // for CHAR, VARCHAR
-	Precision int   // for DECIMAL, NUMERIC
-	Scale    int    // for DECIMAL, NUMERIC
-	Unsigned bool
+	Name      string
+	Size      int // for CHAR, VARCHAR
+	Precision int // for DECIMAL, NUMERIC
+	Scale     int // for DECIMAL, NUMERIC
+	Unsigned  bool
 }
 
 func (d *DataType) node() {}
@@ -962,14 +962,14 @@ func (d *DataType) String() string {
 
 // TableConstraint represents a table-level constraint.
 type TableConstraint struct {
-	Name        string
-	Type        ConstraintType
-	Columns     []string
-	RefTable    string
-	RefColumns  []string
-	CheckExpr   Expression // For CHECK constraint
-	OnDelete    string     // For FK: CASCADE, SET NULL, RESTRICT, NO ACTION
-	OnUpdate    string     // For FK: CASCADE, SET NULL, RESTRICT, NO ACTION
+	Name       string
+	Type       ConstraintType
+	Columns    []string
+	RefTable   string
+	RefColumns []string
+	CheckExpr  Expression // For CHECK constraint
+	OnDelete   string     // For FK: CASCADE, SET NULL, RESTRICT, NO ACTION
+	OnUpdate   string     // For FK: CASCADE, SET NULL, RESTRICT, NO ACTION
 }
 
 func (c *TableConstraint) node() {}
@@ -1078,9 +1078,9 @@ func (l *Literal) String() string {
 
 // ColumnRef represents a column reference.
 type ColumnRef struct {
-	Table  string // optional table qualifier
-	Name   string
-	Alias  string // optional alias
+	Table string // optional table qualifier
+	Name  string
+	Alias string // optional alias
 }
 
 func (c *ColumnRef) node()       {}
@@ -1245,23 +1245,23 @@ func (f *FunctionCall) String() string {
 
 // WindowSpec represents the window specification for window functions.
 type WindowSpec struct {
-	PartitionBy []Expression  // PARTITION BY expressions
+	PartitionBy []Expression   // PARTITION BY expressions
 	OrderBy     []*OrderByItem // ORDER BY items
-	Name        string        // Named window reference (optional)
-	Frame       *FrameSpec    // Window frame clause (optional)
+	Name        string         // Named window reference (optional)
+	Frame       *FrameSpec     // Window frame clause (optional)
 }
 
 // FrameSpec represents a window frame clause (ROWS/RANGE BETWEEN ... AND ...).
 type FrameSpec struct {
-	Mode      string     // "ROWS" or "RANGE"
-	Start     FrameBound // Start bound
-	End       FrameBound // End bound (optional, defaults to CURRENT ROW)
+	Mode  string     // "ROWS" or "RANGE"
+	Start FrameBound // Start bound
+	End   FrameBound // End bound (optional, defaults to CURRENT ROW)
 }
 
 // FrameBound represents one side of a window frame.
 type FrameBound struct {
-	Type      string // "UNBOUNDED PRECEDING", "PRECEDING", "CURRENT ROW", "FOLLOWING", "UNBOUNDED FOLLOWING"
-	Offset    int    // Offset for PRECEDING/FOLLOWING (0 for CURRENT ROW, UNBOUNDED)
+	Type   string // "UNBOUNDED PRECEDING", "PRECEDING", "CURRENT ROW", "FOLLOWING", "UNBOUNDED FOLLOWING"
+	Offset int    // Offset for PRECEDING/FOLLOWING (0 for CURRENT ROW, UNBOUNDED)
 }
 
 func (f *FrameSpec) String() string {
@@ -1327,11 +1327,11 @@ func (w *WindowSpec) String() string {
 
 // WindowFuncCall represents a window function call with OVER clause.
 type WindowFuncCall struct {
-	Func        *FunctionCall // The function being called
-	Window      *WindowSpec   // The window specification
-	Alias       string        // optional alias
-	IgnoreNulls bool          // IGNORE NULLS (for LEAD/LAG/FIRST_VALUE/LAST_VALUE)
-	RespectNulls bool         // RESPECT NULLS (default behavior, explicitly stated)
+	Func         *FunctionCall // The function being called
+	Window       *WindowSpec   // The window specification
+	Alias        string        // optional alias
+	IgnoreNulls  bool          // IGNORE NULLS (for LEAD/LAG/FIRST_VALUE/LAST_VALUE)
+	RespectNulls bool          // RESPECT NULLS (default behavior, explicitly stated)
 }
 
 func (w *WindowFuncCall) node()       {}
@@ -1351,10 +1351,10 @@ func (w *WindowFuncCall) String() string {
 
 // BetweenExpr represents a BETWEEN expression.
 type BetweenExpr struct {
-	Expr   Expression
-	Left   Expression
-	Right  Expression
-	Not    bool
+	Expr  Expression
+	Left  Expression
+	Right Expression
+	Not   bool
 }
 
 func (e *BetweenExpr) node()       {}
@@ -1414,9 +1414,9 @@ func (e *IsNullExpr) String() string {
 
 // CaseExpr represents a CASE expression.
 type CaseExpr struct {
-	Expr   Expression      // optional operand
-	Whens  []*CaseWhen
-	Else   Expression
+	Expr  Expression // optional operand
+	Whens []*CaseWhen
+	Else  Expression
 }
 
 func (e *CaseExpr) node()       {}
@@ -1497,8 +1497,8 @@ func (e *ParenExpr) String() string {
 // CollateExpr represents a COLLATE expression.
 // Syntax: expr COLLATE collation_name
 type CollateExpr struct {
-	Expr     Expression
-	Collate  string
+	Expr    Expression
+	Collate string
 }
 
 func (e *CollateExpr) node()       {}
@@ -1521,9 +1521,9 @@ func (e *SubqueryExpr) String() string {
 // ValuesExpr represents a VALUES table constructor.
 // Example: VALUES (1, 'a'), (2, 'b')
 type ValuesExpr struct {
-	Rows   [][]Expression // Each row is a list of expressions
-	Alias  string         // Optional table alias
-	Columns []string      // Optional column aliases
+	Rows    [][]Expression // Each row is a list of expressions
+	Alias   string         // Optional table alias
+	Columns []string       // Optional column aliases
 }
 
 func (e *ValuesExpr) node()       {}
@@ -1565,9 +1565,9 @@ func (e *ExistsExpr) String() string {
 // AnyAllExpr represents an ANY or ALL expression with a subquery.
 // Examples: x > ANY (SELECT ...), x = ALL (SELECT ...)
 type AnyAllExpr struct {
-	Left     Expression  // Left operand
-	Op       BinaryOp    // Comparison operator (=, >, <, >=, <=, !=, <>)
-	IsAny    bool        // true for ANY, false for ALL
+	Left     Expression // Left operand
+	Op       BinaryOp   // Comparison operator (=, >, <, >=, <=, !=, <>)
+	IsAny    bool       // true for ANY, false for ALL
 	Subquery *SubqueryExpr
 }
 
@@ -1770,7 +1770,7 @@ type GrantStmt struct {
 	Table      string
 	To         string // username
 	Host       string
-	WithGrant  bool   // WITH GRANT OPTION
+	WithGrant  bool // WITH GRANT OPTION
 }
 
 func (s *GrantStmt) node()      {}
@@ -1878,8 +1878,8 @@ func (s *ShowGrantsStmt) String() string {
 
 // SetPasswordStmt represents a SET PASSWORD statement.
 type SetPasswordStmt struct {
-	ForUser string // optional: FOR user
-	ForHost string
+	ForUser  string // optional: FOR user
+	ForHost  string
 	Password string
 }
 
@@ -1908,9 +1908,9 @@ func (s *SetPasswordStmt) String() string {
 
 // BackupStmt represents a BACKUP DATABASE statement.
 type BackupStmt struct {
-	Path      string // backup file path
-	Compress  bool   // WITH COMPRESS option
-	Incremental bool  // incremental backup
+	Path        string // backup file path
+	Compress    bool   // WITH COMPRESS option
+	Incremental bool   // incremental backup
 }
 
 func (s *BackupStmt) node()      {}
@@ -2214,15 +2214,17 @@ func (g TriggerGranularity) String() string {
 
 // CreateTriggerStmt represents a CREATE TRIGGER statement.
 // Syntax: CREATE TRIGGER name {BEFORE|AFTER|INSTEAD OF} {INSERT|UPDATE|DELETE} ON table [FOR EACH ROW] BEGIN statements END
+// Or: CREATE TRIGGER name {BEFORE|AFTER} {INSERT|UPDATE|DELETE} ON table FOR EACH ROW AS $$ script $$
 type CreateTriggerStmt struct {
-	TriggerName  string
-	Timing       TriggerTiming
-	Event        TriggerEvent
-	TableName    string
-	Granularity  TriggerGranularity
-	WhenClause   Expression    // optional WHEN condition
-	Body         []Statement   // trigger body statements
-	IfNotExists  bool
+	TriggerName string
+	Timing      TriggerTiming
+	Event       TriggerEvent
+	TableName   string
+	Granularity TriggerGranularity
+	WhenClause  Expression  // optional WHEN condition
+	Body        []Statement // SQL trigger body statements
+	ScriptBody  string      // XxScript trigger body (when using AS $$ ... $$ syntax)
+	IfNotExists bool
 }
 
 func (s *CreateTriggerStmt) node()      {}
@@ -2371,16 +2373,16 @@ func (s *ReleaseSavepointStmt) String() string {
 // COPY table FROM 'file.csv' WITH (FORMAT csv, HEADER true, DELIMITER ',')
 // COPY (SELECT ...) TO 'file.csv' WITH (FORMAT csv, HEADER true)
 type CopyStmt struct {
-	TableName   string    // For COPY table FROM
-	Query       Statement // For COPY (SELECT ...) TO
-	FileName    string
-	Direction   string // "FROM" or "TO"
-	Format      string // csv, tsv, text (default: csv)
-	Header      bool   // First row is header
-	Delimiter   string // Field delimiter (default: comma)
-	Quote       string // Quote character (default: ")
-	NullString  string // String representing NULL (default: \N)
-	Encoding    string // File encoding (default: utf-8)
+	TableName  string    // For COPY table FROM
+	Query      Statement // For COPY (SELECT ...) TO
+	FileName   string
+	Direction  string // "FROM" or "TO"
+	Format     string // csv, tsv, text (default: csv)
+	Header     bool   // First row is header
+	Delimiter  string // Field delimiter (default: comma)
+	Quote      string // Quote character (default: ")
+	NullString string // String representing NULL (default: \N)
+	Encoding   string // File encoding (default: utf-8)
 }
 
 func (s *CopyStmt) node()      {}
@@ -2433,11 +2435,12 @@ func (s *CopyStmt) String() string {
 
 // LoadDataStmt represents a LOAD DATA INFILE statement (MySQL style).
 // LOAD DATA INFILE 'file.csv' INTO TABLE table_name
-//   FIELDS TERMINATED BY ',' ENCLOSED BY '"' LINES TERMINATED BY '\n'
-//   IGNORE 1 ROWS;
+//
+//	FIELDS TERMINATED BY ',' ENCLOSED BY '"' LINES TERMINATED BY '\n'
+//	IGNORE 1 ROWS;
 type LoadDataStmt struct {
-	FileName        string
-	TableName       string
+	FileName         string
+	TableName        string
 	FieldsTerminated string // default: '\t'
 	FieldsEnclosed   string // default: ''
 	FieldsEscaped    string // default: '\\'
@@ -2604,4 +2607,130 @@ func (e *RankExpr) String() string {
 		return fmt.Sprintf("RANK(%s)", e.IndexName)
 	}
 	return "RANK"
+}
+
+// ============================================================================
+// Stored Procedure Statements
+// ============================================================================
+
+// ProcedureParamMode represents the mode of a procedure parameter.
+type ProcedureParamMode int
+
+const (
+	ParamModeIn    ProcedureParamMode = iota // IN parameter (default)
+	ParamModeOut                             // OUT parameter
+	ParamModeInout                           // INOUT parameter
+)
+
+func (m ProcedureParamMode) String() string {
+	switch m {
+	case ParamModeIn:
+		return "IN"
+	case ParamModeOut:
+		return "OUT"
+	case ParamModeInout:
+		return "INOUT"
+	}
+	return ""
+}
+
+// ProcedureParam represents a parameter definition in a stored procedure.
+type ProcedureParam struct {
+	Name string             // Parameter name
+	Type string             // Data type name
+	Mode ProcedureParamMode // Parameter mode (IN, OUT, INOUT)
+}
+
+// CreateProcedureStmt represents a CREATE PROCEDURE statement.
+// Syntax: CREATE PROCEDURE name([params]) AS $$ script $$
+// Or: CREATE PROCEDURE name([params]) BEGIN statements END
+type CreateProcedureStmt struct {
+	ProcedureName string
+	Params        []ProcedureParam
+	Body          string      // XxScript body (when using AS $$ ... $$ syntax)
+	SQLBody       []Statement // SQL body statements (when using BEGIN ... END)
+	IfNotExists   bool
+}
+
+func (s *CreateProcedureStmt) node()      {}
+func (s *CreateProcedureStmt) statement() {}
+func (s *CreateProcedureStmt) String() string {
+	var sb strings.Builder
+	sb.WriteString("CREATE PROCEDURE ")
+	if s.IfNotExists {
+		sb.WriteString("IF NOT EXISTS ")
+	}
+	sb.WriteString(s.ProcedureName)
+	sb.WriteString("(")
+	for i, p := range s.Params {
+		if i > 0 {
+			sb.WriteString(", ")
+		}
+		if p.Mode != ParamModeIn {
+			sb.WriteString(p.Mode.String())
+			sb.WriteString(" ")
+		}
+		sb.WriteString(p.Name)
+		sb.WriteString(" ")
+		sb.WriteString(p.Type)
+	}
+	sb.WriteString(") ")
+	if s.Body != "" {
+		sb.WriteString("AS $$ ")
+		sb.WriteString(s.Body)
+		sb.WriteString(" $$")
+	} else {
+		sb.WriteString("BEGIN ")
+		for i, stmt := range s.SQLBody {
+			if i > 0 {
+				sb.WriteString("; ")
+			}
+			sb.WriteString(stmt.String())
+		}
+		sb.WriteString(" END")
+	}
+	return sb.String()
+}
+
+// DropProcedureStmt represents a DROP PROCEDURE statement.
+// Syntax: DROP PROCEDURE name [IF EXISTS]
+type DropProcedureStmt struct {
+	ProcedureName string
+	IfExists      bool
+}
+
+func (s *DropProcedureStmt) node()      {}
+func (s *DropProcedureStmt) statement() {}
+func (s *DropProcedureStmt) String() string {
+	var sb strings.Builder
+	sb.WriteString("DROP PROCEDURE ")
+	if s.IfExists {
+		sb.WriteString("IF EXISTS ")
+	}
+	sb.WriteString(s.ProcedureName)
+	return sb.String()
+}
+
+// CallStmt represents a CALL statement for stored procedures.
+// Syntax: CALL procedure_name([args])
+type CallStmt struct {
+	ProcedureName string
+	Args          []Expression
+}
+
+func (s *CallStmt) node()      {}
+func (s *CallStmt) statement() {}
+func (s *CallStmt) String() string {
+	var sb strings.Builder
+	sb.WriteString("CALL ")
+	sb.WriteString(s.ProcedureName)
+	sb.WriteString("(")
+	for i, arg := range s.Args {
+		if i > 0 {
+			sb.WriteString(", ")
+		}
+		sb.WriteString(arg.String())
+	}
+	sb.WriteString(")")
+	return sb.String()
 }

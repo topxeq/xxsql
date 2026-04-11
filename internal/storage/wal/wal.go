@@ -207,16 +207,16 @@ func UnmarshalRecord(data []byte) (*Record, int, error) {
 
 // Manager manages WAL operations.
 type Manager struct {
-	path        string
-	file        *os.File
-	currentLSN  atomic.Uint64
-	flushedLSN  atomic.Uint64
-	maxSize     int64
+	path         string
+	file         *os.File
+	currentLSN   atomic.Uint64
+	flushedLSN   atomic.Uint64
+	maxSize      int64
 	syncInterval time.Duration
 
-	mu       sync.Mutex
-	stopCh   chan struct{}
-	stopped  atomic.Bool
+	mu      sync.Mutex
+	stopCh  chan struct{}
+	stopped atomic.Bool
 }
 
 // ManagerConfig holds WAL manager configuration.

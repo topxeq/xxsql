@@ -13,13 +13,13 @@ import (
 // BufferPool manages a pool of cached pages.
 type BufferPool struct {
 	// Configuration
-	poolSize   int
-	pageSize   int
+	poolSize int
+	pageSize int
 
 	// Storage
-	pages    map[page.PageID]*BufferFrame
-	lruList  *list.List
-	lruMap   map[page.PageID]*list.Element
+	pages   map[page.PageID]*BufferFrame
+	lruList *list.List
+	lruMap  map[page.PageID]*list.Element
 
 	// Disk manager interface
 	diskManager DiskManager
@@ -35,10 +35,10 @@ type BufferPool struct {
 
 // BufferFrame represents a frame in the buffer pool.
 type BufferFrame struct {
-	Page      *page.Page
-	PinCount  int32
-	Dirty     bool
-	Element   *list.Element // LRU list element
+	Page     *page.Page
+	PinCount int32
+	Dirty    bool
+	Element  *list.Element // LRU list element
 }
 
 // DiskManager provides disk I/O operations for the buffer pool.
@@ -51,8 +51,8 @@ type DiskManager interface {
 
 // BufferPoolConfig holds buffer pool configuration.
 type BufferPoolConfig struct {
-	PoolSize   int
-	PageSize   int
+	PoolSize    int
+	PageSize    int
 	DiskManager DiskManager
 }
 

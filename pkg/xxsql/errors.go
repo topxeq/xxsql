@@ -31,13 +31,13 @@ var (
 
 // MySQL error codes
 const (
-	ErrCodeAccessDenied     = 1045
-	ErrCodeDuplicateEntry   = 1062
-	ErrCodeSyntax           = 1064
-	ErrCodeTableNotExist    = 1146
-	ErrCodeDeadlock         = 1213
-	ErrCodeServerGone       = 2006
-	ErrCodeConnectionLost   = 2013
+	ErrCodeAccessDenied   = 1045
+	ErrCodeDuplicateEntry = 1062
+	ErrCodeSyntax         = 1064
+	ErrCodeTableNotExist  = 1146
+	ErrCodeDeadlock       = 1213
+	ErrCodeServerGone     = 2006
+	ErrCodeConnectionLost = 2013
 )
 
 // mysqlError represents a MySQL error.

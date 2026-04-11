@@ -39,26 +39,26 @@ const (
 
 // TableInfo represents table metadata.
 type TableInfo struct {
-	Name            string                     `json:"name"`
-	Columns         []*types.ColumnInfo        `json:"columns"`
-	PrimaryKey      []string                   `json:"primary_key,omitempty"`
-	Indexes         []*IndexInfo               `json:"indexes,omitempty"`
+	Name             string                       `json:"name"`
+	Columns          []*types.ColumnInfo          `json:"columns"`
+	PrimaryKey       []string                     `json:"primary_key,omitempty"`
+	Indexes          []*IndexInfo                 `json:"indexes,omitempty"`
 	CheckConstraints []*types.CheckConstraintInfo `json:"check_constraints,omitempty"`
-	ForeignKeys     []*types.ForeignKeyInfo    `json:"foreign_keys,omitempty"`
-	CreatedAt       time.Time                  `json:"created_at"`
-	ModifiedAt      time.Time                  `json:"modified_at"`
-	RowCount        uint64                     `json:"row_count"`
-	NextRowID       uint64                     `json:"next_row_id"`
-	NextPageID      page.PageID                `json:"next_page_id"`
-	RootPageID      page.PageID                `json:"root_page_id"`
-	State           TableState                 `json:"state"`
+	ForeignKeys      []*types.ForeignKeyInfo      `json:"foreign_keys,omitempty"`
+	CreatedAt        time.Time                    `json:"created_at"`
+	ModifiedAt       time.Time                    `json:"modified_at"`
+	RowCount         uint64                       `json:"row_count"`
+	NextRowID        uint64                       `json:"next_row_id"`
+	NextPageID       page.PageID                  `json:"next_page_id"`
+	RootPageID       page.PageID                  `json:"root_page_id"`
+	State            TableState                   `json:"state"`
 }
 
 // IndexInfo represents index metadata.
 type IndexInfo struct {
-	Name      string      `json:"name"`
-	Columns   []string    `json:"columns"`
-	Unique    bool        `json:"unique"`
+	Name       string      `json:"name"`
+	Columns    []string    `json:"columns"`
+	Unique     bool        `json:"unique"`
 	RootPageID page.PageID `json:"root_page_id"`
 }
 
@@ -70,8 +70,8 @@ type Table struct {
 	dataDir  string
 
 	// Page cache (simple in-memory cache for now)
-	pages    map[page.PageID]*page.Page
-	pageMu   sync.RWMutex
+	pages  map[page.PageID]*page.Page
+	pageMu sync.RWMutex
 
 	// Sequence manager for auto-increment columns
 	seqMgr *sequence.Manager
@@ -99,11 +99,11 @@ func OpenTable(dataDir, name string, columns []*types.ColumnInfo) (*Table, error
 			NextPageID: 1,
 			State:      TableStateActive,
 		},
-		dataDir:    dataDir,
-		pages:      make(map[page.PageID]*page.Page),
-		indexMgr:   btree.NewIndexManager(name, nil),
-		columnMap:  make(map[string]int),
-		rowToPage:  make(map[row.RowID]page.PageID),
+		dataDir:   dataDir,
+		pages:     make(map[page.PageID]*page.Page),
+		indexMgr:  btree.NewIndexManager(name, nil),
+		columnMap: make(map[string]int),
+		rowToPage: make(map[row.RowID]page.PageID),
 	}
 
 	// Build column map
@@ -317,18 +317,24 @@ func (t *Table) Flush() error {
 	t.pageMu.Lock()
 	defer t.pageMu.Unlock()
 
-	for _, p := range t.pages {
-		if p.Modified {
-			if err := t.writePage(p); err != nil {
-				return err
+	// Skip disk operations for temp tables
+	if t.dataFile != nil {
+		for _, p := range t.pages {
+			if p.Modified {
+				if err := t.writePage(p); err != nil {
+					return err
+				}
+				p.Modified = false
 			}
-			p.Modified = false
 		}
+
+		// Sync file to ensure data is written
+		return t.dataFile.Sync()
 	}
 
-	// Sync file to ensure data is written
-	if t.dataFile != nil {
-		return t.dataFile.Sync()
+	// For temp tables, just clear the modified flag
+	for _, p := range t.pages {
+		p.Modified = false
 	}
 	return nil
 }
@@ -560,9 +566,14 @@ func (t *Table) Insert(values []types.Value) (row.RowID, error) {
 		return row.InvalidRowID, err
 	}
 
-	// Write page to disk immediately
-	if err := t.writePage(targetPage); err != nil {
-		return row.InvalidRowID, fmt.Errorf("failed to write page: %w", err)
+	// Write page to disk immediately (skip for temp tables)
+	if t.dataFile != nil {
+		if err := t.writePage(targetPage); err != nil {
+			return row.InvalidRowID, fmt.Errorf("failed to write page: %w", err)
+		}
+	} else {
+		// For temp tables, mark page as modified in memory
+		targetPage.Modified = true
 	}
 
 	// Record row ID to page mapping
@@ -1496,7 +1507,9 @@ func (t *Table) Update(predicate func(*row.Row) bool, updates map[int]types.Valu
 						// Need a new page
 						newPage := t.newPage()
 						newPage.InsertRow(newRowData)
-						t.writePage(newPage)
+						if t.dataFile != nil {
+							t.writePage(newPage)
+						}
 					}
 				}
 
@@ -1504,9 +1517,11 @@ func (t *Table) Update(predicate func(*row.Row) bool, updates map[int]types.Valu
 			}
 		}
 
-		// Write page if modified
+		// Write page if modified (skip for temp tables)
 		if p.Modified {
-			t.writePage(p)
+			if t.dataFile != nil {
+				t.writePage(p)
+			}
 			p.Modified = false
 		}
 	}
@@ -1580,7 +1595,9 @@ func (t *Table) UpdateWithFunc(predicate func(*row.Row) bool, updateFunc func(*r
 					} else {
 						newPage := t.newPage()
 						newPage.InsertRow(newRowData)
-						t.writePage(newPage)
+						if t.dataFile != nil {
+							t.writePage(newPage)
+						}
 					}
 				}
 
@@ -1588,9 +1605,11 @@ func (t *Table) UpdateWithFunc(predicate func(*row.Row) bool, updateFunc func(*r
 			}
 		}
 
-		// Write page if modified
+		// Write page if modified (skip for temp tables)
 		if p.Modified {
-			t.writePage(p)
+			if t.dataFile != nil {
+				t.writePage(p)
+			}
 			p.Modified = false
 		}
 	}
@@ -1647,9 +1666,11 @@ func (t *Table) Delete(predicate func(*row.Row) bool) (int, error) {
 			}
 		}
 
-		// Write page if modified
+		// Write page if modified (skip for temp tables)
 		if p.Modified {
-			t.writePage(p)
+			if t.dataFile != nil {
+				t.writePage(p)
+			}
 			p.Modified = false
 		}
 	}

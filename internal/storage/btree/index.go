@@ -46,9 +46,9 @@ type IndexInfo struct {
 
 // Index represents an index on a table.
 type Index struct {
-	Info    *IndexInfo
-	Tree    *BTree
-	mu      sync.RWMutex
+	Info *IndexInfo
+	Tree *BTree
+	mu   sync.RWMutex
 }
 
 // NewIndex creates a new index.

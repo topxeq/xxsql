@@ -14,15 +14,15 @@ import (
 
 // APIKey represents an API key for programmatic access.
 type APIKey struct {
-	ID          string    `json:"id"`           // Key identifier (e.g., "ak_abc123")
-	Name        string    `json:"name"`         // Human-readable name
-	KeyHash     string    `json:"key_hash"`     // SHA256 hash of the full key
-	Username    string    `json:"username"`     // Owner username
-	Permissions Permission `json:"permissions"`  // Granted permissions
-	CreatedAt   time.Time `json:"created_at"`
-	ExpiresAt   time.Time `json:"expires_at"`   // Zero means no expiration
-	LastUsedAt  time.Time `json:"last_used_at"`
-	Enabled     bool      `json:"enabled"`
+	ID          string     `json:"id"`          // Key identifier (e.g., "ak_abc123")
+	Name        string     `json:"name"`        // Human-readable name
+	KeyHash     string     `json:"key_hash"`    // SHA256 hash of the full key
+	Username    string     `json:"username"`    // Owner username
+	Permissions Permission `json:"permissions"` // Granted permissions
+	CreatedAt   time.Time  `json:"created_at"`
+	ExpiresAt   time.Time  `json:"expires_at"` // Zero means no expiration
+	LastUsedAt  time.Time  `json:"last_used_at"`
+	Enabled     bool       `json:"enabled"`
 }
 
 // IsExpired checks if the API key is expired.

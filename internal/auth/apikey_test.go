@@ -338,7 +338,7 @@ func TestAPIKeyManager_ValidateKey_InvalidFormat(t *testing.T) {
 	tests := []string{
 		"",
 		"invalid",
-		"xxsql_",          // too short
+		"xxsql_", // too short
 		"wrong_prefix_abc",
 	}
 

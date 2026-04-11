@@ -40,13 +40,13 @@ func (m TLSMode) String() string {
 
 // TLSConfig contains TLS configuration.
 type TLSConfig struct {
-	Enabled        bool
-	Mode           TLSMode
-	CertFile       string
-	KeyFile        string
-	CAFile         string
-	MinVersion     uint16
-	CipherSuites   []uint16
+	Enabled      bool
+	Mode         TLSMode
+	CertFile     string
+	KeyFile      string
+	CAFile       string
+	MinVersion   uint16
+	CipherSuites []uint16
 }
 
 // DefaultTLSConfig returns default TLS configuration.
@@ -66,12 +66,12 @@ func DefaultTLSConfig() *TLSConfig {
 
 // TLSManager manages TLS configuration and certificates.
 type TLSManager struct {
-	mu       sync.RWMutex
-	config   *TLSConfig
-	cert     *tls.Certificate
-	caPool   *x509.CertPool
+	mu        sync.RWMutex
+	config    *TLSConfig
+	cert      *tls.Certificate
+	caPool    *x509.CertPool
 	tlsConfig *tls.Config
-	audit    *AuditLogger
+	audit     *AuditLogger
 }
 
 // NewTLSManager creates a new TLS manager.

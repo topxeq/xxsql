@@ -49,14 +49,14 @@ type Entry struct {
 
 // Node represents a B+ tree node.
 type Node struct {
-	PageID     page.PageID
-	IsLeaf     bool
-	Keys       []Key
-	Children   []page.PageID // For internal nodes
-	Entries    []Entry       // For leaf nodes
-	Next       page.PageID   // For leaf nodes (pointer to next leaf)
-	Parent     page.PageID
-	Modified   bool
+	PageID   page.PageID
+	IsLeaf   bool
+	Keys     []Key
+	Children []page.PageID // For internal nodes
+	Entries  []Entry       // For leaf nodes
+	Next     page.PageID   // For leaf nodes (pointer to next leaf)
+	Parent   page.PageID
+	Modified bool
 }
 
 // NewNode creates a new B+ tree node.
@@ -106,7 +106,7 @@ func (n *Node) Serialize() []byte {
 		2 + // key count
 		8 + // next page ID
 		8 + // parent page ID
-		4   // reserved
+		4 // reserved
 
 	if n.IsLeaf {
 		// Leaf: entries (key + value length + value)

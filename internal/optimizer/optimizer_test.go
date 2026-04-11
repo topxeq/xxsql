@@ -176,18 +176,18 @@ func TestEstimateRangeSelectivity(t *testing.T) {
 		value    int64
 		expected float64
 	}{
-		{sql.OpLt, -10, 0.0},   // value < min
-		{sql.OpLt, 200, 1.0},   // value > max
-		{sql.OpLt, 50, 0.33},   // in range
-		{sql.OpLe, -10, 0.0},   // value < min
-		{sql.OpLe, 200, 1.0},   // value > max
-		{sql.OpLe, 50, 0.33},   // in range
-		{sql.OpGt, 200, 0.0},   // value > max
-		{sql.OpGt, -10, 1.0},   // value < min
-		{sql.OpGt, 50, 0.33},   // in range
-		{sql.OpGe, 200, 0.0},   // value > max
-		{sql.OpGe, -10, 1.0},   // value < min
-		{sql.OpGe, 50, 0.33},   // in range
+		{sql.OpLt, -10, 0.0}, // value < min
+		{sql.OpLt, 200, 1.0}, // value > max
+		{sql.OpLt, 50, 0.33}, // in range
+		{sql.OpLe, -10, 0.0}, // value < min
+		{sql.OpLe, 200, 1.0}, // value > max
+		{sql.OpLe, 50, 0.33}, // in range
+		{sql.OpGt, 200, 0.0}, // value > max
+		{sql.OpGt, -10, 1.0}, // value < min
+		{sql.OpGt, 50, 0.33}, // in range
+		{sql.OpGe, 200, 0.0}, // value > max
+		{sql.OpGe, -10, 1.0}, // value < min
+		{sql.OpGe, 50, 0.33}, // in range
 	}
 
 	for _, tt := range tests {
@@ -224,10 +224,10 @@ func TestEstimateCost(t *testing.T) {
 
 	// Test with index stats
 	indexStats := &IndexStatistics{
-		Name:        "idx_users_id",
-		Columns:     []string{"id"},
-		Height:      3,
-		Clustered:   false,
+		Name:      "idx_users_id",
+		Columns:   []string{"id"},
+		Height:    3,
+		Clustered: false,
 	}
 	cost = opt.EstimateCost("users", 1000, indexStats, 0.1)
 	if cost.Cardinality == 0 {
@@ -495,7 +495,7 @@ func TestIsEqualityCondition(t *testing.T) {
 					Op:    sql.OpEq,
 					Right: &sql.Literal{Value: "1", Type: sql.LiteralString},
 				},
-				Op:    sql.OpAnd,
+				Op: sql.OpAnd,
 				Right: &sql.BinaryExpr{
 					Left:  &sql.ColumnRef{Name: "status"},
 					Op:    sql.OpEq,

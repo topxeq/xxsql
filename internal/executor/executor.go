@@ -91,28 +91,28 @@ type Result struct {
 
 // ColumnInfo represents column information for results.
 type ColumnInfo struct {
-	Name  string
-	Type  string
-	Alias string // optional alias for ORDER BY support
+	Name  string `json:"name"`
+	Type  string `json:"type"`
+	Alias string `json:"alias,omitempty"` // optional alias for ORDER BY support
 }
 
 // Executor executes SQL queries against the storage engine.
 type Executor struct {
-	engine        *storage.Engine
-	database      string
-	perms         PermissionChecker
-	authMgr       AuthManager
-	udfManager    *UDFManager          // Old style UDF (SQL expressions)
-	scriptUDFMgr  *ScriptUDFManager    // New style UDF (XxScript)
-	outerContext  map[string]interface{} // For correlated subqueries
-	currentTable  string                 // Current table being queried (for outer context)
-	subqueryCache map[string]interface{} // Cache for non-correlated subquery results (optimization)
-	cteResults    map[string]*Result     // CTE results for WITH clause support
-	lastInsertID  int64                  // Last auto-generated insert ID
-	lastRowCount  int64                  // Number of rows affected by last operation
-	ftsManager    *fts.FTSManager        // Full-text search manager
+	engine         *storage.Engine
+	database       string
+	perms          PermissionChecker
+	authMgr        AuthManager
+	udfManager     *UDFManager            // Old style UDF (SQL expressions)
+	scriptUDFMgr   *ScriptUDFManager      // New style UDF (XxScript)
+	outerContext   map[string]interface{} // For correlated subqueries
+	currentTable   string                 // Current table being queried (for outer context)
+	subqueryCache  map[string]interface{} // Cache for non-correlated subquery results (optimization)
+	cteResults     map[string]*Result     // CTE results for WITH clause support
+	lastInsertID   int64                  // Last auto-generated insert ID
+	lastRowCount   int64                  // Number of rows affected by last operation
+	ftsManager     *fts.FTSManager        // Full-text search manager
 	pragmaSettings map[string]interface{} // PRAGMA settings
-	optimizer     *optimizer.Optimizer   // Query optimizer
+	optimizer      *optimizer.Optimizer   // Query optimizer
 
 	// Transaction state
 	inTransaction bool
@@ -355,6 +355,18 @@ func (e *Executor) ExecuteWithPerms(sqlStr string, checker PermissionChecker) (*
 			return nil, err
 		}
 		return e.executeDropTrigger(s)
+	case *sql.CreateProcedureStmt:
+		if err := checkPerm(PermCreateTable); err != nil {
+			return nil, err
+		}
+		return e.executeCreateProcedure(s)
+	case *sql.DropProcedureStmt:
+		if err := checkPerm(PermDropTable); err != nil {
+			return nil, err
+		}
+		return e.executeDropProcedure(s)
+	case *sql.CallStmt:
+		return e.executeCall(s)
 	case *sql.WithStmt:
 		if err := checkPerm(PermSelect); err != nil {
 			return nil, err
@@ -482,8 +494,8 @@ func (e *Executor) executeSelect(stmt *sql.SelectStmt) (*Result, error) {
 	var funcExprs []sql.Expression // Non-aggregate function expressions
 	var aggregateFuncs []struct {
 		name   string
-		arg    string // column name for the aggregate argument
-		index  int    // result column index
+		arg    string         // column name for the aggregate argument
+		index  int            // result column index
 		filter sql.Expression // FILTER (WHERE ...) clause
 	}
 
@@ -4341,9 +4353,29 @@ func (e *Executor) executeInsertInternal(stmt *sql.InsertStmt) (*Result, error) 
 			return nil, err
 		}
 
+		// Build NEW row data for triggers
+		newRowData := make(map[string]interface{})
+		for i, col := range tblInfo.Columns {
+			newRowData[col.Name] = e.valueToInterface(values[i])
+		}
+
 		// Fire BEFORE INSERT triggers
-		if err := e.fireTriggers(tableName, 0, 0, nil); err != nil {
+		modifiedNew, err := e.fireTriggers(tableName, 0, 0, map[string]interface{}{"NEW": newRowData})
+		if err != nil {
 			return nil, err
+		}
+
+		// Apply modifications from BEFORE trigger to values
+		if modifiedNew != nil {
+			for i, col := range tblInfo.Columns {
+				if newVal, ok := modifiedNew[col.Name]; ok {
+					values[i] = e.interfaceToValue(newVal, col)
+				}
+			}
+			// Update newRowData for AFTER trigger
+			for i, col := range tblInfo.Columns {
+				newRowData[col.Name] = e.valueToInterface(values[i])
+			}
 		}
 
 		// Insert the row (use tbl directly to support temp tables)
@@ -4352,8 +4384,8 @@ func (e *Executor) executeInsertInternal(stmt *sql.InsertStmt) (*Result, error) 
 			return nil, fmt.Errorf("insert error: %w", err)
 		}
 
-		// Fire AFTER INSERT triggers
-		if err := e.fireTriggers(tableName, 1, 0, nil); err != nil {
+		// Fire AFTER INSERT triggers with NEW row data
+		if _, err := e.fireTriggers(tableName, 1, 0, map[string]interface{}{"NEW": newRowData}); err != nil {
 			return nil, err
 		}
 
@@ -4822,9 +4854,78 @@ func (e *Executor) executeUpdateInternal(stmt *sql.UpdateStmt) (*Result, error) 
 		}
 	}
 
-	// Fire BEFORE UPDATE triggers
-	if err := e.fireTriggers(tableName, 0, 1, nil); err != nil {
-		return nil, err
+	// Collect rows that will be updated for trigger processing
+	// We need OLD values before update and will compute NEW values
+	rowsForTrigger, err := tbl.Scan()
+	if err != nil {
+		return nil, fmt.Errorf("scan error for triggers: %w", err)
+	}
+
+	type rowUpdateInfo struct {
+		oldRow  *row.Row
+		newVals []types.Value
+	}
+	var rowsToUpdate []rowUpdateInfo
+
+	for _, r := range rowsForTrigger {
+		if !predicate(r) {
+			continue
+		}
+
+		// Compute new values for this row
+		newVals := make([]types.Value, len(r.Values))
+		copy(newVals, r.Values)
+
+		// Apply pre-computed updates
+		for idx, val := range updates {
+			newVals[idx] = val
+		}
+
+		// Apply expression-based updates
+		for idx, expr := range updateExprs {
+			val, err := evaluateExprToValue(expr, r, tblInfo.Columns[idx])
+			if err != nil {
+				return nil, fmt.Errorf("failed to evaluate expression for column %s: %w", tblInfo.Columns[idx].Name, err)
+			}
+			newVals[idx] = val
+		}
+
+		rowsToUpdate = append(rowsToUpdate, rowUpdateInfo{
+			oldRow:  r,
+			newVals: newVals,
+		})
+	}
+
+	// Fire BEFORE UPDATE triggers for each row
+	for idx, info := range rowsToUpdate {
+		// Build OLD row data
+		oldRowData := make(map[string]interface{})
+		for i, col := range tblInfo.Columns {
+			oldRowData[col.Name] = e.valueToInterface(info.oldRow.Values[i])
+		}
+
+		// Build NEW row data
+		newRowData := make(map[string]interface{})
+		for i, col := range tblInfo.Columns {
+			newRowData[col.Name] = e.valueToInterface(info.newVals[i])
+		}
+
+		// Fire BEFORE UPDATE trigger
+		modifiedNew, err := e.fireTriggers(tableName, 0, 1, map[string]interface{}{"OLD": oldRowData, "NEW": newRowData})
+		if err != nil {
+			return nil, err
+		}
+
+		// Apply modifications from BEFORE trigger to newVals
+		if modifiedNew != nil {
+			for i, col := range tblInfo.Columns {
+				if newVal, ok := modifiedNew[col.Name]; ok {
+					rowsToUpdate[idx].newVals[i] = e.interfaceToValue(newVal, col)
+					// Also update the updates map so it gets used by the actual UPDATE operation
+					updates[i] = e.interfaceToValue(newVal, col)
+				}
+			}
+		}
 	}
 
 	// Handle foreign key ON UPDATE cascade
@@ -4977,9 +5078,24 @@ func (e *Executor) executeUpdateInternal(stmt *sql.UpdateStmt) (*Result, error) 
 		}
 	}
 
-	// Fire AFTER UPDATE triggers
-	if err := e.fireTriggers(tableName, 1, 1, nil); err != nil {
-		return nil, err
+	// Fire AFTER UPDATE triggers for each affected row
+	for _, info := range rowsToUpdate {
+		// Build OLD row data
+		oldRowData := make(map[string]interface{})
+		for i, col := range tblInfo.Columns {
+			oldRowData[col.Name] = e.valueToInterface(info.oldRow.Values[i])
+		}
+
+		// Build NEW row data
+		newRowData := make(map[string]interface{})
+		for i, col := range tblInfo.Columns {
+			newRowData[col.Name] = e.valueToInterface(info.newVals[i])
+		}
+
+		// Fire AFTER UPDATE trigger
+		if _, err := e.fireTriggers(tableName, 1, 1, map[string]interface{}{"OLD": oldRowData, "NEW": newRowData}); err != nil {
+			return nil, err
+		}
 	}
 
 	// Update FTS indexes
@@ -5160,18 +5276,42 @@ func (e *Executor) executeDeleteInternal(stmt *sql.DeleteStmt) (*Result, error) 
 			}
 		}
 
-		// Fire BEFORE DELETE triggers
-		if err := e.fireTriggers(tableName, 0, 2, nil); err != nil {
-			return nil, err
+		// Collect all rows for trigger processing
+		allRows, err := tbl.Scan()
+		if err != nil {
+			return nil, fmt.Errorf("scan error for triggers: %w", err)
+		}
+
+		// Fire BEFORE DELETE triggers for each row
+		for _, r := range allRows {
+			// Build OLD row data
+			oldRowData := make(map[string]interface{})
+			for i, col := range tblInfo.Columns {
+				oldRowData[col.Name] = e.valueToInterface(r.Values[i])
+			}
+
+			// Fire BEFORE DELETE trigger
+			if _, err := e.fireTriggers(tableName, 0, 2, map[string]interface{}{"OLD": oldRowData}); err != nil {
+				return nil, err
+			}
 		}
 
 		if err := tbl.Truncate(); err != nil {
 			return nil, fmt.Errorf("delete error: %w", err)
 		}
 
-		// Fire AFTER DELETE triggers
-		if err := e.fireTriggers(tableName, 1, 2, nil); err != nil {
-			return nil, err
+		// Fire AFTER DELETE triggers for each row
+		for _, r := range allRows {
+			// Build OLD row data
+			oldRowData := make(map[string]interface{})
+			for i, col := range tblInfo.Columns {
+				oldRowData[col.Name] = e.valueToInterface(r.Values[i])
+			}
+
+			// Fire AFTER DELETE trigger
+			if _, err := e.fireTriggers(tableName, 1, 2, map[string]interface{}{"OLD": oldRowData}); err != nil {
+				return nil, err
+			}
 		}
 
 		// Clear FTS indexes for the table
@@ -5280,20 +5420,35 @@ func (e *Executor) executeDeleteInternal(stmt *sql.DeleteStmt) (*Result, error) 
 		pkColName = tblInfo.Columns[0].Name
 	}
 
-	// Handle foreign key ON DELETE actions for each row
+	// Collect rows to delete for trigger processing
+	var rowsToDelete []*row.Row
 	for _, r := range rows {
 		if predicate(r) {
-			if pkColIdx < len(r.Values) {
-				if err := e.handleForeignKeyOnDelete(tableName, r.Values[pkColIdx], pkColName); err != nil {
-					return nil, err
-				}
+			rowsToDelete = append(rowsToDelete, r)
+		}
+	}
+
+	// Handle foreign key ON DELETE actions for each row
+	for _, r := range rowsToDelete {
+		if pkColIdx < len(r.Values) {
+			if err := e.handleForeignKeyOnDelete(tableName, r.Values[pkColIdx], pkColName); err != nil {
+				return nil, err
 			}
 		}
 	}
 
-	// Fire BEFORE DELETE triggers
-	if err := e.fireTriggers(tableName, 0, 2, nil); err != nil {
-		return nil, err
+	// Fire BEFORE DELETE triggers for each row
+	for _, r := range rowsToDelete {
+		// Build OLD row data
+		oldRowData := make(map[string]interface{})
+		for i, col := range tblInfo.Columns {
+			oldRowData[col.Name] = e.valueToInterface(r.Values[i])
+		}
+
+		// Fire BEFORE DELETE trigger
+		if _, err := e.fireTriggers(tableName, 0, 2, map[string]interface{}{"OLD": oldRowData}); err != nil {
+			return nil, err
+		}
 	}
 
 	// Execute delete
@@ -5302,9 +5457,18 @@ func (e *Executor) executeDeleteInternal(stmt *sql.DeleteStmt) (*Result, error) 
 		return nil, fmt.Errorf("delete error: %w", err)
 	}
 
-	// Fire AFTER DELETE triggers
-	if err := e.fireTriggers(tableName, 1, 2, nil); err != nil {
-		return nil, err
+	// Fire AFTER DELETE triggers for each row
+	for _, r := range rowsToDelete {
+		// Build OLD row data
+		oldRowData := make(map[string]interface{})
+		for i, col := range tblInfo.Columns {
+			oldRowData[col.Name] = e.valueToInterface(r.Values[i])
+		}
+
+		// Fire AFTER DELETE trigger
+		if _, err := e.fireTriggers(tableName, 1, 2, map[string]interface{}{"OLD": oldRowData}); err != nil {
+			return nil, err
+		}
 	}
 
 	// Remove deleted rows from FTS indexes
@@ -6050,7 +6214,7 @@ type UpdatableViewInfo struct {
 	BaseTableCols  []string // Column names in the base table
 	ViewColumns    []string // Column names in the view (mapped to base)
 	WhereClause    sql.Expression
-	CheckOption    string // "CASCADED", "LOCAL", or ""
+	CheckOption    string             // "CASCADED", "LOCAL", or ""
 	UnderlyingView *UpdatableViewInfo // For nested views
 }
 
@@ -6911,11 +7075,11 @@ func (e *Executor) extractColumnsFromExpr(expr sql.Expression) []string {
 
 // IndexCondition represents a condition that can use an index.
 type IndexCondition struct {
-	ColumnName  string
-	Op          sql.BinaryOp
-	Value       interface{}
-	IsRange     bool  // true for <, <=, >, >=
-	IsEquality  bool  // true for =
+	ColumnName string
+	Op         sql.BinaryOp
+	Value      interface{}
+	IsRange    bool // true for <, <=, >, >=
+	IsEquality bool // true for =
 }
 
 // extractIndexConditions extracts conditions from a WHERE clause that can use an index.
@@ -6956,11 +7120,11 @@ func (e *Executor) extractConditionsRecursive(expr sql.Expression, indexColumns 
 					value := e.extractLiteralValue(ex.Right)
 					if value != nil {
 						*conditions = append(*conditions, IndexCondition{
-							ColumnName:  colName,
-							Op:          ex.Op,
-							Value:       value,
-							IsRange:     ex.Op != sql.OpEq,
-							IsEquality:  ex.Op == sql.OpEq,
+							ColumnName: colName,
+							Op:         ex.Op,
+							Value:      value,
+							IsRange:    ex.Op != sql.OpEq,
+							IsEquality: ex.Op == sql.OpEq,
 						})
 					}
 				}
@@ -7327,8 +7491,8 @@ func (e *Executor) executeShow(stmt *sql.ShowStmt) (*Result, error) {
 
 	case "DATABASES":
 		return &Result{
-			Columns: []ColumnInfo{{Name: "Database", Type: "VARCHAR"}},
-			Rows:    [][]interface{}{{e.database}},
+			Columns:  []ColumnInfo{{Name: "Database", Type: "VARCHAR"}},
+			Rows:     [][]interface{}{{e.database}},
 			RowCount: 1,
 		}, nil
 
@@ -7529,7 +7693,7 @@ func (e *Executor) executeShowCreateTable(stmt *sql.ShowCreateTableStmt) (*Resul
 			{Name: "Table", Type: "VARCHAR"},
 			{Name: "Create Table", Type: "VARCHAR"},
 		},
-		Rows:    [][]interface{}{{stmt.TableName, sb.String()}},
+		Rows:     [][]interface{}{{stmt.TableName, sb.String()}},
 		RowCount: 1,
 	}
 	return result, nil
@@ -8111,12 +8275,12 @@ func (e *Executor) pragmaTableInfo(tableName string) (*Result, error) {
 		}
 
 		rows = append(rows, []interface{}{
-			i,              // cid
-			col.Name,       // name
-			col.Type,       // type
-			notNull,        // notnull (1 = NOT NULL, 0 = nullable)
-			dfltValue,      // dflt_value
-			pk,             // pk (0 = not PK, >0 = position in PK)
+			i,         // cid
+			col.Name,  // name
+			col.Type,  // type
+			notNull,   // notnull (1 = NOT NULL, 0 = nullable)
+			dfltValue, // dflt_value
+			pk,        // pk (0 = not PK, >0 = position in PK)
 		})
 	}
 
@@ -8161,11 +8325,11 @@ func (e *Executor) pragmaIndexList(tableName string) (*Result, error) {
 	// Add primary key index first
 	if indexMgr.HasPrimary() {
 		rows = append(rows, []interface{}{
-			seq,    // seq
+			seq,       // seq
 			"PRIMARY", // name
-			1,      // unique
-			"pk",   // origin (pk = primary key)
-			0,      // partial (0 = not partial index)
+			1,         // unique
+			"pk",      // origin (pk = primary key)
+			0,         // partial (0 = not partial index)
 		})
 		seq++
 	}
@@ -8181,11 +8345,11 @@ func (e *Executor) pragmaIndexList(tableName string) (*Result, error) {
 			unique = 1
 		}
 		rows = append(rows, []interface{}{
-			seq,       // seq
-			idxName,   // name
-			unique,    // unique
-			"c",       // origin (c = CREATE INDEX)
-			0,         // partial (0 = not partial index)
+			seq,     // seq
+			idxName, // name
+			unique,  // unique
+			"c",     // origin (c = CREATE INDEX)
+			0,       // partial (0 = not partial index)
 		})
 		seq++
 	}
@@ -8746,7 +8910,7 @@ func (e *Executor) executeCreateTrigger(stmt *sql.CreateTriggerStmt) (*Result, e
 		whenClause = stmt.WhenClause.String()
 	}
 
-	// Serialize the body statements
+	// Serialize the body statements (for SQL triggers)
 	var bodyParts []string
 	for _, s := range stmt.Body {
 		bodyParts = append(bodyParts, s.String())
@@ -8762,6 +8926,7 @@ func (e *Executor) executeCreateTrigger(stmt *sql.CreateTriggerStmt) (*Result, e
 		int(stmt.Granularity),
 		whenClause,
 		body,
+		stmt.ScriptBody, // XxScript body (if any)
 	); err != nil {
 		return nil, err
 	}
@@ -8785,14 +8950,174 @@ func (e *Executor) executeDropTrigger(stmt *sql.DropTriggerStmt) (*Result, error
 	return &Result{Message: "OK"}, nil
 }
 
+// ============================================================================
+// Stored Procedures
+// ============================================================================
+
+// executeCreateProcedure executes a CREATE PROCEDURE statement.
+func (e *Executor) executeCreateProcedure(stmt *sql.CreateProcedureStmt) (*Result, error) {
+	// Check if procedure already exists
+	if e.engine.ProcedureExists(stmt.ProcedureName) {
+		if stmt.IfNotExists {
+			return &Result{Message: "OK"}, nil
+		}
+		return nil, fmt.Errorf("procedure already exists: %s", stmt.ProcedureName)
+	}
+
+	// Convert parameters to catalog format
+	params := make([]catalog.ProcedureParamInfo, len(stmt.Params))
+	for i, p := range stmt.Params {
+		params[i] = catalog.ProcedureParamInfo{
+			Name: p.Name,
+			Type: p.Type,
+			Mode: int(p.Mode),
+		}
+	}
+
+	// Create procedure in catalog
+	if err := e.engine.CreateProcedure(stmt.ProcedureName, params, stmt.Body); err != nil {
+		return nil, err
+	}
+
+	return &Result{Message: "OK"}, nil
+}
+
+// executeDropProcedure executes a DROP PROCEDURE statement.
+func (e *Executor) executeDropProcedure(stmt *sql.DropProcedureStmt) (*Result, error) {
+	if !e.engine.ProcedureExists(stmt.ProcedureName) {
+		if stmt.IfExists {
+			return &Result{Message: "OK"}, nil
+		}
+		return nil, fmt.Errorf("procedure not found: %s", stmt.ProcedureName)
+	}
+
+	if err := e.engine.DropProcedure(stmt.ProcedureName); err != nil {
+		return nil, err
+	}
+
+	return &Result{Message: "OK"}, nil
+}
+
+// executeCall executes a CALL statement for stored procedures.
+func (e *Executor) executeCall(stmt *sql.CallStmt) (*Result, error) {
+	// Get procedure from catalog
+	proc, err := e.engine.GetProcedure(stmt.ProcedureName)
+	if err != nil {
+		return nil, fmt.Errorf("procedure not found: %s", stmt.ProcedureName)
+	}
+
+	// Check argument count (only count IN and INOUT parameters)
+	inParamCount := 0
+	for _, p := range proc.Params {
+		if p.Mode == 0 || p.Mode == 2 { // IN or INOUT
+			inParamCount++
+		}
+	}
+	if len(stmt.Args) != inParamCount {
+		return nil, fmt.Errorf("procedure %s expects %d arguments, got %d",
+			stmt.ProcedureName, inParamCount, len(stmt.Args))
+	}
+
+	// Build script with parameter values
+	var scriptBuilder strings.Builder
+
+	// Add parameters as variables
+	argIdx := 0
+	for _, p := range proc.Params {
+		scriptBuilder.WriteString("var ")
+		scriptBuilder.WriteString(p.Name)
+		scriptBuilder.WriteString(" = ")
+
+		if p.Mode == 0 || p.Mode == 2 { // IN or INOUT
+			// Get argument value
+			if argIdx < len(stmt.Args) {
+				val, err := e.evaluateExpressionForScript(stmt.Args[argIdx])
+				if err != nil {
+					return nil, fmt.Errorf("error evaluating argument %d: %w", argIdx, err)
+				}
+				e.writeValueToScript(&scriptBuilder, val)
+				argIdx++
+			}
+		} else {
+			// OUT parameter - initialize to null
+			scriptBuilder.WriteString("null")
+		}
+		scriptBuilder.WriteString("\n")
+	}
+
+	// Append the procedure body
+	scriptBuilder.WriteString(proc.Body)
+
+	// Execute the script
+	ctx := xxscript.NewContext()
+	ctx.Executor = e
+	ctx.SetupBuiltins()
+
+	result, err := xxscript.Run(scriptBuilder.String(), ctx)
+	if err != nil {
+		return nil, fmt.Errorf("procedure execution error: %w", err)
+	}
+
+	// Build result
+	res := &Result{
+		Message: "OK",
+	}
+
+	// If procedure returns a value, include it
+	if result != nil {
+		switch v := result.(type) {
+		case []interface{}:
+			// Return as rows
+			res.Rows = [][]interface{}{v}
+			res.RowCount = 1
+		case map[string]interface{}:
+			// Return as single row
+			row := make([]interface{}, 0)
+			cols := make([]ColumnInfo, 0)
+			for key, val := range v {
+				cols = append(cols, ColumnInfo{Name: key})
+				row = append(row, val)
+			}
+			res.Columns = cols
+			res.Rows = [][]interface{}{row}
+			res.RowCount = 1
+		default:
+			// Return as single value
+			res.Rows = [][]interface{}{{result}}
+			res.RowCount = 1
+		}
+	}
+
+	return res, nil
+}
+
+// evaluateExpressionForScript evaluates an expression for use in a script.
+func (e *Executor) evaluateExpressionForScript(expr sql.Expression) (interface{}, error) {
+	switch ex := expr.(type) {
+	case *sql.Literal:
+		return ex.Value, nil
+	case *sql.ColumnRef:
+		// Look up in outer context if available
+		if e.outerContext != nil {
+			if val, ok := e.outerContext[ex.Name]; ok {
+				return val, nil
+			}
+		}
+		return nil, fmt.Errorf("undefined variable: %s", ex.Name)
+	default:
+		return nil, fmt.Errorf("unsupported expression type: %T", expr)
+	}
+}
+
 // fireTriggers executes triggers for a given table and event.
-// timing: 0=BEFORE, 1=AFTER
+// timing: 0=BEFORE, 1=AFTER, 2=INSTEAD OF
 // event: 0=INSERT, 1=UPDATE, 2=DELETE
 // rowData contains OLD and NEW row data for the trigger context
-func (e *Executor) fireTriggers(tableName string, timing, event int, rowData map[string]interface{}) error {
+// Returns modified NEW row data for BEFORE triggers, or nil for AFTER triggers
+func (e *Executor) fireTriggers(tableName string, timing, event int, rowData map[string]interface{}) (map[string]interface{}, error) {
 	triggers := e.engine.GetTriggersForTable(tableName, event)
 	if len(triggers) == 0 {
-		return nil
+		return nil, nil
 	}
 
 	// Filter triggers by timing
@@ -8803,28 +9128,149 @@ func (e *Executor) fireTriggers(tableName string, timing, event int, rowData map
 		}
 	}
 
+	var modifiedNew map[string]interface{}
+
 	// Execute each matching trigger
 	for _, t := range matchingTriggers {
-		// Set up context for trigger execution (OLD and NEW references)
-		oldOuter := e.outerContext
-		e.outerContext = make(map[string]interface{})
-		for k, v := range rowData {
-			e.outerContext[k] = v
-		}
+		// Check if this is a script-based trigger
+		if t.ScriptBody != "" {
+			// Execute XxScript trigger
+			newData, err := e.executeScriptTrigger(t, rowData)
+			if err != nil {
+				return nil, fmt.Errorf("trigger %s: %w", t.Name, err)
+			}
+			// Keep track of modified NEW data for BEFORE triggers
+			if timing == 0 && newData != nil {
+				modifiedNew = newData
+				// Update rowData for subsequent triggers
+				rowData["NEW"] = newData
+			}
+		} else {
+			// Execute SQL trigger
+			// Set up context for trigger execution (OLD and NEW references)
+			oldOuter := e.outerContext
+			e.outerContext = make(map[string]interface{})
+			for k, v := range rowData {
+				e.outerContext[k] = v
+			}
 
-		// Execute each statement in the trigger body
-		// We need to execute via Execute() which handles all statement types
-		_, err := e.Execute(t.Body)
-		if err != nil {
+			// Execute each statement in the trigger body
+			// We need to execute via Execute() which handles all statement types
+			_, err := e.Execute(t.Body)
+			if err != nil {
+				e.outerContext = oldOuter
+				return nil, fmt.Errorf("trigger %s: %w", t.Name, err)
+			}
+
+			// Restore outer context
 			e.outerContext = oldOuter
-			return fmt.Errorf("trigger %s: %w", t.Name, err)
 		}
-
-		// Restore outer context
-		e.outerContext = oldOuter
 	}
 
-	return nil
+	return modifiedNew, nil
+}
+
+// executeScriptTrigger executes an XxScript-based trigger.
+// Returns the modified NEW row data if available, or nil.
+func (e *Executor) executeScriptTrigger(t *catalog.TriggerInfo, rowData map[string]interface{}) (map[string]interface{}, error) {
+	// Build script with OLD and NEW variables
+	var scriptBuilder strings.Builder
+
+	// Add OLD row data if present
+	if oldData, ok := rowData["OLD"]; ok {
+		if oldMap, ok := oldData.(map[string]interface{}); ok {
+			scriptBuilder.WriteString("var OLD = ")
+			e.writeMapToScript(&scriptBuilder, oldMap)
+			scriptBuilder.WriteString("\n")
+		}
+	}
+
+	// Add NEW row data if present
+	if newData, ok := rowData["NEW"]; ok {
+		if newMap, ok := newData.(map[string]interface{}); ok {
+			scriptBuilder.WriteString("var NEW = ")
+			e.writeMapToScript(&scriptBuilder, newMap)
+			scriptBuilder.WriteString("\n")
+		}
+	}
+
+	// Append the trigger script body
+	scriptBuilder.WriteString(t.ScriptBody)
+
+	// Execute the script with the executor as SQL executor
+	ctx := xxscript.NewContext()
+	ctx.Executor = e // The executor implements ExecuteForScript
+	ctx.SetupBuiltins()
+
+	script := scriptBuilder.String()
+	_, err := xxscript.Run(script, ctx)
+	if err != nil {
+		return nil, err
+	}
+
+	// Get the modified NEW variable from the context
+	if newVal, ok := ctx.GetVariable("NEW"); ok {
+		if newMap, ok := newVal.(map[string]interface{}); ok {
+			return newMap, nil
+		}
+		// Handle map[string]xxscript.Value (returned by XxScript)
+		if newMapValue, ok := newVal.(map[string]xxscript.Value); ok {
+			result := make(map[string]interface{})
+			for k, v := range newMapValue {
+				result[k] = v
+			}
+			return result, nil
+		}
+	}
+
+	return nil, nil
+}
+
+// writeMapToScript writes a map as a script object literal.
+func (e *Executor) writeMapToScript(sb *strings.Builder, m map[string]interface{}) {
+	sb.WriteString("{")
+	first := true
+	for k, v := range m {
+		if !first {
+			sb.WriteString(", ")
+		}
+		first = false
+		sb.WriteString("\"")
+		sb.WriteString(k)
+		sb.WriteString("\": ")
+		e.writeValueToScript(sb, v)
+	}
+	sb.WriteString("}")
+}
+
+// writeValueToScript writes a value as a script literal.
+func (e *Executor) writeValueToScript(sb *strings.Builder, v interface{}) {
+	switch val := v.(type) {
+	case string:
+		// Escape quotes in string
+		escaped := strings.ReplaceAll(val, "\\", "\\\\")
+		escaped = strings.ReplaceAll(escaped, "\"", "\\\"")
+		sb.WriteString("\"")
+		sb.WriteString(escaped)
+		sb.WriteString("\"")
+	case nil:
+		sb.WriteString("null")
+	case bool:
+		if val {
+			sb.WriteString("true")
+		} else {
+			sb.WriteString("false")
+		}
+	case int:
+		sb.WriteString(fmt.Sprintf("%d", val))
+	case int64:
+		sb.WriteString(fmt.Sprintf("%d", val))
+	case float64:
+		sb.WriteString(fmt.Sprintf("%v", val))
+	default:
+		// Try to convert to string
+		sb.WriteString(fmt.Sprintf("\"%v\"", val))
+	}
 }
 
 // executeTruncate executes a TRUNCATE TABLE statement.
@@ -14835,7 +15281,7 @@ func timestampDiff(unit string, t1, t2 time.Time) int64 {
 		// Approximate
 		return int64(int(t2.Month()) - int(t1.Month()) + 12*(t2.Year()-t1.Year()))
 	case "QUARTER":
-		months := int64(int(t2.Month())-int(t1.Month()) + 12*(t2.Year()-t1.Year()))
+		months := int64(int(t2.Month()) - int(t1.Month()) + 12*(t2.Year()-t1.Year()))
 		return months / 3
 	case "YEAR":
 		return int64(t2.Year() - t1.Year())
@@ -15906,12 +16352,8 @@ func jsonType(jsonStr string) string {
 	case bool:
 		return "BOOLEAN"
 	case float64:
+		// Note: JSON numbers are always float64 in Go
 		return "INTEGER"
-		// Note: JSON numbers are always float64 in Go, but we check if it's an integer
-		if f, ok := data.(float64); ok && f == float64(int64(f)) {
-			return "INTEGER"
-		}
-		return "DOUBLE"
 	case string:
 		return "STRING"
 	case []interface{}:

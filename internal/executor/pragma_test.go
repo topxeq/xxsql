@@ -167,10 +167,10 @@ func TestPragmaSynchronous(t *testing.T) {
 	exec := NewExecutor(engine)
 
 	tests := []struct {
-		name     string
-		sql      string
-		value    int64
-		valid    bool
+		name  string
+		sql   string
+		value int64
+		valid bool
 	}{
 		{"OFF", "PRAGMA synchronous = 0", 0, true},
 		{"NORMAL", "PRAGMA synchronous = 1", 1, true},

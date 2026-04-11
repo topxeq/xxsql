@@ -19,8 +19,8 @@ import (
 
 // joinTable represents a table in the join context.
 type joinTable struct {
-	name     string            // table name
-	alias    string            // optional alias (takes precedence for lookup)
+	name     string // table name
+	alias    string // optional alias (takes precedence for lookup)
 	columns  []*types.ColumnInfo
 	rows     []*row.Row
 	colIndex map[string]int // column name (lowercase) -> index

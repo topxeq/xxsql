@@ -14,117 +14,117 @@ type Position struct {
 
 // XxSqlError represents a structured error with comprehensive information.
 type XxSqlError struct {
-	Code     int               // Primary error code (1xxx-6xxx ranges)
-	SubCode  int               // Secondary code for detail
-	SQLState string            // SQL standard state code (5 chars)
-	Message  string            // User-facing message
-	Detail   string            // Technical details
-	Hint     string            // Suggested fix
-	Position *Position         // Line/column in SQL
-	Context  map[string]any    // Additional context
+	Code     int            // Primary error code (1xxx-6xxx ranges)
+	SubCode  int            // Secondary code for detail
+	SQLState string         // SQL standard state code (5 chars)
+	Message  string         // User-facing message
+	Detail   string         // Technical details
+	Hint     string         // Suggested fix
+	Position *Position      // Line/column in SQL
+	Context  map[string]any // Additional context
 }
 
 // Error codes organized by category (1xxx-6xxx ranges)
 const (
 	// Connection errors (1xxx)
-	ErrConnectionFailed     = 1001
-	ErrConnectionTimeout    = 1002
-	ErrConnectionRefused    = 1003
-	ErrConnectionReset      = 1004
-	ErrTooManyConnections   = 1005
-	ErrConnectionClosed     = 1006
-	ErrAuthFailed           = 1007
-	ErrAuthTimeout          = 1008
-	ErrPermissionDenied     = 1009
+	ErrConnectionFailed   = 1001
+	ErrConnectionTimeout  = 1002
+	ErrConnectionRefused  = 1003
+	ErrConnectionReset    = 1004
+	ErrTooManyConnections = 1005
+	ErrConnectionClosed   = 1006
+	ErrAuthFailed         = 1007
+	ErrAuthTimeout        = 1008
+	ErrPermissionDenied   = 1009
 
 	// Protocol errors (2xxx)
-	ErrProtocolViolation    = 2001
-	ErrInvalidMessage       = 2002
-	ErrMessageTooLarge      = 2003
-	ErrInvalidEncoding      = 2004
-	ErrHandshakeFailed      = 2005
+	ErrProtocolViolation = 2001
+	ErrInvalidMessage    = 2002
+	ErrMessageTooLarge   = 2003
+	ErrInvalidEncoding   = 2004
+	ErrHandshakeFailed   = 2005
 
 	// SQL parsing errors (3xxx)
-	ErrSyntaxError          = 3001
-	ErrInvalidToken         = 3002
-	ErrUnexpectedToken      = 3003
-	ErrUnterminatedString   = 3004
-	ErrUnterminatedIdent    = 3005
-	ErrInvalidNumber        = 3006
-	ErrInvalidIdentifier    = 3007
-	ErrReservedWord         = 3008
+	ErrSyntaxError        = 3001
+	ErrInvalidToken       = 3002
+	ErrUnexpectedToken    = 3003
+	ErrUnterminatedString = 3004
+	ErrUnterminatedIdent  = 3005
+	ErrInvalidNumber      = 3006
+	ErrInvalidIdentifier  = 3007
+	ErrReservedWord       = 3008
 
 	// Semantic errors (4xxx)
-	ErrUndefinedTable       = 4001
-	ErrUndefinedColumn      = 4002
-	ErrUndefinedFunction    = 4003
-	ErrAmbiguousColumn      = 4004
-	ErrDuplicateTable       = 4005
-	ErrDuplicateColumn      = 4006
-	ErrDuplicateIndex       = 4007
-	ErrTypeMismatch         = 4008
-	ErrInvalidCast          = 4009
-	ErrDivisionByZero       = 4010
-	ErrNullViolation        = 4011
-	ErrUniqueViolation      = 4012
-	ErrForeignKeyViolation  = 4013
-	ErrCheckViolation       = 4014
-	ErrInvalidConstraint    = 4015
-	ErrTableExists          = 4016
-	ErrIndexExists          = 4017
-	ErrDatabaseExists       = 4018
-	ErrDatabaseNotFound     = 4019
+	ErrUndefinedTable      = 4001
+	ErrUndefinedColumn     = 4002
+	ErrUndefinedFunction   = 4003
+	ErrAmbiguousColumn     = 4004
+	ErrDuplicateTable      = 4005
+	ErrDuplicateColumn     = 4006
+	ErrDuplicateIndex      = 4007
+	ErrTypeMismatch        = 4008
+	ErrInvalidCast         = 4009
+	ErrDivisionByZero      = 4010
+	ErrNullViolation       = 4011
+	ErrUniqueViolation     = 4012
+	ErrForeignKeyViolation = 4013
+	ErrCheckViolation      = 4014
+	ErrInvalidConstraint   = 4015
+	ErrTableExists         = 4016
+	ErrIndexExists         = 4017
+	ErrDatabaseExists      = 4018
+	ErrDatabaseNotFound    = 4019
 
 	// Execution errors (5xxx)
-	ErrQueryFailed          = 5001
-	ErrInsertFailed         = 5002
-	ErrUpdateFailed         = 5003
-	ErrDeleteFailed         = 5004
-	ErrTransactionFailed    = 5005
-	ErrDeadlockDetected     = 5006
-	ErrLockTimeout          = 5007
-	ErrRollbackFailed       = 5008
-	ErrSavepointFailed      = 5009
+	ErrQueryFailed             = 5001
+	ErrInsertFailed            = 5002
+	ErrUpdateFailed            = 5003
+	ErrDeleteFailed            = 5004
+	ErrTransactionFailed       = 5005
+	ErrDeadlockDetected        = 5006
+	ErrLockTimeout             = 5007
+	ErrRollbackFailed          = 5008
+	ErrSavepointFailed         = 5009
 	ErrPreparedStatementFailed = 5010
-	ErrInvalidCursor        = 5011
-	ErrBufferOverflow       = 5012
-	ErrMemoryLimitExceeded  = 5013
+	ErrInvalidCursor           = 5011
+	ErrBufferOverflow          = 5012
+	ErrMemoryLimitExceeded     = 5013
 
 	// Internal errors (6xxx)
-	ErrInternalError        = 6001
-	ErrStorageError         = 6002
-	ErrIndexError           = 6003
-	ErrCacheError           = 6004
-	ErrWALError             = 6005
-	ErrCheckpointError      = 6006
-	ErrRecoveryError        = 6007
-	ErrCorruptionDetected   = 6008
-	ErrBackupError          = 6009
-	ErrConfigError          = 6010
-	ErrLogFileError         = 6011
+	ErrInternalError      = 6001
+	ErrStorageError       = 6002
+	ErrIndexError         = 6003
+	ErrCacheError         = 6004
+	ErrWALError           = 6005
+	ErrCheckpointError    = 6006
+	ErrRecoveryError      = 6007
+	ErrCorruptionDetected = 6008
+	ErrBackupError        = 6009
+	ErrConfigError        = 6010
+	ErrLogFileError       = 6011
 )
 
 // SQL state codes (SQL standard)
 const (
-	SQLStateConnectionException    = "08000"
-	SQLStateConnectionDoesNotExist = "08003"
-	SQLStateConnectionFailure      = "08006"
-	SQLStateSyntaxError            = "42000"
-	SQLStateInvalidTableDefinition = "42P01"
-	SQLStateInvalidColumnDefinition = "42701"
-	SQLStateDuplicateObject        = "42710"
-	SQLStateUndefinedObject        = "42704"
-	SQLStateAmbiguousColumn        = "42702"
+	SQLStateConnectionException          = "08000"
+	SQLStateConnectionDoesNotExist       = "08003"
+	SQLStateConnectionFailure            = "08006"
+	SQLStateSyntaxError                  = "42000"
+	SQLStateInvalidTableDefinition       = "42P01"
+	SQLStateInvalidColumnDefinition      = "42701"
+	SQLStateDuplicateObject              = "42710"
+	SQLStateUndefinedObject              = "42704"
+	SQLStateAmbiguousColumn              = "42702"
 	SQLStateIntegrityConstraintViolation = "23000"
-	SQLStateUniqueViolation        = "23505"
-	SQLStateForeignKeyViolation    = "23503"
-	SQLStateCheckViolation         = "23514"
-	SQLStateNullViolation          = "23502"
-	SQLStateDivisionByZero         = "22012"
-	SQLStateInternalError          = "XX000"
-	SQLStateDataCorruption         = "XX001"
-	SQLStateDiskFull               = "53100"
-	SQLStateOutOfMemory            = "53000"
+	SQLStateUniqueViolation              = "23505"
+	SQLStateForeignKeyViolation          = "23503"
+	SQLStateCheckViolation               = "23514"
+	SQLStateNullViolation                = "23502"
+	SQLStateDivisionByZero               = "22012"
+	SQLStateInternalError                = "XX000"
+	SQLStateDataCorruption               = "XX001"
+	SQLStateDiskFull                     = "53100"
+	SQLStateOutOfMemory                  = "53000"
 )
 
 // Error implements the error interface.

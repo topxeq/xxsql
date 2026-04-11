@@ -151,6 +151,20 @@ func (p *Parser) isIdentOrKeyword() bool {
 	return p.curTokenIs(TokIdent) || p.isKeywordAsIdent()
 }
 
+// isDataType checks if current token is a data type keyword.
+func (p *Parser) isDataType() bool {
+	switch p.currTok.Type {
+	case TokInt, TokInteger, TokBigInt, TokSmallInt, TokTinyInt,
+		TokFloat, TokDouble, TokDecimal, TokNumeric,
+		TokChar, TokVarchar, TokText,
+		TokDate, TokTime, TokDateTime, TokTimestamp,
+		TokBool, TokBoolean, TokBlob, TokSeq:
+		return true
+	default:
+		return false
+	}
+}
+
 // peekTokenIs checks if the peek token is of the given type.
 func (p *Parser) peekTokenIs(t TokenType) bool {
 	return p.peekTok.Type == t
@@ -249,6 +263,8 @@ func (p *Parser) parseStatement() Statement {
 		return p.parseCopy()
 	case TokLoad:
 		return p.parseLoadData()
+	case TokCall:
+		return p.parseCall()
 	case TokLParen:
 		// Could be a parenthesized SELECT
 		if withClause != nil {
@@ -1146,10 +1162,12 @@ func (p *Parser) parseCreate() Statement {
 		return p.parseCreateFunction()
 	case TokTrigger:
 		return p.parseCreateTrigger()
+	case TokProcedure:
+		return p.parseCreateProcedure()
 	case TokFts:
 		return p.parseCreateFTS()
 	default:
-		p.error("expected TABLE, INDEX, FTS, VIEW, USER, FUNCTION or TRIGGER after CREATE")
+		p.error("expected TABLE, INDEX, FTS, VIEW, USER, FUNCTION, PROCEDURE or TRIGGER after CREATE")
 		return nil
 	}
 }
@@ -1662,10 +1680,12 @@ func (p *Parser) parseDrop() Statement {
 		return p.parseDropFunction()
 	case TokTrigger:
 		return p.parseDropTrigger()
+	case TokProcedure:
+		return p.parseDropProcedure()
 	case TokFts:
 		return p.parseDropFTS()
 	default:
-		p.error("expected TABLE, INDEX, FTS, VIEW, USER, FUNCTION or TRIGGER after DROP")
+		p.error("expected TABLE, INDEX, FTS, VIEW, USER, FUNCTION, PROCEDURE or TRIGGER after DROP")
 		return nil
 	}
 }
@@ -1927,8 +1947,9 @@ func (p *Parser) parseReleaseSavepoint() Statement {
 
 // parseCopy parses a COPY statement for bulk import/export.
 // Syntax:
-//   COPY table FROM 'file.csv' WITH (FORMAT csv, HEADER true, DELIMITER ',')
-//   COPY (SELECT ...) TO 'file.csv' WITH (FORMAT csv, HEADER true)
+//
+//	COPY table FROM 'file.csv' WITH (FORMAT csv, HEADER true, DELIMITER ',')
+//	COPY (SELECT ...) TO 'file.csv' WITH (FORMAT csv, HEADER true)
 func (p *Parser) parseCopy() Statement {
 	p.nextToken() // consume COPY
 
@@ -1994,59 +2015,59 @@ func (p *Parser) parseCopy() Statement {
 			}
 
 			switch option {
-				case "FORMAT":
-					if !p.curTokenIs(TokIdent) {
-						p.error("expected format value")
-						return nil
+			case "FORMAT":
+				if !p.curTokenIs(TokIdent) {
+					p.error("expected format value")
+					return nil
+				}
+				stmt.Format = strings.ToLower(p.currTok.Value)
+				p.nextToken()
+
+			case "HEADER":
+				if p.curTokenIs(TokBoolLit) || p.curTokenIs(TokIdent) {
+					if p.currTok.Value == "true" || p.currTok.Value == "TRUE" {
+						stmt.Header = true
 					}
-					stmt.Format = strings.ToLower(p.currTok.Value)
 					p.nextToken()
-
-				case "HEADER":
-					if p.curTokenIs(TokBoolLit) || p.curTokenIs(TokIdent) {
-						if p.currTok.Value == "true" || p.currTok.Value == "TRUE" {
-							stmt.Header = true
-						}
-						p.nextToken()
-					} else if p.curTokenIs(TokNumber) {
-						if p.currTok.Value == "1" {
-							stmt.Header = true
-						}
-						p.nextToken()
+				} else if p.curTokenIs(TokNumber) {
+					if p.currTok.Value == "1" {
+						stmt.Header = true
 					}
-
-				case "DELIMITER":
-					if !p.curTokenIs(TokString) {
-						p.error("expected delimiter string")
-						return nil
-					}
-					stmt.Delimiter = p.currTok.Value
-					p.nextToken()
-
-				case "QUOTE":
-					if !p.curTokenIs(TokString) {
-						p.error("expected quote string")
-						return nil
-					}
-					stmt.Quote = p.currTok.Value
-					p.nextToken()
-
-				case "NULL":
-					if !p.curTokenIs(TokString) {
-						p.error("expected null string")
-						return nil
-					}
-					stmt.NullString = p.currTok.Value
-					p.nextToken()
-
-				case "ENCODING":
-					if !p.curTokenIs(TokIdent) {
-						p.error("expected encoding value")
-						return nil
-					}
-					stmt.Encoding = strings.ToLower(p.currTok.Value)
 					p.nextToken()
 				}
+
+			case "DELIMITER":
+				if !p.curTokenIs(TokString) {
+					p.error("expected delimiter string")
+					return nil
+				}
+				stmt.Delimiter = p.currTok.Value
+				p.nextToken()
+
+			case "QUOTE":
+				if !p.curTokenIs(TokString) {
+					p.error("expected quote string")
+					return nil
+				}
+				stmt.Quote = p.currTok.Value
+				p.nextToken()
+
+			case "NULL":
+				if !p.curTokenIs(TokString) {
+					p.error("expected null string")
+					return nil
+				}
+				stmt.NullString = p.currTok.Value
+				p.nextToken()
+
+			case "ENCODING":
+				if !p.curTokenIs(TokIdent) {
+					p.error("expected encoding value")
+					return nil
+				}
+				stmt.Encoding = strings.ToLower(p.currTok.Value)
+				p.nextToken()
+			}
 
 			if !p.curTokenIs(TokComma) {
 				break
@@ -2075,11 +2096,12 @@ func (p *Parser) parseCopy() Statement {
 
 // parseLoadData parses a LOAD DATA INFILE statement (MySQL style).
 // Syntax:
-//   LOAD DATA INFILE 'file.csv' [IGNORE] INTO TABLE table_name
-//     FIELDS TERMINATED BY ',' ENCLOSED BY '"' ESCAPED BY '\\'
-//     LINES TERMINATED BY '\n' STARTING BY ''
-//     IGNORE 1 ROWS
-//     (col1, col2, ...)
+//
+//	LOAD DATA INFILE 'file.csv' [IGNORE] INTO TABLE table_name
+//	  FIELDS TERMINATED BY ',' ENCLOSED BY '"' ESCAPED BY '\\'
+//	  LINES TERMINATED BY '\n' STARTING BY ''
+//	  IGNORE 1 ROWS
+//	  (col1, col2, ...)
 func (p *Parser) parseLoadData() Statement {
 	p.nextToken() // consume LOAD
 
@@ -2994,7 +3016,8 @@ func (p *Parser) parseWindowFunction(fc *FunctionCall, ignoreNulls, respectNulls
 
 // parseFrameSpec parses a window frame clause.
 // Syntax: ROWS BETWEEN bound AND bound
-//         RANGE BETWEEN bound AND bound
+//
+//	RANGE BETWEEN bound AND bound
 func (p *Parser) parseFrameSpec() *FrameSpec {
 	frame := &FrameSpec{}
 
@@ -3941,6 +3964,7 @@ func (p *Parser) parseShowGrants() *ShowGrantsStmt {
 //   - Old: CREATE FUNCTION name(param1 TYPE, param2 TYPE) RETURNS TYPE RETURN expression
 //   - New: CREATE FUNCTION name(param1, param2) RETURNS TYPE AS $$ script $$
 //   - New: CREATE FUNCTION name(param1, param2) RETURNS TYPE SCRIPT 'script'
+//
 // Current token should be FUNCTION keyword.
 func (p *Parser) parseCreateFunction() *CreateFunctionStmt {
 	p.nextToken() // consume FUNCTION keyword
@@ -4071,29 +4095,6 @@ func (p *Parser) readDollarQuotedString() string {
 	return result.String()
 }
 
-// isDataType checks if current token is a data type keyword.
-func (p *Parser) isDataType() bool {
-	switch p.currTok.Type {
-	case TokInt, TokBigInt, TokSmallInt, TokTinyInt,
-		TokFloat, TokDouble, TokDecimal, TokNumeric,
-		TokChar, TokVarchar, TokText,
-		TokDate, TokTime, TokDateTime, TokTimestamp,
-		TokBool, TokBoolean, TokBlob, TokSeq:
-		return true
-	case TokIdent:
-		// Check for type names like INT, VARCHAR etc as identifiers
-		switch strings.ToUpper(p.currTok.Value) {
-		case "INT", "INTEGER", "BIGINT", "SMALLINT", "TINYINT",
-			"FLOAT", "DOUBLE", "DECIMAL", "NUMERIC", "REAL",
-			"CHAR", "VARCHAR", "TEXT", "STRING",
-			"DATE", "TIME", "DATETIME", "TIMESTAMP",
-			"BOOL", "BOOLEAN", "BLOB", "SEQ":
-			return true
-		}
-	}
-	return false
-}
-
 // peekToken returns the next token without consuming it.
 func (p *Parser) peekToken() Token {
 	return p.peekTok
@@ -4220,25 +4221,40 @@ func (p *Parser) parseCreateTrigger() *CreateTriggerStmt {
 		}
 	}
 
-	// BEGIN ... END block
-	if !p.expect(TokBegin) {
-		return nil
-	}
-
-	// Parse statements until END
-	for !p.curTokenIs(TokEnd) && p.err == nil {
-		s := p.parseStatement()
-		if s != nil {
-			stmt.Body = append(stmt.Body, s)
-		}
-		// Skip optional semicolon
-		if p.curTokenIs(TokSemi) {
+	// Body: AS $$ script $$ or BEGIN ... END block
+	if p.curTokenIs(TokAs) {
+		// AS $$ script $$ syntax for XxScript trigger
+		p.nextToken()
+		if p.curTokenIs(TokString) {
+			// AS 'script' syntax
+			stmt.ScriptBody = p.currTok.Value
 			p.nextToken()
+		} else {
+			// Read until $$ or end
+			script := p.readDollarQuotedString()
+			stmt.ScriptBody = script
 		}
-	}
+	} else {
+		// BEGIN ... END block (SQL trigger)
+		if !p.expect(TokBegin) {
+			return nil
+		}
 
-	if !p.expect(TokEnd) {
-		return nil
+		// Parse statements until END
+		for !p.curTokenIs(TokEnd) && p.err == nil {
+			s := p.parseStatement()
+			if s != nil {
+				stmt.Body = append(stmt.Body, s)
+			}
+			// Skip optional semicolon
+			if p.curTokenIs(TokSemi) {
+				p.nextToken()
+			}
+		}
+
+		if !p.expect(TokEnd) {
+			return nil
+		}
 	}
 
 	return stmt
@@ -4273,6 +4289,173 @@ func (p *Parser) parseDropTrigger() *DropTriggerStmt {
 		if p.curTokenIs(TokIdent) {
 			stmt.TableName = p.currTok.Value
 			p.nextToken()
+		}
+	}
+
+	return stmt
+}
+
+// parseCreateProcedure parses a CREATE PROCEDURE statement.
+// Syntax: CREATE PROCEDURE [IF NOT EXISTS] name([params]) AS $$ script $$
+func (p *Parser) parseCreateProcedure() *CreateProcedureStmt {
+	p.nextToken() // consume PROCEDURE
+
+	stmt := &CreateProcedureStmt{}
+
+	// IF NOT EXISTS
+	if p.curTokenIs(TokIf) {
+		p.nextToken()
+		if !p.expect(TokNot) {
+			return nil
+		}
+		if !p.expect(TokExists) {
+			return nil
+		}
+		stmt.IfNotExists = true
+	}
+
+	// Procedure name
+	if !p.curTokenIs(TokIdent) {
+		p.error("expected procedure name")
+		return nil
+	}
+	stmt.ProcedureName = p.currTok.Value
+	p.nextToken()
+
+	// Parameters (optional)
+	if !p.expect(TokLParen) {
+		return nil
+	}
+
+	for !p.curTokenIs(TokRParen) && p.err == nil {
+		param := ProcedureParam{Mode: ParamModeIn} // default IN
+
+		// Parameter mode: IN, OUT, INOUT
+		if p.curTokenIs(TokIn) {
+			if p.peekTokenIs(TokIdent) || p.isDataType() {
+				// Could be "IN name" or just "IN" as type
+				p.nextToken()
+				if p.curTokenIs(TokOut) {
+					// INOUT
+					param.Mode = ParamModeInout
+					p.nextToken()
+				}
+				// Otherwise it's just IN (already default)
+			}
+		} else if p.curTokenIs(TokOut) {
+			param.Mode = ParamModeOut
+			p.nextToken()
+		} else if p.curTokenIs(TokInout) {
+			param.Mode = ParamModeInout
+			p.nextToken()
+		}
+
+		// Parameter name
+		if !p.curTokenIs(TokIdent) {
+			p.error("expected parameter name")
+			return nil
+		}
+		param.Name = p.currTok.Value
+		p.nextToken()
+
+		// Parameter type
+		if !p.isDataType() && !p.curTokenIs(TokIdent) {
+			p.error("expected parameter type")
+			return nil
+		}
+		param.Type = p.currTok.Value
+		p.nextToken()
+
+		stmt.Params = append(stmt.Params, param)
+
+		// Comma between parameters
+		if p.curTokenIs(TokComma) {
+			p.nextToken()
+		}
+	}
+
+	if !p.expect(TokRParen) {
+		return nil
+	}
+
+	// Body: AS $$ script $$
+	if !p.expect(TokAs) {
+		return nil
+	}
+
+	// Read the dollar-quoted string
+	if p.curTokenIs(TokString) {
+		// AS 'script' syntax
+		stmt.Body = p.currTok.Value
+		p.nextToken()
+	} else {
+		// Read until $$ or end
+		stmt.Body = p.readDollarQuotedString()
+	}
+
+	return stmt
+}
+
+// parseDropProcedure parses a DROP PROCEDURE statement.
+// Syntax: DROP PROCEDURE [IF EXISTS] name
+func (p *Parser) parseDropProcedure() *DropProcedureStmt {
+	p.nextToken() // consume PROCEDURE
+
+	stmt := &DropProcedureStmt{}
+
+	// IF EXISTS
+	if p.curTokenIs(TokIf) {
+		p.nextToken()
+		if !p.expect(TokExists) {
+			return nil
+		}
+		stmt.IfExists = true
+	}
+
+	// Procedure name
+	if !p.curTokenIs(TokIdent) {
+		p.error("expected procedure name")
+		return nil
+	}
+	stmt.ProcedureName = p.currTok.Value
+	p.nextToken()
+
+	return stmt
+}
+
+// parseCall parses a CALL statement.
+// Syntax: CALL procedure_name([args])
+func (p *Parser) parseCall() *CallStmt {
+	p.nextToken() // consume CALL
+
+	stmt := &CallStmt{}
+
+	// Procedure name
+	if !p.curTokenIs(TokIdent) {
+		p.error("expected procedure name")
+		return nil
+	}
+	stmt.ProcedureName = p.currTok.Value
+	p.nextToken()
+
+	// Arguments (optional)
+	if p.curTokenIs(TokLParen) {
+		p.nextToken()
+
+		for !p.curTokenIs(TokRParen) && p.err == nil {
+			arg := p.parseExpression()
+			if arg == nil {
+				return nil
+			}
+			stmt.Args = append(stmt.Args, arg)
+
+			if p.curTokenIs(TokComma) {
+				p.nextToken()
+			}
+		}
+
+		if !p.expect(TokRParen) {
+			return nil
 		}
 	}
 

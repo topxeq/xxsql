@@ -19,9 +19,9 @@ type PasswordPolicy struct {
 	RequireDigit     bool
 	RequireSpecial   bool
 	MinSpecialChars  int
-	ExpireDays       int       // 0 = no expiration
-	HistoryCount     int       // Number of previous passwords to check
-	LockoutAttempts  int       // Failed attempts before lockout
+	ExpireDays       int // 0 = no expiration
+	HistoryCount     int // Number of previous passwords to check
+	LockoutAttempts  int // Failed attempts before lockout
 	LockoutDuration  time.Duration
 }
 
@@ -45,8 +45,8 @@ func DefaultPasswordPolicy() *PasswordPolicy {
 // PasswordValidator validates passwords against a policy.
 type PasswordValidator struct {
 	policy     *PasswordPolicy
-	history    map[string][]string      // username -> password hashes
-	expiration map[string]time.Time     // username -> expiration time
+	history    map[string][]string  // username -> password hashes
+	expiration map[string]time.Time // username -> expiration time
 	mu         sync.RWMutex
 	audit      *AuditLogger
 }
@@ -360,9 +360,9 @@ func GenerateRandomPassword(policy *PasswordPolicy) (string, error) {
 	}
 
 	const (
-		upperChars  = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
-		lowerChars  = "abcdefghijklmnopqrstuvwxyz"
-		digitChars  = "0123456789"
+		upperChars   = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+		lowerChars   = "abcdefghijklmnopqrstuvwxyz"
+		digitChars   = "0123456789"
 		specialChars = "!@#$%^&*()-_=+[]{}|;:,.<>?"
 	)
 

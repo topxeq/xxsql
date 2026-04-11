@@ -68,13 +68,13 @@ var RolePermissions = map[UserRole]Permission{
 
 // User represents a database user.
 type User struct {
-	ID             uint64
-	Username       string
-	PasswordHash   string     // bcrypt hash for internal auth
-	MySQLAuthHash  []byte     // SHA1(SHA1(password)) for MySQL native auth
-	Role           UserRole
-	CreatedAt      time.Time
-	UpdatedAt      time.Time
+	ID            uint64
+	Username      string
+	PasswordHash  string // bcrypt hash for internal auth
+	MySQLAuthHash []byte // SHA1(SHA1(password)) for MySQL native auth
+	Role          UserRole
+	CreatedAt     time.Time
+	UpdatedAt     time.Time
 }
 
 // TablePrivilege represents privileges on a specific table.
@@ -129,15 +129,15 @@ type DatabasePrivilege struct {
 
 // GlobalPrivilege represents global privileges.
 type GlobalPrivilege struct {
-	Select   bool
-	Insert   bool
-	Update   bool
-	Delete   bool
-	Create   bool
-	Drop     bool
-	Index    bool
-	Alter    bool
-	Grant    bool // WITH GRANT OPTION
+	Select bool
+	Insert bool
+	Update bool
+	Delete bool
+	Create bool
+	Drop   bool
+	Index  bool
+	Alter  bool
+	Grant  bool // WITH GRANT OPTION
 }
 
 // Session represents an authenticated session.
@@ -164,19 +164,19 @@ func (s *Session) HasPermission(perm Permission) bool {
 
 // Manager manages users and sessions.
 type Manager struct {
-	mu              sync.RWMutex
-	users           map[string]*User       // username -> User
-	usersByID       map[uint64]*User       // id -> User
-	sessions        map[string]*Session    // sessionID -> Session
-	nextUserID      uint64
-	sessionTTL      time.Duration
-	dataDir         string                 // directory for persistence
-	persistFile     string                 // path to users file
-	grantsFile      string                 // path to grants file
+	mu          sync.RWMutex
+	users       map[string]*User    // username -> User
+	usersByID   map[uint64]*User    // id -> User
+	sessions    map[string]*Session // sessionID -> Session
+	nextUserID  uint64
+	sessionTTL  time.Duration
+	dataDir     string // directory for persistence
+	persistFile string // path to users file
+	grantsFile  string // path to grants file
 	// Grant storage
-	globalGrants    map[string]*GlobalPrivilege       // username -> global privileges
-	dbGrants        map[string]map[string]*DatabasePrivilege  // username -> database -> db privileges
-	tableGrants     map[string]map[string]map[string]*TablePrivilege // username -> database -> table -> table privileges
+	globalGrants map[string]*GlobalPrivilege                      // username -> global privileges
+	dbGrants     map[string]map[string]*DatabasePrivilege         // username -> database -> db privileges
+	tableGrants  map[string]map[string]map[string]*TablePrivilege // username -> database -> table -> table privileges
 }
 
 // ManagerOption is a functional option for Manager.
@@ -189,7 +189,7 @@ func WithSessionTTL(ttl time.Duration) ManagerOption {
 	}
 }
 
-//WithDataDir sets the data directory for persistence.
+// WithDataDir sets the data directory for persistence.
 func WithDataDir(dir string) ManagerOption {
 	return func(m *Manager) {
 		m.dataDir = dir
@@ -1207,8 +1207,8 @@ func formatTablePrivilege(priv *TablePrivilege) string {
 
 // grantsPersistData is the JSON structure for grants persistence.
 type grantsPersistData struct {
-	GlobalGrants map[string]*GlobalPrivilege            `json:"global_grants"`
-	DbGrants     map[string]map[string]*DatabasePrivilege `json:"db_grants"`
+	GlobalGrants map[string]*GlobalPrivilege                      `json:"global_grants"`
+	DbGrants     map[string]map[string]*DatabasePrivilege         `json:"db_grants"`
 	TableGrants  map[string]map[string]map[string]*TablePrivilege `json:"table_grants"`
 }
 

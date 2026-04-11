@@ -53,10 +53,10 @@ const (
 	CharacterSetUTF8MB4 = 45
 
 	// Command types
-	ComQuit     = 0x01
-	ComInitDB   = 0x02
-	ComQuery    = 0x03
-	ComPing     = 0x0E
+	ComQuit        = 0x01
+	ComInitDB      = 0x02
+	ComQuery       = 0x03
+	ComPing        = 0x0E
 	ComStmtPrepare = 0x16
 	ComStmtExecute = 0x17
 	ComStmtClose   = 0x19
@@ -69,14 +69,14 @@ const (
 
 // serverHandshake represents the server's initial handshake packet.
 type serverHandshake struct {
-	protocolVersion  uint8
-	serverVersion    string
-	connectionID     uint32
-	authPluginData   []byte // 20 bytes
-	capabilityFlags  uint32
-	characterSet     uint8
-	statusFlags      uint16
-	authPluginName   string
+	protocolVersion uint8
+	serverVersion   string
+	connectionID    uint32
+	authPluginData  []byte // 20 bytes
+	capabilityFlags uint32
+	characterSet    uint8
+	statusFlags     uint16
+	authPluginName  string
 }
 
 // mysqlConn represents a MySQL protocol connection.

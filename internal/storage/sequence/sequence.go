@@ -28,13 +28,13 @@ type Sequence struct {
 
 // SequenceConfig holds configuration for creating a sequence.
 type SequenceConfig struct {
-	Name       string
-	Start      int64
-	Increment  int64
-	MinValue   int64
-	MaxValue   int64
-	Cycle      bool
-	CacheSize  int32
+	Name      string
+	Start     int64
+	Increment int64
+	MinValue  int64
+	MaxValue  int64
+	Cycle     bool
+	CacheSize int32
 }
 
 // DefaultSequenceConfig returns default configuration for a sequence.

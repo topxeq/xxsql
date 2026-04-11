@@ -19,28 +19,28 @@ const (
 	MaxPacketSize   = 1<<24 - 1 // 16MB
 
 	// Client capabilities
-	CLIENT_LONG_PASSWORD  = 0x00000001
-	CLIENT_FOUND_ROWS     = 0x00000002
-	CLIENT_LONG_FLAG      = 0x00000004
-	CLIENT_CONNECT_WITH_DB = 0x00000008
-	CLIENT_NO_SCHEMA      = 0x00000010
-	CLIENT_COMPRESS       = 0x00000020
-	CLIENT_ODBC           = 0x00000040
-	CLIENT_LOCAL_FILES    = 0x00000080
-	CLIENT_IGNORE_SPACE   = 0x00000100
-	CLIENT_PROTOCOL_41    = 0x00000200
-	CLIENT_INTERACTIVE    = 0x00000400
-	CLIENT_SSL            = 0x00000800
-	CLIENT_IGNORE_SIGPIPE = 0x00001000
-	CLIENT_TRANSACTIONS   = 0x00002000
-	CLIENT_SECURE_CONN    = 0x00008000
-	CLIENT_MULTI_STATEMENTS = 0x00010000
-	CLIENT_MULTI_RESULTS  = 0x00020000
-	CLIENT_PS_MULTI_RESULTS = 0x00040000
-	CLIENT_PLUGIN_AUTH    = 0x00080000
-	CLIENT_CONNECT_ATTRS  = 0x00100000
+	CLIENT_LONG_PASSWORD                  = 0x00000001
+	CLIENT_FOUND_ROWS                     = 0x00000002
+	CLIENT_LONG_FLAG                      = 0x00000004
+	CLIENT_CONNECT_WITH_DB                = 0x00000008
+	CLIENT_NO_SCHEMA                      = 0x00000010
+	CLIENT_COMPRESS                       = 0x00000020
+	CLIENT_ODBC                           = 0x00000040
+	CLIENT_LOCAL_FILES                    = 0x00000080
+	CLIENT_IGNORE_SPACE                   = 0x00000100
+	CLIENT_PROTOCOL_41                    = 0x00000200
+	CLIENT_INTERACTIVE                    = 0x00000400
+	CLIENT_SSL                            = 0x00000800
+	CLIENT_IGNORE_SIGPIPE                 = 0x00001000
+	CLIENT_TRANSACTIONS                   = 0x00002000
+	CLIENT_SECURE_CONN                    = 0x00008000
+	CLIENT_MULTI_STATEMENTS               = 0x00010000
+	CLIENT_MULTI_RESULTS                  = 0x00020000
+	CLIENT_PS_MULTI_RESULTS               = 0x00040000
+	CLIENT_PLUGIN_AUTH                    = 0x00080000
+	CLIENT_CONNECT_ATTRS                  = 0x00100000
 	CLIENT_PLUGIN_AUTH_LENENC_CLIENT_DATA = 0x00200000
-	CLIENT_DEPRECATE_EOF  = 0x01000000
+	CLIENT_DEPRECATE_EOF                  = 0x01000000
 
 	// Server capabilities (what we support)
 	DefaultServerCapabilities = CLIENT_LONG_PASSWORD |
@@ -59,28 +59,28 @@ const (
 	CharacterSetUTF8MB4 = 45
 
 	// Command types
-	COM_SLEEP         = 0x00
-	COM_QUIT          = 0x01
-	COM_INIT_DB       = 0x02
-	COM_QUERY         = 0x03
-	COM_FIELD_LIST    = 0x04
-	COM_CREATE_DB     = 0x05
-	COM_DROP_DB       = 0x06
-	COM_REFRESH       = 0x07
-	COM_SHUTDOWN      = 0x08
-	COM_STATISTICS    = 0x09
-	COM_PROCESS_INFO  = 0x0A
-	COM_CONNECT       = 0x0B
-	COM_PROCESS_KILL  = 0x0C
-	COM_DEBUG         = 0x0D
-	COM_PING          = 0x0E
-	COM_CHANGE_USER   = 0x11
+	COM_SLEEP            = 0x00
+	COM_QUIT             = 0x01
+	COM_INIT_DB          = 0x02
+	COM_QUERY            = 0x03
+	COM_FIELD_LIST       = 0x04
+	COM_CREATE_DB        = 0x05
+	COM_DROP_DB          = 0x06
+	COM_REFRESH          = 0x07
+	COM_SHUTDOWN         = 0x08
+	COM_STATISTICS       = 0x09
+	COM_PROCESS_INFO     = 0x0A
+	COM_CONNECT          = 0x0B
+	COM_PROCESS_KILL     = 0x0C
+	COM_DEBUG            = 0x0D
+	COM_PING             = 0x0E
+	COM_CHANGE_USER      = 0x11
 	COM_RESET_CONNECTION = 0x1F
 
 	// Response types
-	OK_PACKET    = 0x00
-	ERR_PACKET   = 0xFF
-	EOF_PACKET   = 0xFE
+	OK_PACKET  = 0x00
+	ERR_PACKET = 0xFF
+	EOF_PACKET = 0xFE
 
 	// Auth plugin names
 	AuthPluginNativePassword = "mysql_native_password"
@@ -89,17 +89,17 @@ const (
 
 // ServerHandshakePacket is the initial handshake packet sent by the server.
 type ServerHandshakePacket struct {
-	ProtocolVersion    uint8
-	ServerVersion      string
-	ConnectionID       uint32
+	ProtocolVersion     uint8
+	ServerVersion       string
+	ConnectionID        uint32
 	AuthPluginDataPart1 []byte // 8 bytes
-	CapabilityFlags1   uint16
-	CharacterSet       uint8
-	StatusFlags        uint16
-	CapabilityFlags2   uint16
-	AuthPluginDataLen  uint8
+	CapabilityFlags1    uint16
+	CharacterSet        uint8
+	StatusFlags         uint16
+	CapabilityFlags2    uint16
+	AuthPluginDataLen   uint8
 	AuthPluginDataPart2 []byte // 12 bytes
-	AuthPluginName     string
+	AuthPluginName      string
 }
 
 // ClientHandshakePacket is the response from the client.
@@ -115,11 +115,11 @@ type ClientHandshakePacket struct {
 
 // OKPacket represents an OK response packet.
 type OKPacket struct {
-	AffectedRows     uint64
-	LastInsertID     uint64
-	StatusFlags      uint16
-	Warnings         uint16
-	Info             string
+	AffectedRows uint64
+	LastInsertID uint64
+	StatusFlags  uint16
+	Warnings     uint16
+	Info         string
 }
 
 // ERRPacket represents an error response packet.
@@ -131,33 +131,33 @@ type ERRPacket struct {
 
 // ColumnDefinition represents a column definition packet.
 type ColumnDefinition struct {
-	Catalog    string
-	Schema     string
-	Table      string
-	OrgTable   string
-	Name       string
-	OrgName    string
-	Charset    uint16
-	Length     uint32
-	Type       uint8
-	Flags      uint16
-	Decimals   uint8
+	Catalog  string
+	Schema   string
+	Table    string
+	OrgTable string
+	Name     string
+	OrgName  string
+	Charset  uint16
+	Length   uint32
+	Type     uint8
+	Flags    uint16
+	Decimals uint8
 }
 
 // MySQLHandler handles a MySQL protocol connection.
 type MySQLHandler struct {
-	conn           net.Conn
-	reader         *bufio.Reader
-	writer         *bufio.Writer
-	connectionID   uint32
+	conn            net.Conn
+	reader          *bufio.Reader
+	writer          *bufio.Writer
+	connectionID    uint32
 	capabilityFlags uint32
-	charset        uint8
-	statusFlags    uint16
-	authPluginData []byte
-	seqID          uint8
-	closed         int32
-	createdAt      time.Time
-	lastActiveAt   time.Time
+	charset         uint8
+	statusFlags     uint16
+	authPluginData  []byte
+	seqID           uint8
+	closed          int32
+	createdAt       time.Time
+	lastActiveAt    time.Time
 
 	// Session info
 	sessionID string
@@ -207,15 +207,15 @@ func WithMySQLCloseHandler(fn func(h *MySQLHandler)) MySQLHandlerOption {
 // NewMySQLHandler creates a new MySQL handler.
 func NewMySQLHandler(conn net.Conn, connectionID uint32, opts ...MySQLHandlerOption) *MySQLHandler {
 	h := &MySQLHandler{
-		conn:          conn,
-		reader:        bufio.NewReader(conn),
-		writer:        bufio.NewWriter(conn),
-		connectionID:  connectionID,
+		conn:            conn,
+		reader:          bufio.NewReader(conn),
+		writer:          bufio.NewWriter(conn),
+		connectionID:    connectionID,
 		capabilityFlags: DefaultServerCapabilities,
-		charset:       CharacterSetUTF8MB4,
-		statusFlags:   0,
-		createdAt:     time.Now(),
-		lastActiveAt:  time.Now(),
+		charset:         CharacterSetUTF8MB4,
+		statusFlags:     0,
+		createdAt:       time.Now(),
+		lastActiveAt:    time.Now(),
 	}
 
 	// Generate random auth plugin data (20 bytes)
@@ -269,17 +269,17 @@ func (h *MySQLHandler) Handle() error {
 // sendHandshake sends the initial handshake packet.
 func (h *MySQLHandler) sendHandshake() error {
 	hs := &ServerHandshakePacket{
-		ProtocolVersion:    ProtocolVersion,
-		ServerVersion:      "5.7.0-XxSql-0.0.1",
-		ConnectionID:       h.connectionID,
+		ProtocolVersion:     ProtocolVersion,
+		ServerVersion:       "5.7.0-XxSql-0.0.1",
+		ConnectionID:        h.connectionID,
 		AuthPluginDataPart1: h.authPluginData[:8],
-		CapabilityFlags1:   uint16(h.capabilityFlags & 0xFFFF),
-		CharacterSet:       h.charset,
-		StatusFlags:        h.statusFlags,
-		CapabilityFlags2:   uint16((h.capabilityFlags >> 16) & 0xFFFF),
-		AuthPluginDataLen:  21, // 20 bytes + null terminator
+		CapabilityFlags1:    uint16(h.capabilityFlags & 0xFFFF),
+		CharacterSet:        h.charset,
+		StatusFlags:         h.statusFlags,
+		CapabilityFlags2:    uint16((h.capabilityFlags >> 16) & 0xFFFF),
+		AuthPluginDataLen:   21, // 20 bytes + null terminator
 		AuthPluginDataPart2: h.authPluginData[8:20],
-		AuthPluginName:     AuthPluginNativePassword,
+		AuthPluginName:      AuthPluginNativePassword,
 	}
 
 	// encodeHandshake already includes the header, write directly

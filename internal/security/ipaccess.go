@@ -294,10 +294,10 @@ func (ipa *IPAccess) Stats() IPAccessStats {
 	defer ipa.mu.RUnlock()
 
 	return IPAccessStats{
-		Mode:            ipa.mode,
-		WhitelistCount:  len(ipa.whitelist),
-		BlacklistCount:  len(ipa.blacklist),
-		NetworkCount:    len(ipa.networks),
+		Mode:           ipa.mode,
+		WhitelistCount: len(ipa.whitelist),
+		BlacklistCount: len(ipa.blacklist),
+		NetworkCount:   len(ipa.networks),
 	}
 }
 

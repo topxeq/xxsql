@@ -28,6 +28,34 @@ func (s *Server) handleAPILogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// If authentication is disabled, allow any credentials
+	if !s.config.Auth.Enabled {
+		// Create web session with default values
+		webSession := &Session{
+			ID:       generateSessionID(),
+			Username: req.Username,
+			Created:  time.Now(),
+			Expires:  time.Now().Add(sessionDuration),
+		}
+		s.sessions[webSession.ID] = webSession
+
+		// Set cookie
+		http.SetCookie(w, &http.Cookie{
+			Name:     "xxsql_session",
+			Value:    webSession.ID,
+			Path:     "/",
+			Expires:  webSession.Expires,
+			HttpOnly: true,
+		})
+
+		writeJSON(w, http.StatusOK, map[string]interface{}{
+			"message":  "logged in",
+			"username": req.Username,
+			"role":     "admin",
+		})
+		return
+	}
+
 	// Authenticate
 	session, err := s.auth.Authenticate(req.Username, req.Password)
 	if err != nil {

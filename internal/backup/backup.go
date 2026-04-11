@@ -25,14 +25,14 @@ const (
 
 // Manifest represents the backup manifest.
 type Manifest struct {
-	Version     string          `json:"version"`
-	Timestamp   string          `json:"timestamp"`
-	Database    string          `json:"database"`
-	TableCount  int             `json:"table_count"`
-	Tables      []TableManifest `json:"tables"`
-	Checksum    string          `json:"checksum"`
-	Compressed  bool            `json:"compressed"`
-	TotalSize   int64           `json:"total_size"`
+	Version    string          `json:"version"`
+	Timestamp  string          `json:"timestamp"`
+	Database   string          `json:"database"`
+	TableCount int             `json:"table_count"`
+	Tables     []TableManifest `json:"tables"`
+	Checksum   string          `json:"checksum"`
+	Compressed bool            `json:"compressed"`
+	TotalSize  int64           `json:"total_size"`
 }
 
 // TableManifest represents metadata for a single table in the backup.
@@ -79,11 +79,11 @@ func (m *Manager) Backup(opts BackupOptions) (*Manifest, error) {
 	// Create backup file
 	var file *os.File
 	var err error
-	if opts.Compress {
-		file, err = os.Create(opts.Path + BackupExt)
-	} else {
-		file, err = os.Create(opts.Path)
+	backupPath := opts.Path
+	if opts.Compress && !strings.HasSuffix(opts.Path, BackupExt) {
+		backupPath = opts.Path + BackupExt
 	}
+	file, err = os.Create(backupPath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create backup file: %w", err)
 	}

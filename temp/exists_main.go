@@ -3,7 +3,7 @@ package main
 import (
 	"fmt"
 	"os"
-	
+
 	"github.com/topxeq/xxsql/internal/executor"
 	"github.com/topxeq/xxsql/internal/storage"
 )
@@ -29,12 +29,12 @@ func main() {
 	// Create test tables
 	exec.Execute("CREATE TABLE users (id INT, name VARCHAR)")
 	exec.Execute("CREATE TABLE orders (id INT, user_id INT, amount FLOAT)")
-	
+
 	// Insert test data
 	exec.Execute("INSERT INTO users VALUES (1, 'Alice')")
 	exec.Execute("INSERT INTO users VALUES (2, 'Bob')")
 	exec.Execute("INSERT INTO users VALUES (3, 'Charlie')")
-	
+
 	exec.Execute("INSERT INTO orders VALUES (1, 1, 100.0)")
 	exec.Execute("INSERT INTO orders VALUES (2, 1, 200.0)")
 	exec.Execute("INSERT INTO orders VALUES (3, 2, 150.0)")

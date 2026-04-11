@@ -624,9 +624,9 @@ func TestNetworkBindAddresses(t *testing.T) {
 	t.Run("per-port override", func(t *testing.T) {
 		cfg := DefaultConfig()
 		cfg.Network.Bind = "0.0.0.0"
-		cfg.Network.PrivateBind = "0.0.0.0"     // public
-		cfg.Network.MySQLBind = "0.0.0.0"       // public
-		cfg.Network.HTTPBind = "127.0.0.1"      // internal only
+		cfg.Network.PrivateBind = "0.0.0.0" // public
+		cfg.Network.MySQLBind = "0.0.0.0"   // public
+		cfg.Network.HTTPBind = "127.0.0.1"  // internal only
 
 		if cfg.Network.GetPrivateBind() != "0.0.0.0" {
 			t.Errorf("GetPrivateBind() = %s, want 0.0.0.0", cfg.Network.GetPrivateBind())

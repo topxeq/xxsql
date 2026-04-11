@@ -10,11 +10,11 @@ const (
 	TokComment
 
 	// Literals
-	TokIdent    // identifier
-	TokString   // "string" or 'string'
-	TokNumber   // 123 or 123.45
-	TokBool     // true or false
-	TokNull     // null
+	TokIdent  // identifier
+	TokString // "string" or 'string'
+	TokNumber // 123 or 123.45
+	TokBool   // true or false
+	TokNull   // null
 
 	// Keywords
 	TokVar      // var
@@ -29,35 +29,49 @@ const (
 	TokTry      // try
 	TokCatch    // catch
 	TokThrow    // throw
+	TokSwitch   // switch
+	TokCase     // case
+	TokDefault  // default
+	TokIn       // in
 
 	// Operators
-	TokPlus     // +
-	TokMinus    // -
-	TokStar     // *
-	TokSlash    // /
-	TokPercent  // %
-	TokEq       // ==
-	TokNe       // !=
-	TokLt       // <
-	TokLe       // <=
-	TokGt       // >
-	TokGe       // >=
-	TokAnd      // &&
-	TokOr       // ||
-	TokNot      // !
-	TokAssign   // =
+	TokPlus          // +
+	TokMinus         // -
+	TokStar          // *
+	TokSlash         // /
+	TokPercent       // %
+	TokEq            // ==
+	TokNe            // !=
+	TokLt            // <
+	TokLe            // <=
+	TokGt            // >
+	TokGe            // >=
+	TokAnd           // &&
+	TokOr            // ||
+	TokNot           // !
+	TokAssign        // =
+	TokPlusAssign    // +=
+	TokMinusAssign   // -=
+	TokStarAssign    // *=
+	TokSlashAssign   // /=
+	TokPercentAssign // %=
+	TokInc           // ++
+	TokDec           // --
+	TokQuestion      // ?
+	TokColonColon    // :: (for future use)
 
 	// Delimiters
-	TokLParen   // (
-	TokRParen   // )
-	TokLBrace   // {
-	TokRBrace   // }
-	TokLBracket // [
-	TokRBracket // ]
-	TokComma    // ,
+	TokLParen    // (
+	TokRParen    // )
+	TokLBrace    // {
+	TokRBrace    // }
+	TokLBracket  // [
+	TokRBracket  // ]
+	TokComma     // ,
 	TokSemicolon // ;
-	TokDot      // .
-	TokColon    // :
+	TokDot       // .
+	TokColon     // :
+	TokSpread    // ...
 )
 
 // Token represents a token.
@@ -111,6 +125,14 @@ func (t TokenType) String() string {
 		return "CATCH"
 	case TokThrow:
 		return "THROW"
+	case TokSwitch:
+		return "SWITCH"
+	case TokCase:
+		return "CASE"
+	case TokDefault:
+		return "DEFAULT"
+	case TokIn:
+		return "IN"
 	case TokPlus:
 		return "+"
 	case TokMinus:
@@ -141,6 +163,24 @@ func (t TokenType) String() string {
 		return "!"
 	case TokAssign:
 		return "="
+	case TokPlusAssign:
+		return "+="
+	case TokMinusAssign:
+		return "-="
+	case TokStarAssign:
+		return "*="
+	case TokSlashAssign:
+		return "/="
+	case TokPercentAssign:
+		return "%="
+	case TokInc:
+		return "++"
+	case TokDec:
+		return "--"
+	case TokQuestion:
+		return "?"
+	case TokColonColon:
+		return "::"
 	case TokLParen:
 		return "("
 	case TokRParen:
@@ -161,6 +201,8 @@ func (t TokenType) String() string {
 		return "."
 	case TokColon:
 		return ":"
+	case TokSpread:
+		return "..."
 	default:
 		return "UNKNOWN"
 	}
@@ -197,12 +239,36 @@ func (l *Lexer) NextToken() Token {
 	switch ch {
 	case '+':
 		l.advance()
+		if l.pos < len(l.input) {
+			if l.input[l.pos] == '+' {
+				l.advance()
+				return Token{Type: TokInc, Line: l.line, Col: l.col}
+			}
+			if l.input[l.pos] == '=' {
+				l.advance()
+				return Token{Type: TokPlusAssign, Line: l.line, Col: l.col}
+			}
+		}
 		return Token{Type: TokPlus, Line: l.line, Col: l.col}
 	case '-':
 		l.advance()
+		if l.pos < len(l.input) {
+			if l.input[l.pos] == '-' {
+				l.advance()
+				return Token{Type: TokDec, Line: l.line, Col: l.col}
+			}
+			if l.input[l.pos] == '=' {
+				l.advance()
+				return Token{Type: TokMinusAssign, Line: l.line, Col: l.col}
+			}
+		}
 		return Token{Type: TokMinus, Line: l.line, Col: l.col}
 	case '*':
 		l.advance()
+		if l.pos < len(l.input) && l.input[l.pos] == '=' {
+			l.advance()
+			return Token{Type: TokStarAssign, Line: l.line, Col: l.col}
+		}
 		return Token{Type: TokStar, Line: l.line, Col: l.col}
 	case '/':
 		if l.peek(1) == '/' {
@@ -211,9 +277,17 @@ func (l *Lexer) NextToken() Token {
 			return l.NextToken()
 		}
 		l.advance()
+		if l.pos < len(l.input) && l.input[l.pos] == '=' {
+			l.advance()
+			return Token{Type: TokSlashAssign, Line: l.line, Col: l.col}
+		}
 		return Token{Type: TokSlash, Line: l.line, Col: l.col}
 	case '%':
 		l.advance()
+		if l.pos < len(l.input) && l.input[l.pos] == '=' {
+			l.advance()
+			return Token{Type: TokPercentAssign, Line: l.line, Col: l.col}
+		}
 		return Token{Type: TokPercent, Line: l.line, Col: l.col}
 	case '(':
 		l.advance()
@@ -240,11 +314,21 @@ func (l *Lexer) NextToken() Token {
 		l.advance()
 		return Token{Type: TokSemicolon, Line: l.line, Col: l.col}
 	case '.':
+		// Check for spread operator ...
+		if l.peek(1) == '.' && l.peek(2) == '.' {
+			l.advance()
+			l.advance()
+			l.advance()
+			return Token{Type: TokSpread, Value: "...", Line: l.line, Col: l.col}
+		}
 		l.advance()
 		return Token{Type: TokDot, Line: l.line, Col: l.col}
 	case ':':
 		l.advance()
 		return Token{Type: TokColon, Line: l.line, Col: l.col}
+	case '?':
+		l.advance()
+		return Token{Type: TokQuestion, Line: l.line, Col: l.col}
 	case '=':
 		if l.peek(1) == '=' {
 			l.advance()
@@ -423,6 +507,14 @@ func (l *Lexer) readIdent() Token {
 		return Token{Type: TokCatch, Value: value, Line: l.line, Col: l.col}
 	case "throw":
 		return Token{Type: TokThrow, Value: value, Line: l.line, Col: l.col}
+	case "switch":
+		return Token{Type: TokSwitch, Value: value, Line: l.line, Col: l.col}
+	case "case":
+		return Token{Type: TokCase, Value: value, Line: l.line, Col: l.col}
+	case "default":
+		return Token{Type: TokDefault, Value: value, Line: l.line, Col: l.col}
+	case "in":
+		return Token{Type: TokIn, Value: value, Line: l.line, Col: l.col}
 	case "true", "false":
 		return Token{Type: TokBool, Value: value, Line: l.line, Col: l.col}
 	case "null":

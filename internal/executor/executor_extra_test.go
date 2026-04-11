@@ -13,10 +13,10 @@ func TestExecuteSelectWithoutFrom(t *testing.T) {
 	exec := &Executor{}
 
 	tests := []struct {
-		name           string
-		stmt           *sql.SelectStmt
-		expectedCols   int
-		expectedRows   int
+		name         string
+		stmt         *sql.SelectStmt
+		expectedCols int
+		expectedRows int
 	}{
 		{
 			name: "select literal number",
@@ -392,8 +392,8 @@ func TestEvaluateCheckExpression(t *testing.T) {
 			expected: true,
 		},
 		{
-			name: "column ref non-null",
-			expr: &sql.ColumnRef{Name: "age"},
+			name:     "column ref non-null",
+			expr:     &sql.ColumnRef{Name: "age"},
 			values:   []types.Value{types.NewIntValue(25)},
 			expected: true,
 		},
@@ -567,9 +567,9 @@ func TestExecuteWithAuthManager(t *testing.T) {
 
 	t.Run("create user", func(t *testing.T) {
 		stmt := &sql.CreateUserStmt{
-			Username:  "testuser",
+			Username:   "testuser",
 			Identified: "password",
-			Role:      "user",
+			Role:       "user",
 		}
 		result, err := exec.executeCreateUser(stmt)
 		if err != nil {
@@ -582,9 +582,9 @@ func TestExecuteWithAuthManager(t *testing.T) {
 
 	t.Run("create admin user", func(t *testing.T) {
 		stmt := &sql.CreateUserStmt{
-			Username:  "adminuser",
+			Username:   "adminuser",
 			Identified: "password",
-			Role:      "admin",
+			Role:       "admin",
 		}
 		result, err := exec.executeCreateUser(stmt)
 		if err != nil {
@@ -608,7 +608,7 @@ func TestExecuteWithAuthManager(t *testing.T) {
 
 	t.Run("alter user", func(t *testing.T) {
 		stmt := &sql.AlterUserStmt{
-			Username:  "testuser",
+			Username:   "testuser",
 			Identified: "newpassword",
 		}
 		result, err := exec.executeAlterUser(stmt)
@@ -976,9 +976,9 @@ func TestEvaluateWhere(t *testing.T) {
 			expected: false,
 		},
 		{
-			name: "unknown expression type",
-			expr:  &sql.FunctionCall{Name: "UNKNOWN"},
-			row:   &row.Row{Values: []types.Value{}},
+			name:     "unknown expression type",
+			expr:     &sql.FunctionCall{Name: "UNKNOWN"},
+			row:      &row.Row{Values: []types.Value{}},
 			expected: false,
 		},
 	}

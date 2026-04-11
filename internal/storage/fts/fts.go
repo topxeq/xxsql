@@ -13,15 +13,15 @@ import (
 
 // FTSIndex represents a full-text search index on a table.
 type FTSIndex struct {
-	name         string
-	tableName    string
-	columns      []string
-	invertedIdx  *InvertedIndex
-	ranker       Ranker
-	tokenizer    Tokenizer
-	mu           sync.RWMutex
-	persistent   bool
-	storagePath  string
+	name        string
+	tableName   string
+	columns     []string
+	invertedIdx *InvertedIndex
+	ranker      Ranker
+	tokenizer   Tokenizer
+	mu          sync.RWMutex
+	persistent  bool
+	storagePath string
 }
 
 // FTSIndexConfig holds configuration for creating an FTS index.
@@ -238,12 +238,12 @@ func (idx *FTSIndex) Stats() IndexStats {
 	defer idx.mu.RUnlock()
 
 	return IndexStats{
-		Name:            idx.name,
-		TableName:       idx.tableName,
-		Columns:         idx.columns,
-		DocumentCount:   idx.invertedIdx.TotalDocuments(),
-		TermCount:       uint64(len(idx.invertedIdx.Terms())),
-		AvgDocLength:    idx.invertedIdx.AverageDocumentLength(),
+		Name:          idx.name,
+		TableName:     idx.tableName,
+		Columns:       idx.columns,
+		DocumentCount: idx.invertedIdx.TotalDocuments(),
+		TermCount:     uint64(len(idx.invertedIdx.Terms())),
+		AvgDocLength:  idx.invertedIdx.AverageDocumentLength(),
 	}
 }
 
@@ -279,12 +279,12 @@ func (idx *FTSIndex) Save() error {
 
 	// Serialize the index
 	data := struct {
-		Name       string
-		TableName  string
-		Columns    []string
-		Index      map[string]PostingsList
-		DocCount   uint64
-		DocLength  map[uint64]int
+		Name      string
+		TableName string
+		Columns   []string
+		Index     map[string]PostingsList
+		DocCount  uint64
+		DocLength map[uint64]int
 	}{
 		Name:      idx.name,
 		TableName: idx.tableName,

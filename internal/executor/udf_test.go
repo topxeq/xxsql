@@ -262,10 +262,10 @@ func TestExecutor_UDFWithConcat(t *testing.T) {
 
 func TestParseCreateFunction(t *testing.T) {
 	tests := []struct {
-		input    string
-		name     string
-		params   int
-		returns  string
+		input   string
+		name    string
+		params  int
+		returns string
 	}{
 		{
 			input:   "CREATE FUNCTION foo(x INT) RETURNS INT RETURN x + 1",
@@ -364,8 +364,8 @@ func TestParseDropFunction(t *testing.T) {
 
 func TestParseIfExpr(t *testing.T) {
 	tests := []struct {
-		input    string
-		hasElse  bool
+		input   string
+		hasElse bool
 	}{
 		{"IF x > 0 THEN x ELSE -x END", true},
 		{"IF x > 0 THEN 1 END", false},
@@ -641,9 +641,9 @@ func TestExecutor_UDFWithDefaultParam(t *testing.T) {
 
 func TestParseCreateFunctionWithScript(t *testing.T) {
 	tests := []struct {
-		input    string
-		name     string
-		params   int
+		input     string
+		name      string
+		params    int
 		hasScript bool
 	}{
 		{

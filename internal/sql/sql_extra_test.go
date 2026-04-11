@@ -100,7 +100,7 @@ func TestLexer_BacktickIdentifiers(t *testing.T) {
 		expected string
 	}{
 		{"`table_name`", "table_name"},
-		{"`select`", "select"}, // Reserved word as identifier
+		{"`select`", "select"},            // Reserved word as identifier
 		{"`column``name`", "column`name"}, // Escaped backtick
 	}
 

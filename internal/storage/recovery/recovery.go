@@ -21,35 +21,35 @@ import (
 
 // RecoveryState represents the state of recovery.
 type RecoveryState struct {
-	Phase         string    `json:"phase"`
-	StartTime     time.Time `json:"start_time"`
-	EndTime       time.Time `json:"end_time,omitempty"`
-	RecordsRead   int64     `json:"records_read"`
-	RecordsRedone int64     `json:"records_redone"`
-	RecordsUndone int64     `json:"records_undone"`
-	TxnsRecovered int       `json:"txns_recovered"`
-	PagesRecovered int      `json:"pages_recovered"`
-	Success       bool      `json:"success"`
-	Error         string    `json:"error,omitempty"`
+	Phase          string    `json:"phase"`
+	StartTime      time.Time `json:"start_time"`
+	EndTime        time.Time `json:"end_time,omitempty"`
+	RecordsRead    int64     `json:"records_read"`
+	RecordsRedone  int64     `json:"records_redone"`
+	RecordsUndone  int64     `json:"records_undone"`
+	TxnsRecovered  int       `json:"txns_recovered"`
+	PagesRecovered int       `json:"pages_recovered"`
+	Success        bool      `json:"success"`
+	Error          string    `json:"error,omitempty"`
 }
 
 // Manager handles crash recovery operations.
 type Manager struct {
-	dataDir      string
-	walManager   *wal.Manager
-	bufPool      *buffer.BufferPool
+	dataDir       string
+	walManager    *wal.Manager
+	bufPool       *buffer.BufferPool
 	checkpointMgr *checkpoint.Manager
 
 	// Recovery state
-	state      RecoveryState
-	stateMu    sync.RWMutex
+	state   RecoveryState
+	stateMu sync.RWMutex
 
 	// Tables for recovery (table name -> *Table)
-	tables     map[string]*table.Table
-	tablesMu   sync.RWMutex
+	tables   map[string]*table.Table
+	tablesMu sync.RWMutex
 
 	// Sequence manager for recovery
-	seqMgr     *sequence.Manager
+	seqMgr *sequence.Manager
 }
 
 // ManagerConfig holds recovery manager configuration.
@@ -251,10 +251,10 @@ func (m *Manager) analysisPhase(ckpt *checkpoint.Checkpoint) (map[uint64]*Transa
 			} else {
 				// New transaction seen
 				txns[r.TxnID] = &TransactionState{
-					TxnID:    r.TxnID,
-					Status:   "active",
-					FirstLSN: r.LSN,
-					LastLSN:  r.LSN,
+					TxnID:      r.TxnID,
+					Status:     "active",
+					FirstLSN:   r.LSN,
+					LastLSN:    r.LSN,
 					Operations: []*wal.Record{r},
 				}
 			}

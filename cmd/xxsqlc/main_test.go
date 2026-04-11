@@ -893,8 +893,8 @@ func TestVersionInfo_NonEmpty(t *testing.T) {
 
 func TestHandleMetaCommand_FormatCommands(t *testing.T) {
 	tests := []struct {
-		cmd          string
-		expectedFmt  OutputFormat
+		cmd         string
+		expectedFmt OutputFormat
 	}{
 		{"\\table", FormatTable},
 		{"\\g", FormatVertical},
@@ -1049,26 +1049,26 @@ func TestCompleter_FirstWordKeywords(t *testing.T) {
 	c := &completer{}
 
 	tests := []struct {
-		partial      string
-		expectMatch  bool
+		partial     string
+		expectMatch bool
 	}{
-		{"SE", true},    // SELECT
-		{"IN", true},    // INSERT
-		{"UP", true},    // UPDATE
-		{"DE", true},    // DELETE
-		{"CR", true},    // CREATE
-		{"DR", true},    // DROP
-		{"AL", true},    // ALTER
-		{"SH", true},    // SHOW
-		{"DE", true},    // DESCRIBE
-		{"US", true},    // USE
-		{"GR", true},    // GRANT
-		{"RE", true},    // REVOKE
-		{"BE", true},    // BEGIN
-		{"CO", true},    // COMMIT
-		{"RO", true},    // ROLLBACK
-		{"BA", true},    // BACKUP
-		{"XYZ", false},  // No match
+		{"SE", true},   // SELECT
+		{"IN", true},   // INSERT
+		{"UP", true},   // UPDATE
+		{"DE", true},   // DELETE
+		{"CR", true},   // CREATE
+		{"DR", true},   // DROP
+		{"AL", true},   // ALTER
+		{"SH", true},   // SHOW
+		{"DE", true},   // DESCRIBE
+		{"US", true},   // USE
+		{"GR", true},   // GRANT
+		{"RE", true},   // REVOKE
+		{"BE", true},   // BEGIN
+		{"CO", true},   // COMMIT
+		{"RO", true},   // ROLLBACK
+		{"BA", true},   // BACKUP
+		{"XYZ", false}, // No match
 	}
 
 	for _, tt := range tests {
@@ -1126,12 +1126,12 @@ func TestCompleter_BuiltinCommands(t *testing.T) {
 		partial     string
 		expectMatch bool
 	}{
-		{"he", true},    // help
-		{"qu", true},    // quit
-		{"ex", true},    // exit
-		{"cl", true},    // clear
-		{"ve", true},    // version
-		{"xyz", false},  // no match
+		{"he", true},   // help
+		{"qu", true},   // quit
+		{"ex", true},   // exit
+		{"cl", true},   // clear
+		{"ve", true},   // version
+		{"xyz", false}, // no match
 	}
 
 	for _, tt := range tests {

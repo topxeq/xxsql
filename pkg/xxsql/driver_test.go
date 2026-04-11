@@ -1789,10 +1789,10 @@ func TestParseError_VariousCodes(t *testing.T) {
 
 func TestParseOKPacket_Various(t *testing.T) {
 	tests := []struct {
-		name          string
-		packet        []byte
-		wantAffected  int64
-		wantLastID    int64
+		name         string
+		packet       []byte
+		wantAffected int64
+		wantLastID   int64
 	}{
 		{
 			name:         "simple ok",
@@ -3401,23 +3401,23 @@ func TestReadLengthEncodedIntExtra(t *testing.T) {
 // TestParseColumnDefinitionExtra tests parseColumnDefinition
 func TestParseColumnDefinitionExtra(t *testing.T) {
 	data := []byte{
-		0x03,                   // catalog length
-		'd', 'e', 'f',          // catalog
-		0x03,                   // schema length
-		'd', 'b', '1',          // schema
-		0x05,                   // table length
+		0x03,          // catalog length
+		'd', 'e', 'f', // catalog
+		0x03,          // schema length
+		'd', 'b', '1', // schema
+		0x05,                    // table length
 		't', 'a', 'b', 'l', 'e', // table
-		0x05,                   // org_table length
+		0x05,                    // org_table length
 		't', 'a', 'b', 'l', 'e', // org_table
-		0x04,                   // name length
-		'n', 'a', 'm', 'e',     // name
-		0x04,                   // org_name length
-		'n', 'a', 'm', 'e',     // org_name
+		0x04,               // name length
+		'n', 'a', 'm', 'e', // name
+		0x04,               // org_name length
+		'n', 'a', 'm', 'e', // org_name
 		0x0c,                   // next length (12 bytes)
 		0x01, 0x00, 0x00, 0x00, // charset
 		0x04, 0x00, 0x00, 0x00, // length
-		0x01,                   // type
-		0x00, 0x00,             // flags, decimals
+		0x01,       // type
+		0x00, 0x00, // flags, decimals
 		0x00, 0x00, 0x00, 0x00, // reserved
 	}
 
@@ -3484,18 +3484,18 @@ func TestParseColumnDefinitionMore(t *testing.T) {
 	// Test with a valid packet - just verify it doesn't panic
 	packet := []byte{
 		3, 'd', 'e', 'f', // catalog "def"
-		0,                   // schema ""
-		1, 't',              // table "t"
-		1, 't',              // org_table "t"
-		3, 'c', 'o', 'l',    // name "col"
-		3, 'c', 'o', 'l',    // org_name "col"
-		12,                  // length of fixed fields
-		0, 0,                // charset
-		4, 0, 0, 0,          // length
-		3,                   // type (INT)
-		0, 0,                // flags
-		0,                   // decimals
-		0, 0,                // padding
+		0,      // schema ""
+		1, 't', // table "t"
+		1, 't', // org_table "t"
+		3, 'c', 'o', 'l', // name "col"
+		3, 'c', 'o', 'l', // org_name "col"
+		12,   // length of fixed fields
+		0, 0, // charset
+		4, 0, 0, 0, // length
+		3,    // type (INT)
+		0, 0, // flags
+		0,    // decimals
+		0, 0, // padding
 	}
 
 	// Just verify function doesn't panic
@@ -3506,45 +3506,45 @@ func TestParseColumnDefinitionMore(t *testing.T) {
 // TestReadLengthEncodedIntMore tests readLengthEncodedInt with various inputs
 func TestReadLengthEncodedIntMore(t *testing.T) {
 	tests := []struct {
-		name     string
-		data     []byte
-		expected int64
+		name      string
+		data      []byte
+		expected  int64
 		bytesRead int
 	}{
 		{
-			name:     "single byte value",
-			data:     []byte{0x25},
-			expected: 37,
+			name:      "single byte value",
+			data:      []byte{0x25},
+			expected:  37,
 			bytesRead: 1,
 		},
 		{
-			name:     "max single byte",
-			data:     []byte{0xfa},
-			expected: 250,
+			name:      "max single byte",
+			data:      []byte{0xfa},
+			expected:  250,
 			bytesRead: 1,
 		},
 		{
-			name:     "two byte marker",
-			data:     []byte{0xfc, 0x01, 0x00},
-			expected: 1,
+			name:      "two byte marker",
+			data:      []byte{0xfc, 0x01, 0x00},
+			expected:  1,
 			bytesRead: 3,
 		},
 		{
-			name:     "two byte value",
-			data:     []byte{0xfc, 0xff, 0x00},
-			expected: 255,
+			name:      "two byte value",
+			data:      []byte{0xfc, 0xff, 0x00},
+			expected:  255,
 			bytesRead: 3,
 		},
 		{
-			name:     "three byte marker",
-			data:     []byte{0xfd, 0x00, 0x01, 0x00},
-			expected: 256,
+			name:      "three byte marker",
+			data:      []byte{0xfd, 0x00, 0x01, 0x00},
+			expected:  256,
 			bytesRead: 4,
 		},
 		{
-			name:     "eight byte marker",
-			data:     []byte{0xfe, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00},
-			expected: 16777216,
+			name:      "eight byte marker",
+			data:      []byte{0xfe, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00},
+			expected:  16777216,
 			bytesRead: 9,
 		},
 	}
@@ -3778,7 +3778,7 @@ func TestMySQLConnParseError(t *testing.T) {
 // TestRowsColumnTypes tests column type handling
 func TestRowsColumnTypes(t *testing.T) {
 	r := &rows{
-		columns: []string{"id", "name", "value"},
+		columns:  []string{"id", "name", "value"},
 		colTypes: []byte{0x03, 0xfd, 0x01}, // INT, VARCHAR, TINY
 	}
 
@@ -3870,13 +3870,13 @@ func TestParseColumnDefinitionMoreVariations(t *testing.T) {
 	// Format: lenenc_str catalog, lenenc_str schema, lenenc_str table, lenenc_str org_table,
 	//         lenenc_str name, lenenc_str org_name, then fixed length fields
 	packet := []byte{
-		0x03, 'd', 'e', 'f',  // catalog "def"
-		0x00,                  // schema ""
+		0x03, 'd', 'e', 'f', // catalog "def"
+		0x00,                     // schema ""
 		0x04, 't', 'e', 's', 't', // table "test"
 		0x04, 't', 'e', 's', 't', // org_table "test"
 		0x04, 'n', 'a', 'm', 'e', // name "name"
 		0x04, 'n', 'a', 'm', 'e', // org_name "name"
-		0x0c,                  // fixed length 12
+		0x0c, // fixed length 12
 		0x21, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xfd, 0x00, 0x00, 0x00, 0x00,
 	}
 	name, colType := parseColumnDefinition(packet)
@@ -4178,7 +4178,6 @@ func TestFormatValueMore(t *testing.T) {
 		t.Errorf("nil format: got %q, want NULL", result)
 	}
 }
-
 
 // TestConnExecContextCanceled tests ExecContext with canceled context
 func TestConnExecContextCanceled(t *testing.T) {
@@ -4484,13 +4483,13 @@ func TestConfigFormatDSNExtra(t *testing.T) {
 		{
 			name: "with TLS",
 			config: &Config{
-				User:     "user",
-				Passwd:   "pass",
-				Net:      "tcp",
-				Addr:     "localhost:3306",
-				DBName:   "test",
-				TLS:      true,
-				Charset:  "utf8mb4",
+				User:      "user",
+				Passwd:    "pass",
+				Net:       "tcp",
+				Addr:      "localhost:3306",
+				DBName:    "test",
+				TLS:       true,
+				Charset:   "utf8mb4",
 				Collation: "utf8mb4_general_ci",
 			},
 		},
@@ -4811,14 +4810,14 @@ func TestPrivateConnParseRows(t *testing.T) {
 			0x00, 0x01, // 1 column
 			0x00, 0x01, 'a', // column "a"
 			0x00, 0x01, // 1 row
-			0x01, // int64 type
+			0x01,                                           // int64 type
 			0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x2A, // value 42
 		}, false},
 		{"row with string", []byte{
 			0x00, 0x01, // 1 column
 			0x00, 0x01, 'a', // column "a"
 			0x00, 0x01, // 1 row
-			0x03, // string type
+			0x03,                                // string type
 			0x00, 0x05, 'h', 'e', 'l', 'l', 'o', // "hello"
 		}, false},
 		{"row with null", []byte{
@@ -4831,7 +4830,7 @@ func TestPrivateConnParseRows(t *testing.T) {
 			0x00, 0x01, // 1 column
 			0x00, 0x01, 'a', // column "a"
 			0x00, 0x01, // 1 row
-			0x02, // float64 type
+			0x02,                                           // float64 type
 			0x40, 0x09, 0x21, 0xfb, 0x54, 0x44, 0x2d, 0x18, // pi
 		}, false},
 		{"row with bool", []byte{

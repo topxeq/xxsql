@@ -25,14 +25,14 @@ const (
 
 // Checkpoint represents a database checkpoint.
 type Checkpoint struct {
-	ID          uint64
-	LSN         wal.LSN
-	Timestamp   int64
-	TableCount  int
-	RowCount    uint64
-	PageCount   uint64
-	ActiveTxns  []uint64
-	Metadata    map[string]string
+	ID         uint64
+	LSN        wal.LSN
+	Timestamp  int64
+	TableCount int
+	RowCount   uint64
+	PageCount  uint64
+	ActiveTxns []uint64
+	Metadata   map[string]string
 }
 
 // Manager manages checkpoint operations.
@@ -408,13 +408,13 @@ func (m *Manager) Stats() CheckpointStats {
 
 // CheckpointStats holds checkpoint statistics.
 type CheckpointStats struct {
-	AutoEnabled       bool   `json:"auto_enabled"`
-	Interval          string `json:"interval"`
-	LastCheckpointID  uint64 `json:"last_checkpoint_id"`
-	LastCheckpointLSN uint64 `json:"last_checkpoint_lsn"`
+	AutoEnabled        bool   `json:"auto_enabled"`
+	Interval           string `json:"interval"`
+	LastCheckpointID   uint64 `json:"last_checkpoint_id"`
+	LastCheckpointLSN  uint64 `json:"last_checkpoint_lsn"`
 	LastCheckpointTime string `json:"last_checkpoint_time"`
-	PageCount         uint64 `json:"page_count"`
-	RowCount          uint64 `json:"row_count"`
+	PageCount          uint64 `json:"page_count"`
+	RowCount           uint64 `json:"row_count"`
 }
 
 // DeleteCheckpoint removes checkpoint files.

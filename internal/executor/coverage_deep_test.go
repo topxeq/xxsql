@@ -102,12 +102,12 @@ func TestEvaluateWhereBetweenExprBoundary(t *testing.T) {
 		query    string
 		expected int
 	}{
-		{"SELECT * FROM test WHERE val BETWEEN 20 AND 40", 3},      // 20, 30, 40
-		{"SELECT * FROM test WHERE val BETWEEN 10 AND 10", 1},      // 10
-		{"SELECT * FROM test WHERE val BETWEEN 5 AND 15", 1},       // 10
-		{"SELECT * FROM test WHERE val BETWEEN 45 AND 55", 1},      // 50
-		{"SELECT * FROM test WHERE val BETWEEN 100 AND 200", 0},    // no match
-		{"SELECT * FROM test WHERE val NOT BETWEEN 20 AND 40", 2},  // 10, 50
+		{"SELECT * FROM test WHERE val BETWEEN 20 AND 40", 3},     // 20, 30, 40
+		{"SELECT * FROM test WHERE val BETWEEN 10 AND 10", 1},     // 10
+		{"SELECT * FROM test WHERE val BETWEEN 5 AND 15", 1},      // 10
+		{"SELECT * FROM test WHERE val BETWEEN 45 AND 55", 1},     // 50
+		{"SELECT * FROM test WHERE val BETWEEN 100 AND 200", 0},   // no match
+		{"SELECT * FROM test WHERE val NOT BETWEEN 20 AND 40", 2}, // 10, 50
 	}
 
 	for _, tc := range tests {
@@ -148,13 +148,13 @@ func TestEvaluateWhereLikeExprPatterns(t *testing.T) {
 	}
 
 	tests := []string{
-		"SELECT * FROM test WHERE name LIKE 'A%'",      // starts with A
-		"SELECT * FROM test WHERE name LIKE '%e'",      // ends with e
-		"SELECT * FROM test WHERE name LIKE '%a%'",     // contains a
-		"SELECT * FROM test WHERE name LIKE '_ob'",     // _ matches single char
-		"SELECT * FROM test WHERE name LIKE 'B_b'",     // B_b pattern
-		"SELECT * FROM test WHERE name NOT LIKE 'A%'",  // not starts with A
-		"SELECT * FROM test WHERE name LIKE '%%%'",     // literal % (may need escape)
+		"SELECT * FROM test WHERE name LIKE 'A%'",     // starts with A
+		"SELECT * FROM test WHERE name LIKE '%e'",     // ends with e
+		"SELECT * FROM test WHERE name LIKE '%a%'",    // contains a
+		"SELECT * FROM test WHERE name LIKE '_ob'",    // _ matches single char
+		"SELECT * FROM test WHERE name LIKE 'B_b'",    // B_b pattern
+		"SELECT * FROM test WHERE name NOT LIKE 'A%'", // not starts with A
+		"SELECT * FROM test WHERE name LIKE '%%%'",    // literal % (may need escape)
 	}
 
 	for _, tc := range tests {

@@ -7639,6 +7639,7 @@ func TestAdvancedFeatures(t *testing.T) {
 		t.Logf("Recursive CTE -> %v", result.Rows)
 	}
 }
+
 // ========== Tests for load data error paths ==========
 
 func TestLoadDataPathsExtra(t *testing.T) {
@@ -8989,59 +8990,59 @@ func TestUncoveredPathsA(t *testing.T) {
 		"SELECT * FROM t WHERE active IS NOT TRUE",
 		"SELECT * FROM t WHERE active IS FALSE",
 		"SELECT * FROM t WHERE active IS NOT FALSE",
-		
+
 		// LIKE variations
 		"SELECT * FROM t WHERE name LIKE 'A%'",
 		"SELECT * FROM t WHERE name NOT LIKE 'A%'",
 		"SELECT * FROM t WHERE name LIKE '%e%'",
 		"SELECT * FROM t WHERE name LIKE '_lice'",
-		
+
 		// IN variations
 		"SELECT * FROM t WHERE id IN (1, 2)",
 		"SELECT * FROM t WHERE id NOT IN (1, 2)",
 		"SELECT * FROM t WHERE name IN ('Alice', 'Bob')",
-		
+
 		// BETWEEN
 		"SELECT * FROM t WHERE score BETWEEN 80 AND 90",
 		"SELECT * FROM t WHERE score NOT BETWEEN 80 AND 90",
-		
+
 		// COALESCE and IFNULL
 		"SELECT COALESCE(name, 'N/A') FROM t",
 		"SELECT IFNULL(name, 'N/A') FROM t",
-		
+
 		// NULLIF
 		"SELECT NULLIF(name, 'Alice') FROM t",
-		
+
 		// CASE
 		"SELECT CASE WHEN score > 90 THEN 'A' WHEN score > 80 THEN 'B' ELSE 'C' END as grade FROM t",
 		"SELECT CASE id WHEN 1 THEN 'First' WHEN 2 THEN 'Second' ELSE 'Other' END FROM t",
-		
+
 		// Aggregate with DISTINCT
 		"SELECT COUNT(DISTINCT name) FROM t",
 		"SELECT SUM(DISTINCT score) FROM t",
-		
+
 		// GROUP_CONCAT
 		"SELECT GROUP_CONCAT(name) FROM t",
 		"SELECT GROUP_CONCAT(name SEPARATOR ', ') FROM t",
 		"SELECT GROUP_CONCAT(DISTINCT active) FROM t",
-		
+
 		// ORDER BY expressions
 		"SELECT * FROM t ORDER BY -score DESC",
 		"SELECT * FROM t ORDER BY LENGTH(name)",
 		"SELECT * FROM t ORDER BY UPPER(name)",
-		
+
 		// LIMIT/OFFSET
 		"SELECT * FROM t LIMIT 2",
 		"SELECT * FROM t LIMIT 1 OFFSET 1",
 		"SELECT * FROM t LIMIT 100 OFFSET 0",
-		
+
 		// Subqueries
 		"SELECT * FROM t WHERE score > (SELECT AVG(score) FROM t)",
 		"SELECT * FROM t WHERE id IN (SELECT id FROM t WHERE active = TRUE)",
-		
+
 		// EXISTS
 		"SELECT * FROM t t1 WHERE EXISTS (SELECT 1 FROM t t2 WHERE t2.score > t1.score)",
-		
+
 		// UNION
 		"SELECT name FROM t WHERE active = TRUE UNION SELECT name FROM t WHERE score > 85",
 		"SELECT name FROM t UNION ALL SELECT name FROM t WHERE score > 90",
@@ -9105,31 +9106,31 @@ func TestMoreJoinScenariosB(t *testing.T) {
 	queries := []string{
 		// INNER JOIN
 		"SELECT u.name, d.name as dept FROM users u INNER JOIN depts d ON u.dept_id = d.id",
-		
+
 		// LEFT JOIN
 		"SELECT u.name, d.name as dept FROM users u LEFT JOIN depts d ON u.dept_id = d.id",
 		"SELECT u.name, d.name as dept FROM users u LEFT OUTER JOIN depts d ON u.dept_id = d.id",
-		
+
 		// RIGHT JOIN
 		"SELECT u.name, d.name as dept FROM users u RIGHT JOIN depts d ON u.dept_id = d.id",
 		"SELECT u.name, d.name as dept FROM users u RIGHT OUTER JOIN depts d ON u.dept_id = d.id",
-		
+
 		// FULL JOIN
 		"SELECT u.name, d.name as dept FROM users u FULL JOIN depts d ON u.dept_id = d.id",
 		"SELECT u.name, d.name as dept FROM users u FULL OUTER JOIN depts d ON u.dept_id = d.id",
-		
+
 		// CROSS JOIN
 		"SELECT u.name, d.name as dept FROM users u CROSS JOIN depts d",
-		
+
 		// Multiple JOINs
 		"SELECT u.name, d.name as dept, p.name as project FROM users u LEFT JOIN depts d ON u.dept_id = d.id LEFT JOIN projects p ON u.id = p.user_id",
-		
+
 		// JOIN with WHERE
 		"SELECT u.name, d.name FROM users u JOIN depts d ON u.dept_id = d.id WHERE d.name = 'Engineering'",
-		
+
 		// JOIN with ORDER BY
 		"SELECT u.name, d.name FROM users u LEFT JOIN depts d ON u.dept_id = d.id ORDER BY d.name, u.name",
-		
+
 		// JOIN with aggregates
 		"SELECT d.name, COUNT(u.id) as cnt FROM depts d LEFT JOIN users u ON d.id = u.dept_id GROUP BY d.name",
 		"SELECT d.name, COUNT(u.id) as cnt FROM depts d LEFT JOIN users u ON d.id = u.dept_id GROUP BY d.name HAVING COUNT(u.id) > 0",
@@ -9175,38 +9176,38 @@ func TestWindowFunctionsEvenMore(t *testing.T) {
 		// ROW_NUMBER with different orderings
 		"SELECT id, grp, val, ROW_NUMBER() OVER (ORDER BY val) as rn FROM data",
 		"SELECT id, grp, val, ROW_NUMBER() OVER (PARTITION BY grp ORDER BY val DESC) as rn FROM data",
-		
+
 		// RANK and DENSE_RANK
 		"SELECT id, grp, val, RANK() OVER (ORDER BY grp) as r FROM data",
 		"SELECT id, grp, val, DENSE_RANK() OVER (PARTITION BY grp ORDER BY val) as dr FROM data",
-		
+
 		// SUM with different frames
 		"SELECT id, grp, val, SUM(val) OVER (ORDER BY id ROWS BETWEEN 1 PRECEDING AND CURRENT ROW) FROM data",
 		"SELECT id, grp, val, SUM(val) OVER (ORDER BY id ROWS BETWEEN CURRENT ROW AND 1 FOLLOWING) FROM data",
 		"SELECT id, grp, val, SUM(val) OVER (PARTITION BY grp ORDER BY id) FROM data",
-		
+
 		// AVG, MIN, MAX
 		"SELECT id, grp, val, AVG(val) OVER (PARTITION BY grp) FROM data",
 		"SELECT id, grp, val, MIN(val) OVER (PARTITION BY grp ORDER BY id) FROM data",
 		"SELECT id, grp, val, MAX(val) OVER (PARTITION BY grp) FROM data",
-		
+
 		// COUNT
 		"SELECT id, grp, val, COUNT(*) OVER (PARTITION BY grp) FROM data",
 		"SELECT id, grp, val, COUNT(val) OVER (ORDER BY id) FROM data",
-		
+
 		// LAG and LEAD with various offsets
 		"SELECT id, val, LAG(val, 2) OVER (ORDER BY id) FROM data",
 		"SELECT id, val, LEAD(val, 2, -1) OVER (ORDER BY id) FROM data",
-		
+
 		// FIRST_VALUE and LAST_VALUE
 		"SELECT id, grp, val, FIRST_VALUE(val) OVER (PARTITION BY grp ORDER BY id) FROM data",
 		"SELECT id, grp, val, LAST_VALUE(val) OVER (PARTITION BY grp ORDER BY id ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING) FROM data",
-		
+
 		// NTILE, PERCENT_RANK, CUME_DIST
 		"SELECT id, val, NTILE(3) OVER (ORDER BY val) FROM data",
 		"SELECT id, val, PERCENT_RANK() OVER (ORDER BY val) FROM data",
 		"SELECT id, val, CUME_DIST() OVER (ORDER BY val) FROM data",
-		
+
 		// NTH_VALUE
 		"SELECT id, val, NTH_VALUE(val, 3) OVER (ORDER BY id) FROM data",
 	}
@@ -9316,19 +9317,19 @@ func TestCTEVariations(t *testing.T) {
 	cteQueries := []string{
 		// Simple CTE
 		"WITH cte AS (SELECT * FROM nums) SELECT * FROM cte",
-		
+
 		// Multiple CTEs
 		"WITH cte1 AS (SELECT id FROM nums), cte2 AS (SELECT id FROM cte1 WHERE id > 2) SELECT * FROM cte2",
-		
+
 		// CTE with aggregate
 		"WITH cte AS (SELECT COUNT(*) as cnt FROM nums) SELECT cnt FROM cte",
-		
+
 		// CTE with window function
 		"WITH cte AS (SELECT id, ROW_NUMBER() OVER (ORDER BY id) as rn FROM nums) SELECT * FROM cte WHERE rn <= 3",
-		
+
 		// CTE with JOIN
 		"WITH cte AS (SELECT id FROM nums WHERE id > 2) SELECT n.id, c.id as c_id FROM nums n JOIN cte c ON n.id = c.id",
-		
+
 		// Nested CTE
 		"WITH outer_cte AS (WITH inner_cte AS (SELECT id FROM nums) SELECT id FROM inner_cte WHERE id > 1) SELECT * FROM outer_cte",
 	}
@@ -9365,13 +9366,13 @@ func TestStringOperationsMore(t *testing.T) {
 		"SELECT CONCAT('a', 'b', 'c')",
 		"SELECT CONCAT_WS('-', 'a', 'b', 'c')",
 		"SELECT CONCAT_WS(', ', 'one', NULL, 'three')",
-		
+
 		// SUBSTRING variations
 		"SELECT SUBSTRING('hello world', 1, 5)",
 		"SELECT SUBSTRING('hello world', 7)",
 		"SELECT SUBSTR('hello world', 1, 5)",
 		"SELECT MID('hello world', 1, 5)",
-		
+
 		// TRIM variations
 		"SELECT TRIM('  hello  ')",
 		"SELECT TRIM(BOTH ' ' FROM '  hello  ')",
@@ -9379,20 +9380,20 @@ func TestStringOperationsMore(t *testing.T) {
 		"SELECT TRIM(TRAILING ' ' FROM '  hello  ')",
 		"SELECT LTRIM('  hello  ')",
 		"SELECT RTRIM('  hello  ')",
-		
+
 		// REPLACE
 		"SELECT REPLACE('hello world', 'world', 'there')",
-		
+
 		// REVERSE
 		"SELECT REVERSE('hello')",
-		
+
 		// REPEAT
 		"SELECT REPEAT('ab', 3)",
-		
+
 		// LPAD/RPAD
 		"SELECT LPAD('hi', 5, 'x')",
 		"SELECT RPAD('hi', 5, 'x')",
-		
+
 		// String functions with NULL
 		"SELECT LENGTH(NULL)",
 		"SELECT UPPER(NULL)",
@@ -9457,60 +9458,60 @@ func TestComprehensiveMoreA(t *testing.T) {
 	queries := []string{
 		// Multiple JOINs
 		"SELECT c.name, p.name, o.quantity FROM orders o JOIN customers c ON o.customer_id = c.id JOIN products p ON o.product_id = p.id",
-		
+
 		// Subqueries in SELECT
 		"SELECT name, (SELECT COUNT(*) FROM orders WHERE product_id = products.id) as order_count FROM products",
-		
+
 		// Correlated subqueries
 		"SELECT * FROM products p WHERE price > (SELECT AVG(price) FROM products WHERE category = p.category)",
-		
+
 		// CTE with JOIN
 		"WITH prod AS (SELECT * FROM products WHERE price > 100) SELECT p.name, c.name as customer FROM prod p JOIN orders o ON p.id = o.product_id JOIN customers c ON o.customer_id = c.id",
-		
+
 		// GROUP BY with HAVING
 		"SELECT category, COUNT(*) as cnt, SUM(price) as total FROM products GROUP BY category HAVING COUNT(*) > 1 ORDER BY total DESC",
-		
+
 		// UNION
 		"SELECT name FROM products WHERE category = 'Electronics' UNION SELECT name FROM customers WHERE email IS NOT NULL",
-		
+
 		// Window functions with PARTITION
 		"SELECT id, name, category, price, SUM(price) OVER (PARTITION BY category) as cat_total FROM products",
 		"SELECT id, name, price, RANK() OVER (ORDER BY price DESC) as price_rank FROM products",
-		
+
 		// CASE expressions
 		"SELECT name, CASE WHEN price > 500 THEN 'High' WHEN price > 100 THEN 'Medium' ELSE 'Low' END as price_level FROM products",
-		
+
 		// COALESCE with multiple values
 		"SELECT COALESCE(email, 'no-email@test.com', 'fallback@test.com') as email FROM customers",
-		
+
 		// DISTINCT with ORDER BY
 		"SELECT DISTINCT category FROM products ORDER BY category",
-		
+
 		// LIKE with escape
 		"SELECT * FROM products WHERE name LIKE 'L%'",
 		"SELECT * FROM products WHERE name LIKE '%o%'",
-		
+
 		// IN with subquery
 		"SELECT * FROM products WHERE id IN (SELECT product_id FROM orders WHERE quantity > 1)",
-		
+
 		// NOT IN with subquery
 		"SELECT * FROM products WHERE id NOT IN (SELECT DISTINCT product_id FROM orders)",
-		
+
 		// EXISTS
 		"SELECT * FROM customers c WHERE EXISTS (SELECT 1 FROM orders o WHERE o.customer_id = c.id)",
-		
+
 		// NOT EXISTS
 		"SELECT * FROM customers c WHERE NOT EXISTS (SELECT 1 FROM orders o WHERE o.customer_id = c.id)",
-		
+
 		// BETWEEN
 		"SELECT * FROM products WHERE price BETWEEN 50 AND 500",
-		
+
 		// Multiple conditions
 		"SELECT * FROM products WHERE (category = 'Electronics' OR category = 'Furniture') AND price < 500",
-		
+
 		// Date functions
 		"SELECT YEAR(order_date), MONTH(order_date), COUNT(*) FROM orders GROUP BY YEAR(order_date), MONTH(order_date)",
-		
+
 		// Aggregations
 		"SELECT MAX(price), MIN(price), AVG(price), STDDEV(price) FROM products",
 		"SELECT category, COUNT(DISTINCT name) FROM products GROUP BY category",
@@ -9550,16 +9551,16 @@ func TestDateTimeFunctionsComprehensive(t *testing.T) {
 		"SELECT DATE_ADD('2024-03-15', INTERVAL 1 DAY)",
 		"SELECT DATE_SUB('2024-03-15', INTERVAL 1 DAY)",
 		"SELECT DATE_SUB('2024-03-15', INTERVAL 1 WEEK)",
-		
+
 		// Date differences
 		"SELECT DATEDIFF('2024-03-20', '2024-03-15')",
 		"SELECT TIMEDIFF('10:30:00', '08:00:00')",
-		
+
 		// Date formatting
 		"SELECT DATE_FORMAT('2024-03-15 10:30:00', '%Y-%m-%d')",
 		"SELECT DATE_FORMAT(NOW(), '%H:%i:%s')",
 		"SELECT TIME_FORMAT('10:30:45', '%H:%i')",
-		
+
 		// Date extraction
 		"SELECT YEAR('2024-03-15')",
 		"SELECT QUARTER('2024-03-15')",
@@ -9572,20 +9573,20 @@ func TestDateTimeFunctionsComprehensive(t *testing.T) {
 		"SELECT HOUR('10:30:45')",
 		"SELECT MINUTE('10:30:45')",
 		"SELECT SECOND('10:30:45')",
-		
+
 		// Date creation
 		"SELECT MAKEDATE(2024, 75)",
 		"SELECT MAKETIME(10, 30, 45)",
-		
+
 		// Last day
 		"SELECT LAST_DAY('2024-02-15')",
 		"SELECT LAST_DAY('2024-03-15')",
-		
+
 		// Unix timestamp
 		"SELECT UNIX_TIMESTAMP()",
 		"SELECT UNIX_TIMESTAMP('2024-03-15 10:30:00')",
 		"SELECT FROM_UNIXTIME(1710497400)",
-		
+
 		// Convert timezone
 		"SELECT CONVERT_TZ('2024-03-15 10:00:00', '+00:00', '+08:00')",
 	}
@@ -9635,22 +9636,22 @@ func TestAggregationMore(t *testing.T) {
 		"SELECT COUNT(*), SUM(amount), AVG(amount), MIN(amount), MAX(amount) FROM sales",
 		"SELECT COUNT(DISTINCT region) FROM sales",
 		"SELECT COUNT(DISTINCT product), COUNT(product) FROM sales",
-		
+
 		// GROUP BY
 		"SELECT region, SUM(amount) FROM sales GROUP BY region",
 		"SELECT region, product, SUM(quantity) FROM sales GROUP BY region, product",
 		"SELECT region, COUNT(*) as cnt FROM sales GROUP BY region ORDER BY cnt DESC",
-		
+
 		// HAVING
 		"SELECT region, SUM(amount) FROM sales GROUP BY region HAVING SUM(amount) > 200",
 		"SELECT region, COUNT(*) FROM sales GROUP BY region HAVING COUNT(*) >= 1",
 		"SELECT region, AVG(amount) FROM sales GROUP BY region HAVING AVG(amount) BETWEEN 100 AND 200",
-		
+
 		// GROUP_CONCAT
 		"SELECT region, GROUP_CONCAT(product) FROM sales GROUP BY region",
 		"SELECT region, GROUP_CONCAT(product SEPARATOR ', ') FROM sales GROUP BY region",
 		"SELECT region, GROUP_CONCAT(DISTINCT product ORDER BY product SEPARATOR '-') FROM sales GROUP BY region",
-		
+
 		// STDDEV and VARIANCE
 		"SELECT STDDEV(amount) FROM sales",
 		"SELECT STDDEV_SAMP(amount) FROM sales",
@@ -9658,12 +9659,12 @@ func TestAggregationMore(t *testing.T) {
 		"SELECT VARIANCE(amount) FROM sales",
 		"SELECT VAR_SAMP(amount) FROM sales",
 		"SELECT VAR_POP(amount) FROM sales",
-		
+
 		// BIT aggregates
 		"SELECT BIT_AND(quantity) FROM sales",
 		"SELECT BIT_OR(quantity) FROM sales",
 		"SELECT BIT_XOR(quantity) FROM sales",
-		
+
 		// Complex expressions in aggregates
 		"SELECT region, SUM(amount * quantity) as total_value FROM sales GROUP BY region",
 		"SELECT region, ROUND(AVG(amount), 2) as avg_amount FROM sales GROUP BY region",
@@ -9705,7 +9706,7 @@ func TestMathFunctionsComprehensive(t *testing.T) {
 		"SELECT ROUND(3.14159, 2)",
 		"SELECT ROUND(3.5)",
 		"SELECT TRUNCATE(3.14159, 2)",
-		
+
 		// Power and roots
 		"SELECT POWER(2, 10)",
 		"SELECT POW(2, 8)",
@@ -9715,7 +9716,7 @@ func TestMathFunctionsComprehensive(t *testing.T) {
 		"SELECT LOG(10)",
 		"SELECT LOG10(100)",
 		"SELECT LOG2(8)",
-		
+
 		// Trigonometry
 		"SELECT SIN(0)",
 		"SELECT COS(0)",
@@ -9727,17 +9728,17 @@ func TestMathFunctionsComprehensive(t *testing.T) {
 		"SELECT COT(1)",
 		"SELECT DEGREES(3.14159)",
 		"SELECT RADIANS(180)",
-		
+
 		// Sign and mod
 		"SELECT SIGN(-42)",
 		"SELECT SIGN(0)",
 		"SELECT SIGN(42)",
 		"SELECT MOD(17, 5)",
-		
+
 		// Random
 		"SELECT RAND()",
 		"SELECT RAND(42)",
-		
+
 		// Other
 		"SELECT PI()",
 		"SELECT CRC32('hello')",
@@ -9776,36 +9777,36 @@ func TestConditionalExpressionsMore(t *testing.T) {
 		"SELECT IF(NULL, 'yes', 'no')",
 		"SELECT IF(0, 'yes', 'no')",
 		"SELECT IF('', 'yes', 'no')",
-		
+
 		// IFNULL
 		"SELECT IFNULL(NULL, 'default')",
 		"SELECT IFNULL('value', 'default')",
 		"SELECT IFNULL(NULL, NULL)",
-		
+
 		// NULLIF
 		"SELECT NULLIF(1, 1)",
 		"SELECT NULLIF(1, 2)",
 		"SELECT NULLIF(NULL, 1)",
 		"SELECT NULLIF(1, NULL)",
-		
+
 		// COALESCE
 		"SELECT COALESCE(NULL, 'second')",
 		"SELECT COALESCE(NULL, NULL, 'third')",
 		"SELECT COALESCE('first', 'second', 'third')",
 		"SELECT COALESCE(NULL, NULL, NULL)",
-		
+
 		// CASE
 		"SELECT CASE 1 WHEN 1 THEN 'one' WHEN 2 THEN 'two' ELSE 'other' END",
 		"SELECT CASE 2 WHEN 1 THEN 'one' WHEN 2 THEN 'two' ELSE 'other' END",
 		"SELECT CASE WHEN 1 > 2 THEN 'yes' ELSE 'no' END",
 		"SELECT CASE WHEN NULL THEN 'yes' ELSE 'no' END",
-		
+
 		// GREATEST/LEAST
 		"SELECT GREATEST(1, 5, 3, 2)",
 		"SELECT GREATEST('a', 'z', 'm')",
 		"SELECT LEAST(1, 5, 3, 2)",
 		"SELECT LEAST('a', 'z', 'm')",
-		
+
 		// INTERVAL
 		"SELECT INTERVAL(5, 1, 3, 5, 7)",
 		"SELECT INTERVAL(0, 1, 3, 5, 7)",
@@ -11128,8 +11129,8 @@ func TestProcessLoadDataLinesError(t *testing.T) {
 
 	// Create data files with various formats
 	testCases := []struct {
-		name     string
-		data     string
+		name       string
+		data       string
 		terminated string
 	}{
 		{"comma_separated", "1,John\n2,Jane\n3,Bob", ","},
@@ -12777,7 +12778,7 @@ func TestMoreIndexScanCoverage(t *testing.T) {
 	_, _ = exec.Execute("CREATE INDEX idx_a ON idx_scan(a)")
 	_, _ = exec.Execute("CREATE INDEX idx_b ON idx_scan(b)")
 	_, _ = exec.Execute("CREATE INDEX idx_c ON idx_scan(c)")
-	
+
 	for i := 0; i < 20; i++ {
 		_, _ = exec.Execute(fmt.Sprintf("INSERT INTO idx_scan VALUES (%d, %d, 'str%d', %f)", i+1, i*10, i, float64(i)*1.5))
 	}
@@ -13118,29 +13119,29 @@ func TestFinalPushCoverage(t *testing.T) {
 		"SELECT * FROM final_test WHERE int_col = 10",
 		"SELECT * FROM final_test WHERE int_col != 10",
 		"SELECT * FROM final_test WHERE int_col <> 10",
-		
+
 		// NULL handling
 		"SELECT * FROM final_test WHERE int_col IS NULL",
 		"SELECT * FROM final_test WHERE int_col IS NOT NULL",
-		
+
 		// BETWEEN
 		"SELECT * FROM final_test WHERE int_col BETWEEN 5 AND 25",
 		"SELECT * FROM final_test WHERE float_col BETWEEN 1.0 AND 3.0",
-		
+
 		// IN
 		"SELECT * FROM final_test WHERE int_col IN (10, 30, 50)",
 		"SELECT * FROM final_test WHERE int_col NOT IN (10, 30, 50)",
-		
+
 		// LIKE
 		"SELECT * FROM final_test WHERE str_col LIKE 'h%'",
 		"SELECT * FROM final_test WHERE str_col LIKE '%o%'",
 		"SELECT * FROM final_test WHERE str_col NOT LIKE 'h%'",
-		
+
 		// Logical
 		"SELECT * FROM final_test WHERE int_col > 5 AND bool_col = true",
 		"SELECT * FROM final_test WHERE int_col > 100 OR str_col IS NOT NULL",
 		"SELECT * FROM final_test WHERE NOT (int_col < 15)",
-		
+
 		// Aggregates
 		"SELECT COUNT(*) FROM final_test",
 		"SELECT COUNT(int_col) FROM final_test",
@@ -13148,19 +13149,19 @@ func TestFinalPushCoverage(t *testing.T) {
 		"SELECT AVG(int_col) FROM final_test",
 		"SELECT MAX(int_col) FROM final_test",
 		"SELECT MIN(int_col) FROM final_test",
-		
+
 		// ORDER BY
 		"SELECT * FROM final_test ORDER BY int_col",
 		"SELECT * FROM final_test ORDER BY int_col DESC",
 		"SELECT * FROM final_test ORDER BY str_col",
-		
+
 		// LIMIT/OFFSET
 		"SELECT * FROM final_test LIMIT 2",
 		"SELECT * FROM final_test LIMIT 1 OFFSET 1",
-		
+
 		// DISTINCT
 		"SELECT DISTINCT bool_col FROM final_test",
-		
+
 		// Functions
 		"SELECT UPPER(str_col) FROM final_test",
 		"SELECT LOWER(str_col) FROM final_test",
@@ -13298,19 +13299,19 @@ func TestFinalPushTo80(t *testing.T) {
 		"SELECT a * 2 FROM push80 WHERE id = 1",
 		"SELECT a / 2 FROM push80 WHERE id = 1",
 		"SELECT a % 3 FROM push80 WHERE id = 1",
-		
+
 		// String functions
 		"SELECT CONCAT(b, 'suffix') FROM push80 WHERE id = 1",
 		"SELECT b || ' appended' FROM push80 WHERE id = 1",
-		
+
 		// Type conversion
 		"SELECT CAST(a AS VARCHAR) FROM push80 WHERE id = 1",
 		"SELECT CAST(c AS INT) FROM push80 WHERE id = 1",
-		
+
 		// Conditionals
 		"SELECT CASE WHEN a > 15 THEN 'big' ELSE 'small' END FROM push80",
 		"SELECT IF(a > 15, 'big', 'small') FROM push80",
-		
+
 		// Date functions
 		"SELECT DATE()",
 		"SELECT TIME()",
@@ -13318,14 +13319,14 @@ func TestFinalPushTo80(t *testing.T) {
 		"SELECT YEAR('2023-03-15')",
 		"SELECT MONTH('2023-03-15')",
 		"SELECT DAY('2023-03-15')",
-		
+
 		// More aggregate functions
 		"SELECT COUNT(*), SUM(a), AVG(a) FROM push80",
 		"SELECT MAX(a), MIN(a) FROM push80",
-		
+
 		// Subquery
 		"SELECT * FROM push80 WHERE a > (SELECT AVG(a) FROM push80)",
-		
+
 		// GROUP BY with HAVING
 		"SELECT id, SUM(a) FROM push80 GROUP BY id HAVING SUM(a) > 15",
 	}
@@ -13369,37 +13370,37 @@ func TestEdgeCasesForCoverage(t *testing.T) {
 		"SELECT * FROM edge WHERE x = 0",
 		"SELECT * FROM edge WHERE x < 0",
 		"SELECT * FROM edge WHERE x <= 0",
-		
+
 		// Empty strings
 		"SELECT * FROM edge WHERE y = ''",
 		"SELECT * FROM edge WHERE y != ''",
 		"SELECT * FROM edge WHERE LENGTH(y) = 0",
-		
+
 		// LIKE edge cases
 		"SELECT * FROM edge WHERE y LIKE '%'",
 		"SELECT * FROM edge WHERE y LIKE '_'",
 		"SELECT * FROM edge WHERE y LIKE 't%'",
-		
+
 		// IN edge cases
 		"SELECT * FROM edge WHERE x IN (0)",
 		"SELECT * FROM edge WHERE x IN (1, 2, 3)",
-		
+
 		// NULL handling
 		"SELECT COALESCE(NULL, 0) AS result",
 		"SELECT NULLIF(0, 0) AS result",
 		"SELECT IFNULL(NULL, 'default') AS result",
-		
+
 		// Boolean expressions
 		"SELECT 1 WHERE 1 = 1",
 		"SELECT 1 WHERE 0 = 0",
 		"SELECT 1 WHERE 1 < 2",
 		"SELECT 1 WHERE 2 > 1",
-		
+
 		// Arithmetic edge cases
 		"SELECT 0 + 0",
 		"SELECT 0 * 100",
 		"SELECT 1 / 1",
-		
+
 		// String functions
 		"SELECT TRIM('   ')",
 		"SELECT LTRIM('   ')",
@@ -13899,7 +13900,7 @@ func TestFinalPushTo80Percent(t *testing.T) {
 		"SELECT * FROM t1 INNER JOIN t2 ON t1.id = t2.ref WHERE t1.a > 15",
 		"SELECT * FROM t1 INNER JOIN t2 ON t1.id = t2.ref WHERE t2.c IS NOT NULL",
 		"SELECT * FROM t1 INNER JOIN t2 ON t1.id = t2.ref ORDER BY t1.a",
-		
+
 		// WHERE conditions
 		"SELECT * FROM t1 WHERE a IS NULL",
 		"SELECT * FROM t1 WHERE a IS NOT NULL",
@@ -13917,7 +13918,7 @@ func TestFinalPushTo80Percent(t *testing.T) {
 		"SELECT * FROM t1 WHERE b NOT LIKE 'x%'",
 		"SELECT * FROM t1 WHERE (a > 5 AND b IS NOT NULL) OR a IS NULL",
 		"SELECT * FROM t1 WHERE NOT (a > 100)",
-		
+
 		// Aggregate functions
 		"SELECT COUNT(*) FROM t1",
 		"SELECT COUNT(a) FROM t1",
@@ -13925,25 +13926,25 @@ func TestFinalPushTo80Percent(t *testing.T) {
 		"SELECT AVG(a) FROM t1",
 		"SELECT MAX(a) FROM t1",
 		"SELECT MIN(a) FROM t1",
-		
+
 		// GROUP BY with HAVING
 		"SELECT a, COUNT(*) FROM t1 GROUP BY a HAVING COUNT(*) >= 1",
 		"SELECT a, SUM(a) FROM t1 GROUP BY a HAVING SUM(a) > 10",
 		"SELECT a, AVG(a) FROM t1 GROUP BY a HAVING AVG(a) > 15",
-		
+
 		// ORDER BY
 		"SELECT * FROM t1 ORDER BY a",
 		"SELECT * FROM t1 ORDER BY a DESC",
 		"SELECT * FROM t1 ORDER BY b",
-		
+
 		// LIMIT/OFFSET
 		"SELECT * FROM t1 LIMIT 2",
 		"SELECT * FROM t1 LIMIT 1 OFFSET 1",
-		
+
 		// DISTINCT
 		"SELECT DISTINCT a FROM t1",
 		"SELECT DISTINCT b FROM t1",
-		
+
 		// PRAGMA
 		"PRAGMA integrity_check",
 		"PRAGMA index_info(idx_a)",
@@ -14087,11 +14088,11 @@ func TestEvaluateWhereEdgeCases(t *testing.T) {
 		"SELECT * FROM ew WHERE f = 0.0",
 		"SELECT * FROM ew WHERE s = ''",
 		"SELECT * FROM ew WHERE b = false",
-		
+
 		// Negative values
 		"SELECT * FROM ew WHERE i < 0",
 		"SELECT * FROM ew WHERE f < 0",
-		
+
 		// NULL comparisons
 		"SELECT * FROM ew WHERE i IS NULL",
 		"SELECT * FROM ew WHERE f IS NULL",
@@ -14099,13 +14100,13 @@ func TestEvaluateWhereEdgeCases(t *testing.T) {
 		"SELECT * FROM ew WHERE b IS NULL",
 		"SELECT * FROM ew WHERE d IS NULL",
 		"SELECT * FROM ew WHERE t IS NULL",
-		
+
 		// Complex expressions
 		"SELECT * FROM ew WHERE (i > 0 OR i < 0) AND s IS NOT NULL",
 		"SELECT * FROM ew WHERE NOT (i IS NULL AND f IS NULL)",
 		"SELECT * FROM ew WHERE i + 10 > 5",
 		"SELECT * FROM ew WHERE f * 2 > 0",
-		
+
 		// Date/time comparisons
 		"SELECT * FROM ew WHERE d = '2023-01-01'",
 		"SELECT * FROM ew WHERE d > '2023-06-01'",
@@ -14153,38 +14154,38 @@ func TestFor80PercentCoverage(t *testing.T) {
 		"SELECT id, val FROM tab1 ORDER BY val DESC",
 		"SELECT * FROM tab1 LIMIT 2",
 		"SELECT * FROM tab1 LIMIT 1 OFFSET 1",
-		
+
 		// Aggregates
 		"SELECT COUNT(*) FROM tab1",
 		"SELECT SUM(val) FROM tab1",
 		"SELECT AVG(val) FROM tab1",
 		"SELECT MAX(val) FROM tab1",
 		"SELECT MIN(val) FROM tab1",
-		
+
 		// GROUP BY
 		"SELECT val, COUNT(*) FROM tab1 GROUP BY val",
-		
+
 		// UPDATE
 		"UPDATE tab1 SET val = 15 WHERE id = 1",
-		
+
 		// DELETE
 		"DELETE FROM tab1 WHERE id = 3",
-		
+
 		// INSERT
 		"INSERT INTO tab1 VALUES (4, 40)",
-		
+
 		// Subquery
 		"SELECT * FROM tab1 WHERE val > (SELECT AVG(val) FROM tab1)",
-		
+
 		// IN clause
 		"SELECT * FROM tab1 WHERE id IN (1, 2)",
-		
+
 		// BETWEEN
 		"SELECT * FROM tab1 WHERE val BETWEEN 10 AND 25",
-		
+
 		// LIKE
 		"SELECT * FROM tab1 WHERE CAST(id AS VARCHAR) LIKE '1%'",
-		
+
 		// IS NULL/IS NOT NULL
 		"SELECT * FROM tab1 WHERE val IS NOT NULL",
 	}
@@ -14527,7 +14528,7 @@ func TestEvaluateFunctionAll(t *testing.T) {
 		"SELECT STRCMP('abc', 'abd')",
 		"SELECT FIND_IN_SET('b', 'a,b,c')",
 		"SELECT MAKE_SET(3, 'a', 'b', 'c')",
-		
+
 		// Math functions
 		"SELECT ABS(-123)",
 		"SELECT SIGN(-5)",
@@ -14556,7 +14557,7 @@ func TestEvaluateFunctionAll(t *testing.T) {
 		"SELECT GREATEST(1, 5, 3, 2)",
 		"SELECT LEAST(1, 5, 3, 2)",
 		"SELECT FORMAT(12345.6789, 2)",
-		
+
 		// Date/Time functions
 		"SELECT NOW()",
 		"SELECT CURDATE()",
@@ -14584,7 +14585,7 @@ func TestEvaluateFunctionAll(t *testing.T) {
 		"SELECT UNIX_TIMESTAMP('2023-03-15')",
 		"SELECT DATE_FORMAT('2023-03-15', '%Y-%m-%d')",
 		"SELECT STR_TO_DATE('2023-03-15', '%Y-%m-%d')",
-		
+
 		// Control flow functions
 		"SELECT IF(1 > 0, 'yes', 'no')",
 		"SELECT IFNULL(NULL, 'default')",
@@ -14593,7 +14594,7 @@ func TestEvaluateFunctionAll(t *testing.T) {
 		"SELECT CASE 1 WHEN 1 THEN 'one' WHEN 2 THEN 'two' ELSE 'other' END",
 		"SELECT CASE WHEN 1 > 2 THEN 'yes' ELSE 'no' END",
 		"SELECT IIF(1 > 0, 'yes', 'no')",
-		
+
 		// Other functions
 		"SELECT UUID()",
 		"SELECT MD5('test')",
@@ -14684,7 +14685,7 @@ func TestFindIndexForWhereFinal(t *testing.T) {
 	_, _ = exec.Execute("CREATE INDEX idx_a ON idx_test(a)")
 	_, _ = exec.Execute("CREATE INDEX idx_b ON idx_test(b)")
 	_, _ = exec.Execute("CREATE INDEX idx_c ON idx_test(c)")
-	
+
 	for i := 0; i < 10; i++ {
 		_, _ = exec.Execute(fmt.Sprintf("INSERT INTO idx_test VALUES (%d, %d, 'str%d', %f)", i+1, i*10, i, float64(i)*1.5))
 	}
@@ -14809,7 +14810,7 @@ func TestMoreCoverageFor80(t *testing.T) {
 		"SELECT * FROM t80 WHERE x < 30",
 		"SELECT * FROM t80 WHERE x <= 20",
 		"SELECT * FROM t80 WHERE x <=> 10",
-		
+
 		// NULL operations
 		"SELECT * FROM t80 WHERE x IS NULL",
 		"SELECT * FROM t80 WHERE x IS NOT NULL",
@@ -14817,58 +14818,58 @@ func TestMoreCoverageFor80(t *testing.T) {
 		"SELECT * FROM t80 WHERE y IS NOT NULL",
 		"SELECT * FROM t80 WHERE z IS NULL",
 		"SELECT * FROM t80 WHERE z IS NOT NULL",
-		
+
 		// BETWEEN
 		"SELECT * FROM t80 WHERE x BETWEEN 5 AND 25",
 		"SELECT * FROM t80 WHERE x NOT BETWEEN 5 AND 25",
 		"SELECT * FROM t80 WHERE z BETWEEN 1.0 AND 3.0",
-		
+
 		// IN
 		"SELECT * FROM t80 WHERE x IN (10, 20, 30)",
 		"SELECT * FROM t80 WHERE x NOT IN (10, 20, 30)",
 		"SELECT * FROM t80 WHERE y IN ('a', 'b', 'c')",
-		
+
 		// LIKE
 		"SELECT * FROM t80 WHERE y LIKE 'a%'",
 		"SELECT * FROM t80 WHERE y LIKE '%b%'",
 		"SELECT * FROM t80 WHERE y LIKE '_'",
 		"SELECT * FROM t80 WHERE y NOT LIKE 'a%'",
-		
+
 		// Logical operators
 		"SELECT * FROM t80 WHERE x > 5 AND y IS NOT NULL",
 		"SELECT * FROM t80 WHERE x > 100 OR y IS NOT NULL",
 		"SELECT * FROM t80 WHERE NOT (x > 25)",
 		"SELECT * FROM t80 WHERE (x > 5 OR x IS NULL) AND y IS NOT NULL",
-		
+
 		// Arithmetic in WHERE
 		"SELECT * FROM t80 WHERE x + 10 > 25",
 		"SELECT * FROM t80 WHERE x - 5 < 10",
 		"SELECT * FROM t80 WHERE x * 2 > 30",
 		"SELECT * FROM t80 WHERE x / 2 < 15",
-		
+
 		// Functions in WHERE
 		"SELECT * FROM t80 WHERE ABS(x) > 15",
 		"SELECT * FROM t80 WHERE UPPER(y) = 'A'",
 		"SELECT * FROM t80 WHERE LENGTH(y) > 0",
 		"SELECT * FROM t80 WHERE COALESCE(x, 0) > 5",
-		
+
 		// ORDER BY
 		"SELECT * FROM t80 ORDER BY x",
 		"SELECT * FROM t80 ORDER BY x DESC",
 		"SELECT * FROM t80 ORDER BY y",
 		"SELECT * FROM t80 ORDER BY z",
 		"SELECT * FROM t80 ORDER BY x, y",
-		
+
 		// LIMIT/OFFSET
 		"SELECT * FROM t80 LIMIT 2",
 		"SELECT * FROM t80 LIMIT 1 OFFSET 1",
 		"SELECT * FROM t80 ORDER BY id LIMIT 2",
-		
+
 		// DISTINCT
 		"SELECT DISTINCT x FROM t80",
 		"SELECT DISTINCT y FROM t80",
 		"SELECT DISTINCT x, y FROM t80",
-		
+
 		// Aggregates
 		"SELECT COUNT(*) FROM t80",
 		"SELECT COUNT(x) FROM t80",
@@ -14879,12 +14880,12 @@ func TestMoreCoverageFor80(t *testing.T) {
 		"SELECT MIN(x) FROM t80",
 		"SELECT SUM(z) FROM t80",
 		"SELECT AVG(z) FROM t80",
-		
+
 		// GROUP BY
 		"SELECT x, COUNT(*) FROM t80 GROUP BY x",
 		"SELECT y, SUM(x) FROM t80 GROUP BY y",
 		"SELECT x, AVG(z) FROM t80 GROUP BY x",
-		
+
 		// HAVING
 		"SELECT x, COUNT(*) FROM t80 GROUP BY x HAVING COUNT(*) > 0",
 		"SELECT y, SUM(x) FROM t80 GROUP BY y HAVING SUM(x) > 10",
@@ -15087,34 +15088,34 @@ func TestApplyDateModifierFinal(t *testing.T) {
 		"SELECT DATE('2023-03-15', '+2 days')",
 		"SELECT DATE('2023-03-15', '-1 day')",
 		"SELECT DATE('2023-03-15', '-7 days')",
-		
+
 		// Months
 		"SELECT DATE('2023-03-15', '+1 month')",
 		"SELECT DATE('2023-03-15', '+2 months')",
 		"SELECT DATE('2023-03-15', '-1 month')",
 		"SELECT DATE('2023-03-15', '-6 months')",
-		
+
 		// Years
 		"SELECT DATE('2023-03-15', '+1 year')",
 		"SELECT DATE('2023-03-15', '+2 years')",
 		"SELECT DATE('2023-03-15', '-1 year')",
 		"SELECT DATE('2023-03-15', '-5 years')",
-		
+
 		// Hours
 		"SELECT DATETIME('2023-03-15 10:30:00', '+1 hour')",
 		"SELECT DATETIME('2023-03-15 10:30:00', '+2 hours')",
 		"SELECT DATETIME('2023-03-15 10:30:00', '-1 hour')",
-		
+
 		// Minutes
 		"SELECT DATETIME('2023-03-15 10:30:00', '+1 minute')",
 		"SELECT DATETIME('2023-03-15 10:30:00', '+30 minutes')",
 		"SELECT DATETIME('2023-03-15 10:30:00', '-15 minutes')",
-		
+
 		// Seconds
 		"SELECT DATETIME('2023-03-15 10:30:00', '+1 second')",
 		"SELECT DATETIME('2023-03-15 10:30:00', '+60 seconds')",
 		"SELECT DATETIME('2023-03-15 10:30:00', '-30 seconds')",
-		
+
 		// Special modifiers
 		"SELECT DATE('2023-03-15', 'start of month')",
 		"SELECT DATE('2023-03-15', 'start of year')",
@@ -15165,12 +15166,12 @@ func TestEvaluateFunctionFinal(t *testing.T) {
 		"SELECT CONCAT(str, '!') FROM efp WHERE id = 1",
 		"SELECT SUBSTRING(str, 1, 3) FROM efp WHERE id = 1",
 		"SELECT REPLACE(str, 'l', 'L') FROM efp WHERE id = 1",
-		
+
 		// Functions with NULL arguments
 		"SELECT ABS(val) FROM efp WHERE id = 3",
 		"SELECT UPPER(str) FROM efp WHERE id = 3",
 		"SELECT LENGTH(str) FROM efp WHERE id = 3",
-		
+
 		// Aggregate functions
 		"SELECT COUNT(*) FROM efp",
 		"SELECT COUNT(val) FROM efp",
@@ -15180,13 +15181,13 @@ func TestEvaluateFunctionFinal(t *testing.T) {
 		"SELECT MIN(val) FROM efp",
 		"SELECT SUM(flt) FROM efp",
 		"SELECT AVG(flt) FROM efp",
-		
+
 		// Nested functions
 		"SELECT UPPER(LOWER(str)) FROM efp WHERE id = 1",
 		"SELECT ABS(ABS(val)) FROM efp WHERE id = 1",
 		"SELECT ROUND(AVG(val), 2) FROM efp",
 		"SELECT LENGTH(UPPER(str)) FROM efp WHERE id = 1",
-		
+
 		// Conditional functions
 		"SELECT IF(val > 15, 'big', 'small') FROM efp",
 		"SELECT IFNULL(val, 0) FROM efp",
@@ -15286,7 +15287,7 @@ func TestCoverageGapFiller(t *testing.T) {
 		"SELECT * FROM gap1 g1 INNER JOIN gap2 g2 ON g1.id = g2.ref WHERE g2.ref IS NULL",
 		"SELECT * FROM gap1 g1 LEFT JOIN gap2 g2 ON g1.id = g2.ref WHERE g2.ref IS NULL",
 		"SELECT * FROM gap1 g1 RIGHT JOIN gap2 g2 ON g1.id = g2.ref WHERE g1.x IS NULL",
-		
+
 		// NULL handling in expressions
 		"SELECT x, y, x + 5 FROM gap1",
 		"SELECT x, y, x - 5 FROM gap1",
@@ -15295,64 +15296,64 @@ func TestCoverageGapFiller(t *testing.T) {
 		"SELECT x, y, x % 3 FROM gap1",
 		"SELECT x, y, -x FROM gap1",
 		"SELECT x, y, +x FROM gap1",
-		
+
 		// String operations
 		"SELECT y || y FROM gap1",
 		"SELECT y || '!' FROM gap1",
 		"SELECT 'prefix_' || y FROM gap1",
-		
+
 		// Comparisons with NULL
 		"SELECT * FROM gap1 WHERE x = NULL",
 		"SELECT * FROM gap1 WHERE x != NULL",
 		"SELECT * FROM gap1 WHERE x > NULL",
 		"SELECT * FROM gap1 WHERE NULL = x",
 		"SELECT * FROM gap1 WHERE NULL > x",
-		
+
 		// Boolean operations
 		"SELECT * FROM gap1 WHERE x > 5 AND y IS NOT NULL",
 		"SELECT * FROM gap1 WHERE x > 5 OR y IS NULL",
 		"SELECT * FROM gap1 WHERE NOT (x IS NULL)",
 		"SELECT * FROM gap1 WHERE (x > 5) IS TRUE",
 		"SELECT * FROM gap1 WHERE (x IS NULL) IS FALSE",
-		
+
 		// IN with subquery
 		"SELECT * FROM gap1 WHERE x IN (SELECT x FROM gap1 WHERE x IS NOT NULL)",
 		"SELECT * FROM gap1 WHERE x NOT IN (SELECT x FROM gap1 WHERE x > 15)",
-		
+
 		// EXISTS
 		"SELECT * FROM gap1 WHERE EXISTS (SELECT 1 FROM gap2 WHERE gap2.ref = gap1.id)",
 		"SELECT * FROM gap1 WHERE NOT EXISTS (SELECT 1 FROM gap2 WHERE gap2.ref = gap1.id)",
-		
+
 		// BETWEEN with NULL
 		"SELECT * FROM gap1 WHERE x BETWEEN NULL AND 20",
 		"SELECT * FROM gap1 WHERE x BETWEEN 5 AND NULL",
 		"SELECT * FROM gap1 WHERE x BETWEEN NULL AND NULL",
-		
+
 		// CASE with NULL
 		"SELECT CASE WHEN x IS NULL THEN 'null' ELSE 'not null' END FROM gap1",
 		"SELECT CASE x WHEN NULL THEN 'is null' ELSE 'not null' END FROM gap1",
 		"SELECT CASE WHEN x > 15 THEN 'big' WHEN x <= 15 THEN 'small' END FROM gap1",
-		
+
 		// Aggregate with NULL
 		"SELECT COUNT(*), COUNT(x), COUNT(y) FROM gap1",
 		"SELECT SUM(x), AVG(x), MAX(x), MIN(x) FROM gap1",
 		"SELECT SUM(COALESCE(x, 0)) FROM gap1",
-		
+
 		// GROUP BY with NULL
 		"SELECT x, COUNT(*) FROM gap1 GROUP BY x",
 		"SELECT y, COUNT(*) FROM gap1 GROUP BY y",
 		"SELECT x, y, COUNT(*) FROM gap1 GROUP BY x, y",
-		
+
 		// HAVING with NULL
 		"SELECT x, COUNT(*) FROM gap1 GROUP BY x HAVING COUNT(*) IS NOT NULL",
 		"SELECT x, COUNT(*) FROM gap1 GROUP BY x HAVING x IS NOT NULL",
-		
+
 		// ORDER BY with NULL
 		"SELECT * FROM gap1 ORDER BY x",
 		"SELECT * FROM gap1 ORDER BY x DESC",
 		"SELECT * FROM gap1 ORDER BY y",
 		"SELECT * FROM gap1 ORDER BY x, y",
-		
+
 		// DISTINCT with NULL
 		"SELECT DISTINCT x FROM gap1",
 		"SELECT DISTINCT y FROM gap1",
@@ -15390,7 +15391,7 @@ func TestMoreIndexUsage(t *testing.T) {
 	_, _ = exec.Execute("CREATE TABLE idx_use (id INT PRIMARY KEY, name VARCHAR(50), value INT)")
 	_, _ = exec.Execute("CREATE INDEX idx_name ON idx_use(name)")
 	_, _ = exec.Execute("CREATE INDEX idx_value ON idx_use(value)")
-	
+
 	for i := 0; i < 20; i++ {
 		_, _ = exec.Execute(fmt.Sprintf("INSERT INTO idx_use VALUES (%d, 'name%d', %d)", i+1, i, i*10))
 	}
@@ -15405,23 +15406,23 @@ func TestMoreIndexUsage(t *testing.T) {
 		"SELECT * FROM idx_use WHERE id <= 15",
 		"SELECT * FROM idx_use WHERE id BETWEEN 5 AND 15",
 		"SELECT * FROM idx_use WHERE id IN (1, 5, 10, 15)",
-		
+
 		// Index on name
 		"SELECT * FROM idx_use WHERE name = 'name5'",
 		"SELECT * FROM idx_use WHERE name LIKE 'name1%'",
 		"SELECT * FROM idx_use WHERE name IN ('name1', 'name2', 'name3')",
-		
+
 		// Index on value
 		"SELECT * FROM idx_use WHERE value = 50",
 		"SELECT * FROM idx_use WHERE value > 100",
 		"SELECT * FROM idx_use WHERE value < 50",
 		"SELECT * FROM idx_use WHERE value BETWEEN 30 AND 100",
 		"SELECT * FROM idx_use WHERE value IN (10, 50, 100)",
-		
+
 		// Combined conditions
 		"SELECT * FROM idx_use WHERE id = 5 AND name = 'name4'",
 		"SELECT * FROM idx_use WHERE value > 50 OR name = 'name1'",
-		
+
 		// ORDER BY with index
 		"SELECT * FROM idx_use ORDER BY id LIMIT 5",
 		"SELECT * FROM idx_use ORDER BY name LIMIT 5",
@@ -15636,13 +15637,13 @@ func TestFinalCoverage(t *testing.T) {
 		"SELECT * FROM fin1 WHERE a > 5 AND b IS NOT NULL",
 		"SELECT * FROM fin1 WHERE a > 100 OR b IS NOT NULL",
 		"SELECT * FROM fin1 WHERE NOT (a > 25)",
-		
+
 		// JOINs
 		"SELECT * FROM fin1 INNER JOIN fin2 ON fin1.id = fin2.ref",
 		"SELECT * FROM fin1 LEFT JOIN fin2 ON fin1.id = fin2.ref",
 		"SELECT * FROM fin1 RIGHT JOIN fin2 ON fin1.id = fin2.ref",
 		"SELECT * FROM fin1 CROSS JOIN fin2",
-		
+
 		// Aggregates
 		"SELECT COUNT(*) FROM fin1",
 		"SELECT COUNT(a) FROM fin1",
@@ -15650,19 +15651,19 @@ func TestFinalCoverage(t *testing.T) {
 		"SELECT AVG(a) FROM fin1",
 		"SELECT MAX(a) FROM fin1",
 		"SELECT MIN(a) FROM fin1",
-		
+
 		// GROUP BY
 		"SELECT a, COUNT(*) FROM fin1 GROUP BY a",
 		"SELECT a, SUM(a) FROM fin1 GROUP BY a HAVING SUM(a) > 10",
-		
+
 		// ORDER BY
 		"SELECT * FROM fin1 ORDER BY a",
 		"SELECT * FROM fin1 ORDER BY a DESC",
-		
+
 		// LIMIT
 		"SELECT * FROM fin1 LIMIT 2",
 		"SELECT * FROM fin1 LIMIT 1 OFFSET 1",
-		
+
 		// DISTINCT
 		"SELECT DISTINCT a FROM fin1",
 		"SELECT DISTINCT b FROM fin1",
@@ -15719,7 +15720,7 @@ func TestFor80Percent(t *testing.T) {
 		"SELECT * FROM t80a ORDER BY x DESC",
 		"SELECT * FROM t80a LIMIT 2",
 		"SELECT DISTINCT x FROM t80a",
-		
+
 		// Aggregates
 		"SELECT COUNT(*) FROM t80a",
 		"SELECT COUNT(x) FROM t80a",
@@ -15729,21 +15730,21 @@ func TestFor80Percent(t *testing.T) {
 		"SELECT MIN(x) FROM t80a",
 		"SELECT x, COUNT(*) FROM t80a GROUP BY x",
 		"SELECT x, SUM(x) FROM t80a GROUP BY x HAVING SUM(x) > 10",
-		
+
 		// JOINs
 		"SELECT * FROM t80a INNER JOIN t80b ON t80a.id = t80b.id",
 		"SELECT * FROM t80a LEFT JOIN t80b ON t80a.id = t80b.id",
 		"SELECT * FROM t80a RIGHT JOIN t80b ON t80a.id = t80b.id",
 		"SELECT * FROM t80a CROSS JOIN t80b",
-		
+
 		// INSERT
 		"INSERT INTO t80a VALUES (4, 40)",
 		"INSERT INTO t80a (id) VALUES (5)",
-		
+
 		// UPDATE
 		"UPDATE t80a SET x = 15 WHERE id = 1",
 		"UPDATE t80a SET x = x + 5 WHERE id = 2",
-		
+
 		// DELETE
 		"DELETE FROM t80a WHERE id = 4",
 		"DELETE FROM t80a WHERE x IS NULL",

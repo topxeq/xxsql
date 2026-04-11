@@ -46,11 +46,11 @@ type Server struct {
 
 // ServerStats holds server statistics.
 type ServerStats struct {
-	TotalConnections   uint64
-	ActiveConnections  uint64
-	TotalQueries       uint64
-	QueriesPerSecond   uint64
-	LastQueryTime      time.Time
+	TotalConnections  uint64
+	ActiveConnections uint64
+	TotalQueries      uint64
+	QueriesPerSecond  uint64
+	LastQueryTime     time.Time
 }
 
 // New creates a new XxSql server.
@@ -338,10 +338,10 @@ func (s *Server) onQuery(conn *protocol.ConnectionHandler, req *protocol.QueryRe
 
 	// Convert result to protocol response
 	resp := &protocol.QueryResponse{
-		Status:      protocol.StatusOK,
-		Message:     result.Message,
-		RowCount:    uint32(result.RowCount),
-		Affected:    uint32(result.Affected),
+		Status:       protocol.StatusOK,
+		Message:      result.Message,
+		RowCount:     uint32(result.RowCount),
+		Affected:     uint32(result.Affected),
 		LastInsertID: result.LastInsert,
 	}
 
@@ -394,14 +394,14 @@ func (s *Server) Logger() *log.Logger {
 
 // MySQLServer wraps the MySQL protocol server.
 type MySQLServer struct {
-	server    *Server
-	bind      string
-	port      int
-	listener  net.Listener
-	running   int32
-	ctx       context.Context
-	cancel    context.CancelFunc
-	wg        sync.WaitGroup
+	server   *Server
+	bind     string
+	port     int
+	listener net.Listener
+	running  int32
+	ctx      context.Context
+	cancel   context.CancelFunc
+	wg       sync.WaitGroup
 }
 
 // NewMySQLServer creates a new MySQL server.
@@ -595,11 +595,11 @@ func mysqlTypeFromString(typeStr string) uint8 {
 
 // HTTPServer wraps the HTTP API server.
 type HTTPServer struct {
-	server   *Server
-	web      *web.Server
-	bind     string
-	port     int
-	running  int32
+	server  *Server
+	web     *web.Server
+	bind    string
+	port    int
+	running int32
 }
 
 // NewHTTPServer creates a new HTTP server.

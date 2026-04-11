@@ -258,8 +258,8 @@ func TestErrorPayload(t *testing.T) {
 
 func TestServerStartStop(t *testing.T) {
 	config := &protocol.ServerConfig{
-		Bind:          "127.0.0.1",
-		Port:          19527,
+		Bind:           "127.0.0.1",
+		Port:           19527,
 		MaxConnections: 10,
 	}
 
@@ -288,8 +288,8 @@ func TestServerStartStop(t *testing.T) {
 
 func TestServerConnectionCount(t *testing.T) {
 	config := &protocol.ServerConfig{
-		Bind:          "127.0.0.1",
-		Port:          19528,
+		Bind:           "127.0.0.1",
+		Port:           19528,
 		MaxConnections: 2,
 	}
 
@@ -328,8 +328,8 @@ func TestServerMultipleStarts(t *testing.T) {
 
 func TestServerBroadcast(t *testing.T) {
 	config := &protocol.ServerConfig{
-		Bind:          "127.0.0.1",
-		Port:          19530,
+		Bind:           "127.0.0.1",
+		Port:           19530,
 		MaxConnections: 10,
 	}
 
@@ -369,8 +369,8 @@ func TestConnectionState(t *testing.T) {
 
 func TestConcurrentConnections(t *testing.T) {
 	config := &protocol.ServerConfig{
-		Bind:          "127.0.0.1",
-		Port:          19531,
+		Bind:           "127.0.0.1",
+		Port:           19531,
 		MaxConnections: 100,
 	}
 

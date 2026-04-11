@@ -541,73 +541,72 @@ func TestTimeFunctions(t *testing.T) {
 	}
 }
 
-func valuesEqual(a, b Value) bool {
-	// Handle nil
-	if a == nil && b == nil {
-		return true
-	}
-	if a == nil || b == nil {
-		return false
-	}
-
-	// Compare types
-	switch av := a.(type) {
-	case int:
-		switch bv := b.(type) {
-		case int:
-			return av == bv
-		case int64:
-			return int64(av) == bv
-		case float64:
-			return float64(av) == bv
-		}
-	case int64:
-		switch bv := b.(type) {
-		case int:
-			return av == int64(bv)
-		case int64:
-			return av == bv
-		case float64:
-			return float64(av) == bv
-		}
-	case float64:
-		switch bv := b.(type) {
-		case int:
-			return av == float64(bv)
-		case int64:
-			return av == float64(bv)
-		case float64:
-			return av == bv
-		}
-	case string:
-		bv, ok := b.(string)
-		return ok && av == bv
-	case bool:
-		bv, ok := b.(bool)
-		return ok && av == bv
-	case []Value:
-		bv, ok := b.([]Value)
-		if !ok || len(av) != len(bv) {
-			return false
-		}
-		for i := range av {
-			if !valuesEqual(av[i], bv[i]) {
-				return false
-			}
-		}
-		return true
-	case map[string]Value:
-		bv, ok := b.(map[string]Value)
-		if !ok || len(av) != len(bv) {
-			return false
-		}
-		for k, v := range av {
-			if !valuesEqual(v, bv[k]) {
-				return false
-			}
-		}
-		return true
+func TestSwitchStatement(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		expected Value
+	}{
+		{
+			name: "basic switch match",
+			input: `
+				var x = 2;
+				switch x {
+					case 1: { return "one"; }
+					case 2: { return "two"; }
+					case 3: { return "three"; }
+				}
+			`,
+			expected: "two",
+		},
+		{
+			name: "switch with default",
+			input: `
+				var x = 99;
+				switch x {
+					case 1: { return "one"; }
+					case 2: { return "two"; }
+					default: { return "unknown"; }
+				}
+			`,
+			expected: "unknown",
+		},
+		{
+			name: "switch multiple case values",
+			input: `
+				var x = 5;
+				switch x {
+					case 1, 2, 3: { return "small"; }
+					case 4, 5, 6: { return "medium"; }
+					default: { return "large"; }
+				}
+			`,
+			expected: "medium",
+		},
+		{
+			name: "switch string match",
+			input: `
+				var name = "alice";
+				switch name {
+					case "bob": { return "hello bob"; }
+					case "alice": { return "hello alice"; }
+					default: { return "hello stranger"; }
+				}
+			`,
+			expected: "hello alice",
+		},
 	}
 
-	return false
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result, err := Run(tt.input, nil)
+			if err != nil {
+				t.Errorf("Run error: %v", err)
+				return
+			}
+			if !valuesEqual(result, tt.expected) {
+				t.Errorf("Expected %v, got %v", tt.expected, result)
+			}
+		})
+	}
 }

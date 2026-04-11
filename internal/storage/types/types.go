@@ -24,8 +24,8 @@ const (
 	TypeTime
 	TypeDatetime
 	TypeBool
-	TypeBlob   // Binary Large Object
-	TypeBytes  // For internal use
+	TypeBlob  // Binary Large Object
+	TypeBytes // For internal use
 )
 
 // String returns the string representation of the type.
@@ -100,9 +100,9 @@ func ParseTypeID(name string) TypeID {
 type ColumnInfo struct {
 	Name            string
 	Type            TypeID
-	Size            int    // For CHAR/VARCHAR
-	Precision       int    // For DECIMAL (not implemented yet)
-	Scale           int    // For DECIMAL (not implemented yet)
+	Size            int // For CHAR/VARCHAR
+	Precision       int // For DECIMAL (not implemented yet)
+	Scale           int // For DECIMAL (not implemented yet)
 	Nullable        bool
 	Default         Value
 	PrimaryKey      bool
@@ -131,9 +131,9 @@ type ForeignKeyInfo struct {
 
 // Value represents a typed value.
 type Value struct {
-	Type  TypeID
-	Data  []byte
-	Null  bool
+	Type TypeID
+	Data []byte
+	Null bool
 }
 
 // NewNullValue creates a null value.

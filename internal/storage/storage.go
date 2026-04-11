@@ -15,14 +15,14 @@ import (
 
 // Engine represents the storage engine.
 type Engine struct {
-	catalog   *catalog.Catalog
-	ftsMgr    *fts.FTSManager
-	dataDir   string
-	mu        sync.RWMutex
+	catalog *catalog.Catalog
+	ftsMgr  *fts.FTSManager
+	dataDir string
+	mu      sync.RWMutex
 
 	// Temporary tables (session-scoped, not persisted)
-	tempTables     map[string]*table.Table
-	tempTablesMu   sync.RWMutex
+	tempTables   map[string]*table.Table
+	tempTablesMu sync.RWMutex
 }
 
 // NewEngine creates a new storage engine.
@@ -405,11 +405,11 @@ func (e *Engine) TriggerExists(name string) bool {
 }
 
 // CreateTrigger creates a new trigger.
-func (e *Engine) CreateTrigger(name string, timing, event int, tableName string, granularity int, whenClause, body string) error {
+func (e *Engine) CreateTrigger(name string, timing, event int, tableName string, granularity int, whenClause, body, scriptBody string) error {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 
-	return e.catalog.CreateTrigger(name, timing, event, tableName, granularity, whenClause, body)
+	return e.catalog.CreateTrigger(name, timing, event, tableName, granularity, whenClause, body, scriptBody)
 }
 
 // DropTrigger drops a trigger.
@@ -435,6 +435,41 @@ func (e *Engine) GetTriggersForTable(tableName string, event int) []*catalog.Tri
 	return e.catalog.GetTriggersForTable(tableName, event)
 }
 
+// ============================================================================
+// Stored Procedures
+// ============================================================================
+
+// ProcedureExists checks if a stored procedure exists.
+func (e *Engine) ProcedureExists(name string) bool {
+	return e.catalog.ProcedureExists(name)
+}
+
+// CreateProcedure creates a new stored procedure.
+func (e *Engine) CreateProcedure(name string, params []catalog.ProcedureParamInfo, body string) error {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+
+	return e.catalog.CreateProcedure(name, params, body)
+}
+
+// DropProcedure drops a stored procedure.
+func (e *Engine) DropProcedure(name string) error {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+
+	return e.catalog.DropProcedure(name)
+}
+
+// GetProcedure returns a stored procedure by name.
+func (e *Engine) GetProcedure(name string) (*catalog.ProcedureInfo, error) {
+	return e.catalog.GetProcedure(name)
+}
+
+// ListProcedures returns all procedure names.
+func (e *Engine) ListProcedures() []string {
+	return e.catalog.ListProcedures()
+}
+
 // GetDataDir returns the data directory path.
 func (e *Engine) GetDataDir() string {
 	return e.dataDir
@@ -455,8 +490,8 @@ func (e *Engine) Stats() *Stats {
 
 		info := t.GetInfo()
 		stats.Tables = append(stats.Tables, TableStats{
-			Name:     info.Name,
-			RowCount: info.RowCount,
+			Name:      info.Name,
+			RowCount:  info.RowCount,
 			PageCount: int(info.NextPageID - 1),
 		})
 	}

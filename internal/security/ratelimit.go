@@ -7,18 +7,18 @@ import (
 
 // RateLimiter provides rate limiting functionality.
 type RateLimiter struct {
-	mu           sync.Mutex
-	attempts     map[string]*attemptRecord
-	maxAttempts  int
-	windowSize   time.Duration
+	mu            sync.Mutex
+	attempts      map[string]*attemptRecord
+	maxAttempts   int
+	windowSize    time.Duration
 	blockDuration time.Duration
-	cleanupInt   time.Duration
-	stopCh       chan struct{}
-	audit        *AuditLogger
+	cleanupInt    time.Duration
+	stopCh        chan struct{}
+	audit         *AuditLogger
 }
 
 type attemptRecord struct {
-	count       int
+	count        int
 	firstAttempt time.Time
 	blockedUntil time.Time
 }
@@ -140,7 +140,7 @@ func (rl *RateLimiter) RecordAttempt(key string, user string) bool {
 				SourceIP:  key,
 				Message:   "Rate limit exceeded, IP blocked",
 				Details: map[string]interface{}{
-					"attempts":      record.count,
+					"attempts":       record.count,
 					"block_duration": rl.blockDuration.String(),
 				},
 			})
@@ -274,6 +274,6 @@ func (rl *RateLimiter) Stats() RateLimitStats {
 
 // RateLimitStats contains rate limiter statistics.
 type RateLimitStats struct {
-	TotalTracked   int
+	TotalTracked     int
 	CurrentlyBlocked int
 }

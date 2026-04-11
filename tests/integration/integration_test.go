@@ -2207,4 +2207,3 @@ func TestSQL_Returning(t *testing.T) {
 	}
 	t.Logf("Row count after delete: %v", result.Rows[0][0])
 }
-

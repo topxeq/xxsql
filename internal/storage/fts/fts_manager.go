@@ -11,9 +11,9 @@ import (
 
 // FTSManager manages all FTS indexes for a database.
 type FTSManager struct {
-	mu       sync.RWMutex
-	indexes  map[string]*FTSIndex // index name -> index
-	dataDir  string
+	mu      sync.RWMutex
+	indexes map[string]*FTSIndex // index name -> index
+	dataDir string
 }
 
 // NewFTSManager creates a new FTS manager.

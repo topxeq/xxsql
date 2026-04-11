@@ -152,7 +152,7 @@ func TestCatalog_Triggers(t *testing.T) {
 	}
 
 	// Create trigger (timing=0=BEFORE, event=1=INSERT, granularity=0=ROW)
-	err = cat.CreateTrigger("test_trigger", 0, 1, "users", 0, "id > 0", "INSERT INTO log VALUES (NEW.id)")
+	err = cat.CreateTrigger("test_trigger", 0, 1, "users", 0, "id > 0", "INSERT INTO log VALUES (NEW.id)", "")
 	if err != nil {
 		t.Fatalf("CreateTrigger failed: %v", err)
 	}
@@ -196,7 +196,7 @@ func TestCatalog_Triggers(t *testing.T) {
 	}
 
 	// Create duplicate trigger should fail
-	err = cat.CreateTrigger("test_trigger", 0, 1, "users", 0, "", "")
+	err = cat.CreateTrigger("test_trigger", 0, 1, "users", 0, "", "", "")
 	if err == nil {
 		t.Error("CreateTrigger should fail for duplicate trigger")
 	}
@@ -240,7 +240,7 @@ func TestCatalog_TriggersPersistence(t *testing.T) {
 
 	columns := []*types.ColumnInfo{{Name: "id", Type: types.TypeInt}}
 	cat1.CreateTable("users", columns)
-	cat1.CreateTrigger("test_trigger", 1, 2, "users", 1, "x > 0", "UPDATE log SET count = count + 1")
+	cat1.CreateTrigger("test_trigger", 1, 2, "users", 1, "x > 0", "UPDATE log SET count = count + 1", "")
 	cat1.Close()
 
 	// Reopen and verify trigger

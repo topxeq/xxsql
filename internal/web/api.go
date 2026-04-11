@@ -70,7 +70,7 @@ func (s *Server) handleAPIMetrics(w http.ResponseWriter, r *http.Request) {
 			"size": s.config.Storage.BufferPoolSize,
 		},
 		"wal": map[string]interface{}{
-			"max_size_mb":    s.config.Storage.WALMaxSizeMB,
+			"max_size_mb":   s.config.Storage.WALMaxSizeMB,
 			"sync_interval": s.config.Storage.WALSyncInterval,
 		},
 	}
@@ -181,12 +181,12 @@ func (s *Server) handleAPITableDetail(w http.ResponseWriter, r *http.Request) {
 
 	for i, col := range info.Columns {
 		columns[i] = map[string]interface{}{
-			"name":       col.Name,
-			"type":       col.Type.String(),
-			"nullable":   col.Nullable,
-			"primary":    col.PrimaryKey,
-			"auto_incr":  col.AutoIncr,
-			"size":       col.Size,
+			"name":      col.Name,
+			"type":      col.Type.String(),
+			"nullable":  col.Nullable,
+			"primary":   col.PrimaryKey,
+			"auto_incr": col.AutoIncr,
+			"size":      col.Size,
 		}
 	}
 
@@ -460,6 +460,11 @@ func (s *Server) handleAPILogs(w http.ResponseWriter, r *http.Request) {
 	// Read last N lines
 	logLines, err := readLastLines(logPath, lines)
 	if err != nil {
+		// If file doesn't exist, return empty lines instead of error
+		if os.IsNotExist(err) {
+			writeJSON(w, http.StatusOK, map[string]interface{}{"lines": []string{}})
+			return
+		}
 		writeJSON(w, http.StatusOK, map[string]interface{}{"lines": []string{}, "error": err.Error()})
 		return
 	}
@@ -614,11 +619,11 @@ func (s *Server) handleAPIConfig(w http.ResponseWriter, r *http.Request) {
 
 		// Build response
 		response := map[string]interface{}{
-			"success":        len(updated) > 0,
-			"updated":        updated,
-			"needs_restart":  needsRestart,
-			"errors":         errors,
-			"config_path":    s.configPath,
+			"success":       len(updated) > 0,
+			"updated":       updated,
+			"needs_restart": needsRestart,
+			"errors":        errors,
+			"config_path":   s.configPath,
 		}
 
 		if len(needsRestart) > 0 {
@@ -738,14 +743,14 @@ func (s *Server) handleAPIKeys(w http.ResponseWriter, r *http.Request) {
 		}
 
 		writeJSON(w, http.StatusOK, map[string]interface{}{
-			"message":      "API key created",
-			"id":           key.ID,
-			"name":         key.Name,
-			"key":          fullKey, // Only shown once!
-			"permissions":  key.Permissions,
-			"created_at":   key.CreatedAt,
-			"expires_at":   key.ExpiresAt,
-			"_warning":     "Store this key securely. It will not be shown again.",
+			"message":     "API key created",
+			"id":          key.ID,
+			"name":        key.Name,
+			"key":         fullKey, // Only shown once!
+			"permissions": key.Permissions,
+			"created_at":  key.CreatedAt,
+			"expires_at":  key.ExpiresAt,
+			"_warning":    "Store this key securely. It will not be shown again.",
 		})
 
 	default:
@@ -1192,9 +1197,9 @@ func (s *Server) handleAPIProjectImport(w http.ResponseWriter, r *http.Request) 
 	}
 
 	var projectInfo struct {
-		Name        string                   `json:"name"`
-		Version     string                   `json:"version"`
-		Tables      string                   `json:"tables"`
+		Name          string `json:"name"`
+		Version       string `json:"version"`
+		Tables        string `json:"tables"`
 		Microservices []struct {
 			SKEY        string `json:"skey"`
 			Script      string `json:"script"`

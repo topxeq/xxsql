@@ -47,9 +47,15 @@
                 <h3>Restore from File</h3>
                 <p style="color: #666; margin-bottom: 15px;">Restore the database from a backup file. <strong>Warning:</strong> This will replace all current data.</p>
                 <div class="form-group">
-                    <label for="restore-path">Backup File Path</label>
+                    <label for="restore-select">Select Backup File</label>
+                    <select id="restore-select" onchange="onRestoreSelect()" style="margin-bottom: 10px;">
+                        <option value="">-- Select a backup file --</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label for="restore-path">Or Enter Path Manually</label>
                     <div style="display: flex; gap: 10px;">
-                        <input type="text" id="restore-path" placeholder="Enter backup file path or select from list above">
+                        <input type="text" id="restore-path" placeholder="Enter backup file path">
                         <button class="btn btn-danger" onclick="restoreBackup()">Restore</button>
                     </div>
                 </div>
@@ -164,6 +170,10 @@
             const resp = await fetch('/api/backups');
             const data = await resp.json();
             const container = document.getElementById('backups-list');
+            const restoreSelect = document.getElementById('restore-select');
+
+            // Update restore dropdown
+            restoreSelect.innerHTML = '<option value="">-- Select a backup file --</option>';
 
             if (data.backups && data.backups.length > 0) {
                 container.innerHTML = data.backups.map(b => `
@@ -180,9 +190,23 @@
                         </div>
                     </div>
                 `).join('');
+
+                // Populate restore dropdown
+                data.backups.forEach(b => {
+                    const option = document.createElement('option');
+                    option.value = b.path;
+                    option.textContent = `${b.name} (${formatSize(b.size)})`;
+                    restoreSelect.appendChild(option);
+                });
             } else {
                 container.innerHTML = '<div class="empty-state">No backups found. Create your first backup above.</div>';
             }
+        }
+
+        function onRestoreSelect() {
+            const select = document.getElementById('restore-select');
+            const pathInput = document.getElementById('restore-path');
+            pathInput.value = select.value;
         }
 
         function formatSize(bytes) {

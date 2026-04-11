@@ -14,13 +14,13 @@ import (
 type ConnectionState int32
 
 const (
-	StateInit       ConnectionState = iota // Initial state
-	StateHandshake                         // Waiting for handshake
-	StateAuth                              // Waiting for authentication
-	StateReady                             // Authenticated and ready
-	StateQuery                             // Executing a query
-	StateClosing                           // Connection closing
-	StateClosed                            // Connection closed
+	StateInit      ConnectionState = iota // Initial state
+	StateHandshake                        // Waiting for handshake
+	StateAuth                             // Waiting for authentication
+	StateReady                            // Authenticated and ready
+	StateQuery                            // Executing a query
+	StateClosing                          // Connection closing
+	StateClosed                           // Connection closed
 )
 
 // String returns a string representation of the connection state.

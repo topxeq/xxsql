@@ -298,8 +298,8 @@ func TestBM25Ranker(t *testing.T) {
 	// Add documents - use terms that don't appear in ALL docs
 	// This ensures positive IDF for meaningful scoring
 	idx.AddDocument(1, "apple apple apple banana") // doc 1: 3 apples, 1 banana
-	idx.AddDocument(2, "apple cherry")              // doc 2: 1 apple, 1 cherry
-	idx.AddDocument(3, "banana cherry date")        // doc 3: 1 banana, 1 cherry, 1 date
+	idx.AddDocument(2, "apple cherry")             // doc 2: 1 apple, 1 cherry
+	idx.AddDocument(3, "banana cherry date")       // doc 3: 1 banana, 1 cherry, 1 date
 
 	t.Logf("Total documents: %d", idx.TotalDocuments())
 	t.Logf("Avg doc length: %f", idx.AverageDocumentLength())

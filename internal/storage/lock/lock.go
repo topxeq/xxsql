@@ -101,11 +101,11 @@ type LockRequest struct {
 // Manager manages locks for the database.
 type Manager struct {
 	// Lock tables organized by level
-	globalLock   *lockEntry
-	catalogLock  *lockEntry
-	tableLocks   map[uint64]*lockEntry
-	pageLocks    map[string]*lockEntry // key: tableID:pageID
-	rowLocks     map[string]*lockEntry // key: tableID:pageID:rowID
+	globalLock  *lockEntry
+	catalogLock *lockEntry
+	tableLocks  map[uint64]*lockEntry
+	pageLocks   map[string]*lockEntry // key: tableID:pageID
+	rowLocks    map[string]*lockEntry // key: tableID:pageID:rowID
 
 	// Wait-for graph for deadlock detection
 	waitForGraph *WaitForGraph
@@ -117,8 +117,8 @@ type Manager struct {
 	mu sync.RWMutex
 
 	// Statistics
-	waitCount   uint64
-	grantCount  uint64
+	waitCount    uint64
+	grantCount   uint64
 	timeoutCount uint64
 }
 
@@ -138,11 +138,11 @@ func NewManager(timeout time.Duration) *Manager {
 	}
 
 	m := &Manager{
-		timeout:       timeout,
-		tableLocks:    make(map[uint64]*lockEntry),
-		pageLocks:     make(map[string]*lockEntry),
-		rowLocks:      make(map[string]*lockEntry),
-		waitForGraph:  NewWaitForGraph(),
+		timeout:      timeout,
+		tableLocks:   make(map[uint64]*lockEntry),
+		pageLocks:    make(map[string]*lockEntry),
+		rowLocks:     make(map[string]*lockEntry),
+		waitForGraph: NewWaitForGraph(),
 	}
 
 	// Initialize global and catalog locks

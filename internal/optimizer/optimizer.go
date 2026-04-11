@@ -27,29 +27,29 @@ type ColumnStatistics struct {
 
 // IndexStatistics represents statistics for an index.
 type IndexStatistics struct {
-	Name          string
-	Columns       []string
-	DistinctKeys  uint64
-	Clustered     bool // True for primary key
-	Selectivity   float64
-	Height        int
-	LeafPages     uint64
+	Name         string
+	Columns      []string
+	DistinctKeys uint64
+	Clustered    bool // True for primary key
+	Selectivity  float64
+	Height       int
+	LeafPages    uint64
 }
 
 // HistogramBucket represents a bucket in an equi-height histogram.
 type HistogramBucket struct {
-	LowerBound   types.Value
-	UpperBound   types.Value
+	LowerBound    types.Value
+	UpperBound    types.Value
 	DistinctCount uint64
-	RowCount     uint64
+	RowCount      uint64
 }
 
 // Cost represents the estimated cost of a query operation.
 type Cost struct {
-	IOCost     float64 // Disk I/O cost
-	CPUCost    float64 // CPU cost
-	TotalCost  float64 // Total cost
-	Cardinality uint64 // Estimated number of rows
+	IOCost      float64 // Disk I/O cost
+	CPUCost     float64 // CPU cost
+	TotalCost   float64 // Total cost
+	Cardinality uint64  // Estimated number of rows
 }
 
 // PlanType represents the type of execution plan.
@@ -211,8 +211,8 @@ func estimateRangeSelectivity(colStats *ColumnStatistics, op sql.BinaryOp, value
 func (o *Optimizer) EstimateCost(tableName string, rowCount uint64, indexStats *IndexStatistics, selectivity float64) Cost {
 	// Table scan cost
 	tableScanCost := Cost{
-		IOCost:     float64(rowCount) * 1.0, // One I/O per row (simplified)
-		CPUCost:    float64(rowCount) * 0.1,
+		IOCost:      float64(rowCount) * 1.0, // One I/O per row (simplified)
+		CPUCost:     float64(rowCount) * 0.1,
 		Cardinality: rowCount,
 	}
 	tableScanCost.TotalCost = tableScanCost.IOCost + tableScanCost.CPUCost
@@ -224,8 +224,8 @@ func (o *Optimizer) EstimateCost(tableName string, rowCount uint64, indexStats *
 
 		// Index lookup cost: traverse B+ tree + fetch rows
 		indexScanCost = Cost{
-			IOCost:     float64(indexStats.Height) + float64(estimatedRows)*1.2, // Tree traversal + row fetches
-			CPUCost:    float64(estimatedRows) * 0.2,
+			IOCost:      float64(indexStats.Height) + float64(estimatedRows)*1.2, // Tree traversal + row fetches
+			CPUCost:     float64(estimatedRows) * 0.2,
 			Cardinality: estimatedRows,
 		}
 		indexScanCost.TotalCost = indexScanCost.IOCost + indexScanCost.CPUCost
@@ -239,8 +239,8 @@ func (o *Optimizer) EstimateCost(tableName string, rowCount uint64, indexStats *
 		// Default index cost estimation
 		estimatedRows := uint64(float64(rowCount) * selectivity)
 		indexScanCost = Cost{
-			IOCost:     3.0 + float64(estimatedRows)*1.5, // Assume height 3
-			CPUCost:    float64(estimatedRows) * 0.2,
+			IOCost:      3.0 + float64(estimatedRows)*1.5, // Assume height 3
+			CPUCost:     float64(estimatedRows) * 0.2,
 			Cardinality: estimatedRows,
 		}
 		indexScanCost.TotalCost = indexScanCost.IOCost + indexScanCost.CPUCost

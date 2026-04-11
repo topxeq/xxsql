@@ -162,7 +162,7 @@ func (m *LatchManager) TryAcquire(pageID uint64, latchType LatchType) bool {
 // CrabbingProtocol implements the crabbing protocol for B+ tree traversal.
 // Acquires latches from root to leaf, releasing parent latches when safe.
 type CrabbingProtocol struct {
-	manager   *LatchManager
+	manager     *LatchManager
 	heldLatches []uint64
 	heldTypes   []LatchType
 }

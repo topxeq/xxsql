@@ -886,8 +886,50 @@ ls -la /path/to/data/*.xmeta
 # Check users.json exists and is readable
 cat /path/to/data/users.json
 
-# If lost, reset admin password
-./xxsqlc -u admin -e "CREATE USER 'admin' IDENTIFIED BY 'newpassword';"
+# If lost admin password, reset via SQL (if you can still login)
+./xxsqlc -u admin -e "SET PASSWORD FOR 'admin' = 'newpassword';"
+
+# If completely locked out, manually edit users.json:
+# 1. Stop the server
+systemctl stop xxsql
+
+# 2. Generate a bcrypt hash for the new password
+# Using htpasswd (Apache tools):
+htpasswd -nbBC 10 "" "newpassword" | tr -d ':\n' | sed 's/$2y/$2a/'
+
+# 3. Edit users.json and replace PasswordHash
+# Also need to update MySQLAuthHash:
+# echo -n "newpassword" | openssl dgst -sha1 -binary | openssl dgst -sha1 -binary | base64
+
+# 4. Restart the server
+systemctl start xxsql
+```
+
+**Quick Admin Password Reset Script:**
+```bash
+#!/bin/bash
+# reset_admin_password.sh
+# Usage: ./reset_admin_password.sh /path/to/users.json "newpassword"
+
+USERS_FILE="$1"
+NEW_PASS="$2"
+
+# Generate bcrypt hash (requires htpasswd from apache2-utils)
+BCRYPT_HASH=$(htpasswd -nbBC 10 "" "$NEW_PASS" 2>/dev/null | tr -d ':\n' | sed 's/\$2y\$/\$2a\$/')
+
+# Generate MySQL auth hash
+MYSQL_HASH=$(echo -n "$NEW_PASS" | openssl dgst -sha1 -binary 2>/dev/null | openssl dgst -sha1 -binary 2>/dev/null | base64)
+
+# Update users.json (requires jq)
+jq --arg ph "$BCRYPT_HASH" --arg mh "$MYSQL_HASH" '
+  .users = [.users[] | if .Username == "admin" then 
+    .PasswordHash = $ph | 
+    .MySQLAuthHash = $mh | 
+    .UpdatedAt = (now | todate)
+  else . end]
+' "$USERS_FILE" > "${USERS_FILE}.tmp" && mv "${USERS_FILE}.tmp" "$USERS_FILE"
+
+echo "Admin password updated. Restart xxsqls to apply."
 ```
 
 ### Exporting Data
@@ -1096,10 +1138,70 @@ curl http://localhost:8080/api/logs/audit?lines=100
 
 ### User Roles
 
-| Role | Permissions |
-|------|-------------|
-| `admin` | Full access: create tables, manage users, configure server |
-| `user` | Read/write access to tables, cannot modify schema or users |
+| Role | Value | Permissions |
+|------|-------|-------------|
+| `admin` | 0 | Full access: create tables, manage users, configure server, backup/restore |
+| `user` | 1 | Read/write access to tables (SELECT, INSERT, UPDATE, DELETE) |
+
+### Permission System
+
+Each role has a set of permissions represented as bit flags:
+
+| Permission | Description | Admin | User |
+|------------|-------------|-------|------|
+| `PermManageUsers` | Create/drop users, change passwords | ✓ | |
+| `PermManageConfig` | Modify server configuration | ✓ | |
+| `PermStartStop` | Start/stop database server | ✓ | |
+| `PermCreateTable` | Create new tables | ✓ | |
+| `PermDropTable` | Drop tables | ✓ | |
+| `PermCreateDatabase` | Create databases | ✓ | |
+| `PermDropDatabase` | Drop databases | ✓ | |
+| `PermSelect` | Query data (SELECT) | ✓ | ✓ |
+| `PermInsert` | Insert data (INSERT) | ✓ | ✓ |
+| `PermUpdate` | Update data (UPDATE) | ✓ | ✓ |
+| `PermDelete` | Delete data (DELETE) | ✓ | ✓ |
+| `PermCreateIndex` | Create indexes | ✓ | |
+| `PermDropIndex` | Drop indexes | ✓ | |
+| `PermBackup` | Create backups | ✓ | |
+| `PermRestore` | Restore from backup | ✓ | |
+
+### User Data Storage
+
+User accounts are stored in `{data_dir}/users.json`:
+
+```json
+{
+  "next_user_id": 3,
+  "users": [
+    {
+      "ID": 1,
+      "Username": "admin",
+      "PasswordHash": "$2a$10$...",
+      "MySQLAuthHash": "base64-encoded-sha1...",
+      "Role": 0,
+      "CreatedAt": "2026-04-03T10:33:56Z",
+      "UpdatedAt": "2026-04-03T10:33:56Z"
+    }
+  ]
+}
+```
+
+**Field Descriptions:**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `ID` | uint64 | Unique user identifier |
+| `Username` | string | Login username |
+| `PasswordHash` | string | bcrypt hash for Web/API authentication |
+| `MySQLAuthHash` | []byte | SHA1(SHA1(password)) for MySQL protocol authentication |
+| `Role` | int | 0=admin, 1=user |
+| `CreatedAt` | timestamp | Account creation time |
+| `UpdatedAt` | timestamp | Last modification time |
+
+### Password Hashing
+
+- **Web/API Login**: Uses bcrypt hashing (`golang.org/x/crypto/bcrypt`)
+- **MySQL Protocol**: Uses MySQL native authentication (double SHA1)
 
 ### Creating Users
 

@@ -58,10 +58,10 @@ func TestNewDecimalValue(t *testing.T) {
 
 func TestNewDecimalFromString(t *testing.T) {
 	tests := []struct {
-		input      string
-		unscaled   int64
-		scale      int
-		stringRep  string
+		input     string
+		unscaled  int64
+		scale     int
+		stringRep string
 	}{
 		{"123.45", 12345, 2, "123.45"},
 		{"0.99", 99, 2, "0.99"},
@@ -189,9 +189,9 @@ func TestDecimalSize(t *testing.T) {
 
 func TestFormatDecimal(t *testing.T) {
 	tests := []struct {
-		unscaled  int64
-		scale     int
-		expected  string
+		unscaled int64
+		scale    int
+		expected string
 	}{
 		{12345, 2, "123.45"},
 		{100, 2, "1"},

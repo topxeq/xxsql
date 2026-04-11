@@ -22,11 +22,11 @@ const (
 type PageType uint8
 
 const (
-	PageTypeHeader PageType = iota // Database header page
-	PageTypeData                   // Table data page
-	PageTypeIndex                  // B+ tree index page
-	PageTypeOverflow               // Overflow page for large values
-	PageTypeFree                   // Free page in free list
+	PageTypeHeader   PageType = iota // Database header page
+	PageTypeData                     // Table data page
+	PageTypeIndex                    // B+ tree index page
+	PageTypeOverflow                 // Overflow page for large values
+	PageTypeFree                     // Free page in free list
 )
 
 // String returns the string representation of the page type.
@@ -71,13 +71,13 @@ type Page struct {
 //   - Bytes 20-21: Slot count (2 bytes)
 //   - Bytes 22-23: Checksum (2 bytes)
 type Header struct {
-	PageID      PageID
-	LSN         uint64
-	Type        PageType
-	Flags       uint8
-	FreeOffset  uint16
-	SlotCount   uint16
-	Checksum    uint16
+	PageID     PageID
+	LSN        uint64
+	Type       PageType
+	Flags      uint8
+	FreeOffset uint16
+	SlotCount  uint16
+	Checksum   uint16
 }
 
 // Page flags.

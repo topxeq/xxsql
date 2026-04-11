@@ -28,7 +28,7 @@ const (
 	TokModify
 	TokDatabase
 	TokSchema
-	TokTemp       // TEMP/TEMPORARY keyword
+	TokTemp // TEMP/TEMPORARY keyword
 
 	// Keywords - Bulk Import/Export
 	TokCopy
@@ -40,7 +40,7 @@ const (
 	TokLines
 	TokEnclosed
 	TokEscaped
-	TokEscape     // ESCAPE for LIKE
+	TokEscape // ESCAPE for LIKE
 	TokOptionally
 
 	// Keywords - DML
@@ -96,13 +96,13 @@ const (
 	TokLimit
 	TokOffset
 	TokOf
-	TokNulls    // NULLS FIRST/LAST
-	TokFirst    // NULLS FIRST
-	TokLast     // NULLS LAST
-	TokFilter   // FILTER (WHERE ...)
+	TokNulls  // NULLS FIRST/LAST
+	TokFirst  // NULLS FIRST
+	TokLast   // NULLS LAST
+	TokFilter // FILTER (WHERE ...)
 
 	// Keywords - Data types
-	TokSeq      // Auto-increment integer
+	TokSeq // Auto-increment integer
 	TokInt
 	TokInteger
 	TokBigInt
@@ -166,7 +166,7 @@ const (
 	TokCascaded // CASCADED for VIEW CHECK OPTION
 	TokRestrict
 	TokAction
-	TokLocal    // LOCAL for VIEW CHECK OPTION
+	TokLocal // LOCAL for VIEW CHECK OPTION
 	TokDescribe
 	TokBackup
 	TokRestore
@@ -202,19 +202,19 @@ const (
 	TokPreceding
 	TokFollowing
 	TokCurrent
-	TokLead       // LEAD window function
-	TokLag        // LAG window function
-	TokNtile      // NTILE window function
-	TokFirstValue // FIRST_VALUE window function
-	TokLastValue  // LAST_VALUE window function
-	TokNthValue   // NTH_VALUE window function
+	TokLead        // LEAD window function
+	TokLag         // LAG window function
+	TokNtile       // NTILE window function
+	TokFirstValue  // FIRST_VALUE window function
+	TokLastValue   // LAST_VALUE window function
+	TokNthValue    // NTH_VALUE window function
 	TokPercentRank // PERCENT_RANK window function
-	TokCumeDist   // CUME_DIST window function
-	TokIgnore     // IGNORE NULLS
-	TokRespect    // RESPECT NULLS
-	TokUnbounded  // UNBOUNDED PRECEDING/FOLLOWING
-	TokFromFirst  // FROM FIRST (for NTH_VALUE)
-	TokFromLast   // FROM LAST (for NTH_VALUE)
+	TokCumeDist    // CUME_DIST window function
+	TokIgnore      // IGNORE NULLS
+	TokRespect     // RESPECT NULLS
+	TokUnbounded   // UNBOUNDED PRECEDING/FOLLOWING
+	TokFromFirst   // FROM FIRST (for NTH_VALUE)
+	TokFromLast    // FROM LAST (for NTH_VALUE)
 
 	// Keywords - LATERAL
 	TokLateral // LATERAL for correlated subqueries
@@ -233,10 +233,10 @@ const (
 	TokTransaction
 	TokSavepoint
 	TokRelease
-	TokWork // optional keyword in COMMIT/ROLLBACK
-	TokDeferred   // DEFERRED transaction
-	TokImmediate  // IMMEDIATE transaction
-	TokExclusive  // EXCLUSIVE transaction
+	TokWork      // optional keyword in COMMIT/ROLLBACK
+	TokDeferred  // DEFERRED transaction
+	TokImmediate // IMMEDIATE transaction
+	TokExclusive // EXCLUSIVE transaction
 
 	// Keywords - Trigger
 	TokTrigger
@@ -246,6 +246,12 @@ const (
 	TokEach
 	TokRow
 	TokStatement
+
+	// Keywords - Stored Procedure
+	TokProcedure
+	TokCall
+	TokInout
+	TokOut
 
 	// Keywords - UPSERT and RETURNING
 	TokConflict
@@ -690,6 +696,14 @@ func (t TokenType) String() string {
 		return "ROW"
 	case TokStatement:
 		return "STATEMENT"
+	case TokProcedure:
+		return "PROCEDURE"
+	case TokCall:
+		return "CALL"
+	case TokInout:
+		return "INOUT"
+	case TokOut:
+		return "OUT"
 	case TokConflict:
 		return "CONFLICT"
 	case TokDo:
@@ -735,225 +749,229 @@ func (t TokenType) String() string {
 
 // keywords maps keyword strings to their token types.
 var keywords = map[string]TokenType{
-	"SELECT":       TokSelect,
-	"FROM":         TokFrom,
-	"WHERE":        TokWhere,
-	"INSERT":       TokInsert,
-	"INTO":         TokInto,
-	"VALUES":       TokValues,
-	"UPDATE":       TokUpdate,
-	"SET":          TokSet,
-	"DELETE":       TokDelete,
-	"CREATE":       TokCreate,
-	"TABLE":        TokTable,
-	"VIEW":         TokView,
-	"DROP":         TokDrop,
-	"INDEX":        TokIndex,
-	"PRIMARY":      TokPrimary,
-	"KEY":          TokKey,
-	"UNIQUE":       TokUnique,
-	"CONSTRAINT":   TokConstraint,
-	"FOREIGN":      TokForeign,
-	"REFERENCES":   TokReferences,
-	"ALTER":        TokAlter,
-	"ADD":          TokAdd,
-	"COLUMN":       TokColumn,
-	"RENAME":       TokRename,
-	"MODIFY":       TokModify,
-	"DATABASE":     TokDatabase,
-	"SCHEMA":       TokSchema,
-	"TEMP":         TokTemp,
-	"TEMPORARY":    TokTemp,
-	"COPY":         TokCopy,
-	"LOAD":         TokLoad,
-	"DATA":         TokData,
-	"INFILE":       TokInfile,
-	"FIELDS":       TokFields,
-	"TERMINATED":   TokTerminated,
-	"LINES":        TokLines,
-	"ENCLOSED":     TokEnclosed,
-	"ESCAPED":      TokEscaped,
-	"ESCAPE":       TokEscape,
-	"OPTIONALLY":   TokOptionally,
-	"AND":          TokAnd,
-	"OR":           TokOr,
-	"NOT":          TokNot,
-	"IN":           TokIn,
-	"LIKE":         TokLike,
-	"GLOB":         TokGlob,
-	"BETWEEN":      TokBetween,
-	"IS":           TokIs,
-	"NULL":         TokNull,
-	"DEFAULT":      TokDefault,
-	"AS":           TokAs,
-	"ON":           TokOn,
-	"USING":        TokUsing,
-	"DISTINCT":     TokDistinct,
-	"JOIN":         TokJoin,
-	"INNER":        TokInner,
-	"LEFT":         TokLeft,
-	"RIGHT":        TokRight,
-	"CROSS":        TokCross,
-	"OUTER":        TokOuter,
-	"FULL":         TokFull,
-	"NATURAL":      TokNatural,
-	"UNION":        TokUnion,
-	"ALL":          TokAll,
-	"INTERSECT":    TokIntersect,
-	"EXCEPT":       TokExcept,
-	"GROUP":        TokGroup,
-	"BY":           TokBy,
-	"HAVING":       TokHaving,
-	"ORDER":        TokOrder,
-	"ASC":          TokAsc,
-	"DESC":         TokDesc,
-	"LIMIT":        TokLimit,
-	"OFFSET":       TokOffset,
-	"OF":           TokOf,
-	"NULLS":        TokNulls,
-	"FIRST":        TokFirst,
-	"LAST":         TokLast,
-	"FILTER":       TokFilter,
-	"SEQ":          TokSeq,
-	"INT":          TokInt,
-	"INTEGER":      TokInteger,
-	"BIGINT":       TokBigInt,
-	"SMALLINT":     TokSmallInt,
-	"TINYINT":      TokTinyInt,
-	"FLOAT":        TokFloat,
-	"DOUBLE":       TokDouble,
-	"DECIMAL":      TokDecimal,
-	"NUMERIC":      TokNumeric,
-	"CHAR":         TokChar,
-	"VARCHAR":      TokVarchar,
-	"TEXT":         TokText,
-	"DATE":         TokDate,
-	"TIME":         TokTime,
-	"DATETIME":     TokDateTime,
-	"TIMESTAMP":    TokTimestamp,
-	"BOOLEAN":      TokBoolean,
-	"BOOL":         TokBool,
-	"BLOB":         TokBlob,
-	"COUNT":        TokCount,
-	"SUM":          TokSum,
-	"AVG":          TokAvg,
-	"MIN":          TokMin,
-	"MAX":          TokMax,
-	"COALESCE":     TokCoalesce,
-	"NULLIF":       TokNullIf,
-	"CAST":         TokCast,
-	"CASE":         TokCase,
-	"WHEN":         TokWhen,
-	"THEN":         TokThen,
-	"ELSE":         TokElse,
-	"END":          TokEnd,
-	"JSON_EXTRACT":  TokJsonExtract,
-	"JSON_ARRAY":    TokJsonArray,
-	"JSON_OBJECT":   TokJsonObject,
-	"JSON_TYPE":     TokJsonType,
-	"JSON_VALID":    TokJsonValid,
-	"JSON_QUOTE":    TokJsonQuote,
-	"JSON_UNQUOTE":  TokJsonUnquote,
-	"JSON_CONTAINS": TokJsonContains,
-	"JSON_KEYS":     TokJsonKeys,
-	"JSON_LENGTH":   TokJsonLength,
-	"IF":           TokIf,
-	"EXISTS":       TokExists,
-	"ANY":          TokAny,
+	"SELECT":         TokSelect,
+	"FROM":           TokFrom,
+	"WHERE":          TokWhere,
+	"INSERT":         TokInsert,
+	"INTO":           TokInto,
+	"VALUES":         TokValues,
+	"UPDATE":         TokUpdate,
+	"SET":            TokSet,
+	"DELETE":         TokDelete,
+	"CREATE":         TokCreate,
+	"TABLE":          TokTable,
+	"VIEW":           TokView,
+	"DROP":           TokDrop,
+	"INDEX":          TokIndex,
+	"PRIMARY":        TokPrimary,
+	"KEY":            TokKey,
+	"UNIQUE":         TokUnique,
+	"CONSTRAINT":     TokConstraint,
+	"FOREIGN":        TokForeign,
+	"REFERENCES":     TokReferences,
+	"ALTER":          TokAlter,
+	"ADD":            TokAdd,
+	"COLUMN":         TokColumn,
+	"RENAME":         TokRename,
+	"MODIFY":         TokModify,
+	"DATABASE":       TokDatabase,
+	"SCHEMA":         TokSchema,
+	"TEMP":           TokTemp,
+	"TEMPORARY":      TokTemp,
+	"COPY":           TokCopy,
+	"LOAD":           TokLoad,
+	"DATA":           TokData,
+	"INFILE":         TokInfile,
+	"FIELDS":         TokFields,
+	"TERMINATED":     TokTerminated,
+	"LINES":          TokLines,
+	"ENCLOSED":       TokEnclosed,
+	"ESCAPED":        TokEscaped,
+	"ESCAPE":         TokEscape,
+	"OPTIONALLY":     TokOptionally,
+	"AND":            TokAnd,
+	"OR":             TokOr,
+	"NOT":            TokNot,
+	"IN":             TokIn,
+	"LIKE":           TokLike,
+	"GLOB":           TokGlob,
+	"BETWEEN":        TokBetween,
+	"IS":             TokIs,
+	"NULL":           TokNull,
+	"DEFAULT":        TokDefault,
+	"AS":             TokAs,
+	"ON":             TokOn,
+	"USING":          TokUsing,
+	"DISTINCT":       TokDistinct,
+	"JOIN":           TokJoin,
+	"INNER":          TokInner,
+	"LEFT":           TokLeft,
+	"RIGHT":          TokRight,
+	"CROSS":          TokCross,
+	"OUTER":          TokOuter,
+	"FULL":           TokFull,
+	"NATURAL":        TokNatural,
+	"UNION":          TokUnion,
+	"ALL":            TokAll,
+	"INTERSECT":      TokIntersect,
+	"EXCEPT":         TokExcept,
+	"GROUP":          TokGroup,
+	"BY":             TokBy,
+	"HAVING":         TokHaving,
+	"ORDER":          TokOrder,
+	"ASC":            TokAsc,
+	"DESC":           TokDesc,
+	"LIMIT":          TokLimit,
+	"OFFSET":         TokOffset,
+	"OF":             TokOf,
+	"NULLS":          TokNulls,
+	"FIRST":          TokFirst,
+	"LAST":           TokLast,
+	"FILTER":         TokFilter,
+	"SEQ":            TokSeq,
+	"INT":            TokInt,
+	"INTEGER":        TokInteger,
+	"BIGINT":         TokBigInt,
+	"SMALLINT":       TokSmallInt,
+	"TINYINT":        TokTinyInt,
+	"FLOAT":          TokFloat,
+	"DOUBLE":         TokDouble,
+	"DECIMAL":        TokDecimal,
+	"NUMERIC":        TokNumeric,
+	"CHAR":           TokChar,
+	"VARCHAR":        TokVarchar,
+	"TEXT":           TokText,
+	"DATE":           TokDate,
+	"TIME":           TokTime,
+	"DATETIME":       TokDateTime,
+	"TIMESTAMP":      TokTimestamp,
+	"BOOLEAN":        TokBoolean,
+	"BOOL":           TokBool,
+	"BLOB":           TokBlob,
+	"COUNT":          TokCount,
+	"SUM":            TokSum,
+	"AVG":            TokAvg,
+	"MIN":            TokMin,
+	"MAX":            TokMax,
+	"COALESCE":       TokCoalesce,
+	"NULLIF":         TokNullIf,
+	"CAST":           TokCast,
+	"CASE":           TokCase,
+	"WHEN":           TokWhen,
+	"THEN":           TokThen,
+	"ELSE":           TokElse,
+	"END":            TokEnd,
+	"JSON_EXTRACT":   TokJsonExtract,
+	"JSON_ARRAY":     TokJsonArray,
+	"JSON_OBJECT":    TokJsonObject,
+	"JSON_TYPE":      TokJsonType,
+	"JSON_VALID":     TokJsonValid,
+	"JSON_QUOTE":     TokJsonQuote,
+	"JSON_UNQUOTE":   TokJsonUnquote,
+	"JSON_CONTAINS":  TokJsonContains,
+	"JSON_KEYS":      TokJsonKeys,
+	"JSON_LENGTH":    TokJsonLength,
+	"IF":             TokIf,
+	"EXISTS":         TokExists,
+	"ANY":            TokAny,
 	"AUTO_INCREMENT": TokAutoIncrement,
-	"UNSIGNED":     TokUnsigned,
-	"ZEROFILL":     TokZerofill,
-	"COLLATE":      TokCollate,
-	"ENGINE":       TokEngine,
-	"CHARSET":      TokCharset,
-	"COMMENT":      TokComment,
-	"CHECK":        TokCheck,
-	"CASCADE":      TokCascade,
-	"CASCADED":     TokCascaded,
-	"RESTRICT":     TokRestrict,
-	"ACTION":       TokAction,
-	"LOCAL":        TokLocal,
-	"DESCRIBE":     TokDescribe,
-	"BACKUP":       TokBackup,
-	"RESTORE":      TokRestore,
-	"GRANT":        TokGrant,
-	"REVOKE":       TokRevoke,
-	"PRIVILEGES":   TokPrivileges,
-	"TO":           TokTo,
-	"USE":          TokUse,
-	"SHOW":         TokShow,
-	"TRUNCATE":     TokTruncate,
-	"VACUUM":       TokVacuum,
-	"PRAGMA":       TokPragma,
-	"ANALYZE":      TokAnalyze,
-	"USER":         TokUser,
-	"PASSWORD":     TokPassword,
-	"IDENTIFIED":   TokIdentified,
-	"ROLE":         TokRole,
-	"GRANTS":       TokGrants,
-	"OPTION":       TokOption,
-	"WITH":         TokWith,
-	"RECURSIVE":    TokRecursive,
-	"FOR":          TokFor,
-	"OVER":         TokOver,
-	"PARTITION":    TokPartition,
-	"WINDOW":       TokWindow,
-	"ROWS":         TokRows,
-	"RANGE":        TokRange,
-	"PRECEDING":    TokPreceding,
-	"FOLLOWING":    TokFollowing,
-	"CURRENT":      TokCurrent,
-	"LEAD":         TokLead,
-	"LAG":          TokLag,
-	"NTILE":        TokNtile,
-	"FIRST_VALUE":  TokFirstValue,
-	"LAST_VALUE":   TokLastValue,
-	"IGNORE":       TokIgnore,
-	"RESPECT":      TokRespect,
-	"UNBOUNDED":    TokUnbounded,
-	"NTH_VALUE":    TokNthValue,
-	"PERCENT_RANK": TokPercentRank,
-	"CUME_DIST":    TokCumeDist,
-	"LATERAL":      TokLateral,
-	"FUNCTION":     TokFunction,
-	"RETURNS":      TokReturns,
-	"RETURN":       TokReturn,
-	"REPLACE":      TokReplace,
-	"LET":          TokLet,
-	"BEGIN":        TokBegin,
-	"COMMIT":       TokCommit,
-	"ROLLBACK":     TokRollback,
-	"TRANSACTION":  TokTransaction,
-	"SAVEPOINT":    TokSavepoint,
-	"RELEASE":      TokRelease,
-	"WORK":         TokWork,
-	"DEFERRED":     TokDeferred,
-	"IMMEDIATE":    TokImmediate,
-	"EXCLUSIVE":    TokExclusive,
-	"TRIGGER":      TokTrigger,
-	"BEFORE":       TokBefore,
-	"AFTER":        TokAfter,
-	"INSTEAD":      TokInstead,
-	"EACH":         TokEach,
-	"ROW":          TokRow,
-	"STATEMENT":    TokStatement,
-	"CONFLICT":     TokConflict,
-	"DO":           TokDo,
-	"NOTHING":      TokNothing,
-	"RETURNING":    TokReturning,
-	"EXPLAIN":      TokExplain,
-	"QUERY":        TokQuery,
-	"PLAN":         TokPlan,
-	"GENERATED":    TokGenerated,
-	"ALWAYS":       TokAlways,
-	"VIRTUAL":      TokVirtual,
-	"STORED":       TokStored,
-	"MATCH":        TokMatch,
-	"FTS":          TokFts,
-	"RANK":         TokRank,
-	"TOKENIZER":    TokTokenizer,
-	"TRUE":         TokBoolLit,
-	"FALSE":        TokBoolLit,
+	"UNSIGNED":       TokUnsigned,
+	"ZEROFILL":       TokZerofill,
+	"COLLATE":        TokCollate,
+	"ENGINE":         TokEngine,
+	"CHARSET":        TokCharset,
+	"COMMENT":        TokComment,
+	"CHECK":          TokCheck,
+	"CASCADE":        TokCascade,
+	"CASCADED":       TokCascaded,
+	"RESTRICT":       TokRestrict,
+	"ACTION":         TokAction,
+	"LOCAL":          TokLocal,
+	"DESCRIBE":       TokDescribe,
+	"BACKUP":         TokBackup,
+	"RESTORE":        TokRestore,
+	"GRANT":          TokGrant,
+	"REVOKE":         TokRevoke,
+	"PRIVILEGES":     TokPrivileges,
+	"TO":             TokTo,
+	"USE":            TokUse,
+	"SHOW":           TokShow,
+	"TRUNCATE":       TokTruncate,
+	"VACUUM":         TokVacuum,
+	"PRAGMA":         TokPragma,
+	"ANALYZE":        TokAnalyze,
+	"USER":           TokUser,
+	"PASSWORD":       TokPassword,
+	"IDENTIFIED":     TokIdentified,
+	"ROLE":           TokRole,
+	"GRANTS":         TokGrants,
+	"OPTION":         TokOption,
+	"WITH":           TokWith,
+	"RECURSIVE":      TokRecursive,
+	"FOR":            TokFor,
+	"OVER":           TokOver,
+	"PARTITION":      TokPartition,
+	"WINDOW":         TokWindow,
+	"ROWS":           TokRows,
+	"RANGE":          TokRange,
+	"PRECEDING":      TokPreceding,
+	"FOLLOWING":      TokFollowing,
+	"CURRENT":        TokCurrent,
+	"LEAD":           TokLead,
+	"LAG":            TokLag,
+	"NTILE":          TokNtile,
+	"FIRST_VALUE":    TokFirstValue,
+	"LAST_VALUE":     TokLastValue,
+	"IGNORE":         TokIgnore,
+	"RESPECT":        TokRespect,
+	"UNBOUNDED":      TokUnbounded,
+	"NTH_VALUE":      TokNthValue,
+	"PERCENT_RANK":   TokPercentRank,
+	"CUME_DIST":      TokCumeDist,
+	"LATERAL":        TokLateral,
+	"FUNCTION":       TokFunction,
+	"RETURNS":        TokReturns,
+	"RETURN":         TokReturn,
+	"REPLACE":        TokReplace,
+	"LET":            TokLet,
+	"BEGIN":          TokBegin,
+	"COMMIT":         TokCommit,
+	"ROLLBACK":       TokRollback,
+	"TRANSACTION":    TokTransaction,
+	"SAVEPOINT":      TokSavepoint,
+	"RELEASE":        TokRelease,
+	"WORK":           TokWork,
+	"DEFERRED":       TokDeferred,
+	"IMMEDIATE":      TokImmediate,
+	"EXCLUSIVE":      TokExclusive,
+	"TRIGGER":        TokTrigger,
+	"BEFORE":         TokBefore,
+	"AFTER":          TokAfter,
+	"INSTEAD":        TokInstead,
+	"EACH":           TokEach,
+	"ROW":            TokRow,
+	"STATEMENT":      TokStatement,
+	"PROCEDURE":      TokProcedure,
+	"CALL":           TokCall,
+	"INOUT":          TokInout,
+	"OUT":            TokOut,
+	"CONFLICT":       TokConflict,
+	"DO":             TokDo,
+	"NOTHING":        TokNothing,
+	"RETURNING":      TokReturning,
+	"EXPLAIN":        TokExplain,
+	"QUERY":          TokQuery,
+	"PLAN":           TokPlan,
+	"GENERATED":      TokGenerated,
+	"ALWAYS":         TokAlways,
+	"VIRTUAL":        TokVirtual,
+	"STORED":         TokStored,
+	"MATCH":          TokMatch,
+	"FTS":            TokFts,
+	"RANK":           TokRank,
+	"TOKENIZER":      TokTokenizer,
+	"TRUE":           TokBoolLit,
+	"FALSE":          TokBoolLit,
 }
 
 // LookupKeyword looks up a keyword and returns its token type.

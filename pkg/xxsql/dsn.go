@@ -13,9 +13,9 @@ import (
 
 // Default values for connection configuration.
 const (
-	DefaultAddr     = "127.0.0.1:3306"
-	DefaultNet      = "tcp"
-	DefaultTimeout  = 10 * time.Second
+	DefaultAddr         = "127.0.0.1:3306"
+	DefaultNet          = "tcp"
+	DefaultTimeout      = 10 * time.Second
 	DefaultReadTimeout  = 30 * time.Second
 	DefaultWriteTimeout = 30 * time.Second
 	DefaultCharset      = "utf8mb4"
@@ -63,17 +63,17 @@ func NewConfig() *Config {
 // ParseDSN parses a DSN string into a Config.
 // Supports two formats:
 //
-// 1. MySQL-style DSN: [username[:password]@][protocol[(address)]]/dbname[?param1=value1&...]
-//    Examples:
-//      - root@tcp(localhost:3306)/testdb
-//      - admin:secret@tcp(127.0.0.1:3306)/mydb?charset=utf8mb4
-//      - user:pass@/dbname
+//  1. MySQL-style DSN: [username[:password]@][protocol[(address)]]/dbname[?param1=value1&...]
+//     Examples:
+//     - root@tcp(localhost:3306)/testdb
+//     - admin:secret@tcp(127.0.0.1:3306)/mydb?charset=utf8mb4
+//     - user:pass@/dbname
 //
-// 2. URL format: xxsql://[username[:password]@]host[:port]/dbname[?param1=value1&...]
-//    Examples:
-//      - xxsql://root@localhost:3306/testdb
-//      - xxsql://admin:secret@127.0.0.1:3306/mydb?timeout=10s
-//      - xxsql://localhost/testdb
+//  2. URL format: xxsql://[username[:password]@]host[:port]/dbname[?param1=value1&...]
+//     Examples:
+//     - xxsql://root@localhost:3306/testdb
+//     - xxsql://admin:secret@127.0.0.1:3306/mydb?timeout=10s
+//     - xxsql://localhost/testdb
 func ParseDSN(dsn string) (*Config, error) {
 	if dsn == "" {
 		return nil, errors.New("empty DSN")

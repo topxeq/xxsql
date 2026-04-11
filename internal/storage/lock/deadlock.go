@@ -8,8 +8,8 @@ import (
 // WaitForGraph represents a wait-for graph for deadlock detection.
 type WaitForGraph struct {
 	// edges[t1] = {t2, t3} means t1 is waiting for t2 and t3
-	edges   map[uint64]map[uint64]bool
-	mu      sync.RWMutex
+	edges map[uint64]map[uint64]bool
+	mu    sync.RWMutex
 }
 
 // NewWaitForGraph creates a new wait-for graph.

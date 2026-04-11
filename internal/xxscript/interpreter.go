@@ -59,8 +59,6 @@ import (
 	"github.com/skip2/go-qrcode"
 	"github.com/xuri/excelize/v2"
 	"gopkg.in/yaml.v3"
-
-	"github.com/topxeq/xxsql/internal/storage"
 )
 
 // runtimeOS and runtimeArch are constants for the current OS and architecture
@@ -68,57 +66,6 @@ const (
 	runtimeOS   = runtime.GOOS
 	runtimeArch = runtime.GOARCH
 )
-
-// SQLExecutor is an interface for executing SQL queries.
-// This interface breaks the circular dependency between xxscript and executor packages.
-type SQLExecutor interface {
-	ExecuteForScript(query string) (interface{}, error)
-}
-
-// Value represents a runtime value.
-type Value interface{}
-
-// ThrowError represents an error thrown by the throw statement.
-type ThrowError struct {
-	Value Value
-}
-
-func (e *ThrowError) Error() string {
-	return fmt.Sprintf("%v", e.Value)
-}
-
-// Context provides the execution context.
-type Context struct {
-	Variables   map[string]Value
-	Functions   map[string]*UserFunc
-	Executor    SQLExecutor
-	Engine      *storage.Engine
-	HTTPWriter  http.ResponseWriter
-	HTTPRequest *http.Request
-	MaxSteps    int
-	BaseDir     string // Base directory for file operations
-	Timezone    *time.Location
-	steps       int
-	returning   bool
-	breaking    bool
-	continueing bool
-	returnValue Value
-}
-
-// UserFunc represents a user-defined function.
-type UserFunc struct {
-	Params []string
-	Body   *BlockStmt
-}
-
-// NewContext creates a new execution context.
-func NewContext() *Context {
-	return &Context{
-		Variables: make(map[string]Value),
-		Functions: make(map[string]*UserFunc),
-		MaxSteps:  10000000, // 10 million steps max
-	}
-}
 
 // Interpreter interprets XxScript AST.
 type Interpreter struct {
@@ -182,6 +129,8 @@ func (i *Interpreter) executeStmt(stmt Statement) (Value, error) {
 		return i.executeIfStmt(s)
 	case *ForStmt:
 		return i.executeForStmt(s)
+	case *ForInStmt:
+		return i.executeForInStmt(s)
 	case *WhileStmt:
 		return i.executeWhileStmt(s)
 	case *FuncStmt:
@@ -198,6 +147,8 @@ func (i *Interpreter) executeStmt(stmt Statement) (Value, error) {
 		return i.executeTryStmt(s)
 	case *ThrowStmt:
 		return i.executeThrowStmt(s)
+	case *SwitchStmt:
+		return i.executeSwitchStmt(s)
 	default:
 		return nil, fmt.Errorf("unknown statement type: %T", stmt)
 	}
@@ -212,6 +163,37 @@ func (i *Interpreter) executeVarStmt(stmt *VarStmt) (Value, error) {
 			return nil, err
 		}
 	}
+
+	// Handle multi-variable destructuring
+	if len(stmt.Names) > 1 {
+		// Check if value is an array
+		if arr, ok := val.([]Value); ok {
+			for idx, name := range stmt.Names {
+				if idx < len(arr) {
+					i.ctx.Variables[name] = arr[idx]
+				} else {
+					i.ctx.Variables[name] = nil
+				}
+			}
+		} else if m, ok := val.(map[string]Value); ok {
+			// Handle map destructuring by key
+			for _, name := range stmt.Names {
+				if v, exists := m[name]; exists {
+					i.ctx.Variables[name] = v
+				} else {
+					i.ctx.Variables[name] = nil
+				}
+			}
+		} else {
+			// Single value, assign to first variable
+			i.ctx.Variables[stmt.Names[0]] = val
+			for _, name := range stmt.Names[1:] {
+				i.ctx.Variables[name] = nil
+			}
+		}
+		return val, nil
+	}
+
 	i.ctx.Variables[stmt.Name] = val
 	return val, nil
 }
@@ -307,6 +289,114 @@ func (i *Interpreter) executeForStmt(stmt *ForStmt) (Value, error) {
 	return result, nil
 }
 
+func (i *Interpreter) executeForInStmt(stmt *ForInStmt) (Value, error) {
+	// Evaluate the iterable expression
+	iterable, err := i.evaluate(stmt.Iterable)
+	if err != nil {
+		return nil, err
+	}
+
+	var result Value
+
+	// Handle different iterable types
+	switch it := iterable.(type) {
+	case []Value:
+		// Iterate over array
+		for idx, val := range it {
+			// Set the key variable (index)
+			if stmt.KeyVar != "_" {
+				i.ctx.Variables[stmt.KeyVar] = int64(idx)
+			}
+			// Set the value variable
+			if stmt.ValueVar != "_" {
+				i.ctx.Variables[stmt.ValueVar] = val
+			}
+
+			// Execute body
+			res, err := i.executeBlockStmt(stmt.Body)
+			if err != nil {
+				return nil, err
+			}
+			result = res
+
+			// Check for control flow
+			if i.ctx.returning {
+				break
+			}
+			if i.ctx.breaking {
+				i.ctx.breaking = false
+				break
+			}
+			i.ctx.continueing = false
+		}
+
+	case map[string]Value:
+		// Iterate over map
+		for key, val := range it {
+			// Set the key variable
+			if stmt.KeyVar != "_" {
+				i.ctx.Variables[stmt.KeyVar] = key
+			}
+			// Set the value variable
+			if stmt.ValueVar != "_" {
+				i.ctx.Variables[stmt.ValueVar] = val
+			}
+
+			// Execute body
+			res, err := i.executeBlockStmt(stmt.Body)
+			if err != nil {
+				return nil, err
+			}
+			result = res
+
+			// Check for control flow
+			if i.ctx.returning {
+				break
+			}
+			if i.ctx.breaking {
+				i.ctx.breaking = false
+				break
+			}
+			i.ctx.continueing = false
+		}
+
+	case string:
+		// Iterate over string characters
+		for idx, char := range it {
+			// Set the key variable (index)
+			if stmt.KeyVar != "_" {
+				i.ctx.Variables[stmt.KeyVar] = int64(idx)
+			}
+			// Set the value variable (character as string)
+			if stmt.ValueVar != "_" {
+				i.ctx.Variables[stmt.ValueVar] = string(char)
+			}
+
+			// Execute body
+			res, err := i.executeBlockStmt(stmt.Body)
+			if err != nil {
+				return nil, err
+			}
+			result = res
+
+			// Check for control flow
+			if i.ctx.returning {
+				break
+			}
+			if i.ctx.breaking {
+				i.ctx.breaking = false
+				break
+			}
+			i.ctx.continueing = false
+		}
+
+	default:
+		return nil, fmt.Errorf("cannot iterate over type %T", iterable)
+	}
+
+	return result, nil
+}
+
 func (i *Interpreter) executeWhileStmt(stmt *WhileStmt) (Value, error) {
 	var result Value
 
@@ -341,9 +431,23 @@ func (i *Interpreter) executeWhileStmt(stmt *WhileStmt) (Value, error) {
 }
 
 func (i *Interpreter) executeFuncStmt(stmt *FuncStmt) (Value, error) {
+	// Extract parameter names, default values, and rest parameter index
+	paramNames := make([]string, len(stmt.Params))
+	defaultValues := make([]Expression, len(stmt.Params))
+	restParamIndex := -1
+	for idx, p := range stmt.Params {
+		paramNames[idx] = p.Name
+		defaultValues[idx] = p.DefaultValue
+		if p.IsRest {
+			restParamIndex = idx
+		}
+	}
+
 	i.ctx.Functions[stmt.Name] = &UserFunc{
-		Params: stmt.Params,
-		Body:   stmt.Body,
+		Params:         paramNames,
+		DefaultValues:  defaultValues,
+		RestParamIndex: restParamIndex,
+		Body:           stmt.Body,
 	}
 	return nil, nil
 }
@@ -402,6 +506,44 @@ func (i *Interpreter) executeThrowStmt(stmt *ThrowStmt) (Value, error) {
 	return nil, &ThrowError{Value: errValue}
 }
 
+func (i *Interpreter) executeSwitchStmt(stmt *SwitchStmt) (Value, error) {
+	// Evaluate the switch value
+	switchVal, err := i.evaluate(stmt.Value)
+	if err != nil {
+		return nil, err
+	}
+
+	// Find matching case
+	var defaultCase *SwitchCase
+	for _, c := range stmt.Cases {
+		if c.Values == nil {
+			// Default case
+			defaultCase = c
+			continue
+		}
+
+		// Check if any case value matches
+		for _, caseExpr := range c.Values {
+			caseVal, err := i.evaluate(caseExpr)
+			if err != nil {
+				return nil, err
+			}
+
+			if i.equal(switchVal, caseVal) {
+				// Found matching case, execute its body
+				return i.executeBlockStmt(c.Body)
+			}
+		}
+	}
+
+	// No match found, execute default case if exists
+	if defaultCase != nil {
+		return i.executeBlockStmt(defaultCase.Body)
+	}
+
+	return nil, nil
+}
+
 func (i *Interpreter) evaluate(expr Expression) (Value, error) {
 	switch e := expr.(type) {
 	case *IdentExpr:
@@ -430,6 +572,18 @@ func (i *Interpreter) evaluate(expr Expression) (Value, error) {
 		return i.evalIndex(e)
 	case *AssignExpr:
 		return i.evalAssign(e)
+	case *CompoundAssignExpr:
+		return i.evalCompoundAssign(e)
+	case *PreIncDecExpr:
+		return i.evalPreIncDec(e)
+	case *PostIncDecExpr:
+		return i.evalPostIncDec(e)
+	case *TernaryExpr:
+		return i.evalTernary(e)
+	case *SpreadExpr:
+		// SpreadExpr is handled specially in evalArray and evalCall
+		// When evaluated directly, return the wrapped expression's value
+		return i.evaluate(e.Expr)
 	default:
 		return nil, fmt.Errorf("unknown expression type: %T", expr)
 	}
@@ -443,13 +597,33 @@ func (i *Interpreter) evalIdent(expr *IdentExpr) (Value, error) {
 }
 
 func (i *Interpreter) evalArray(expr *ArrayExpr) (Value, error) {
-	elements := make([]Value, len(expr.Elements))
-	for idx, elem := range expr.Elements {
-		val, err := i.evaluate(elem)
-		if err != nil {
-			return nil, err
+	var elements []Value
+	for _, elem := range expr.Elements {
+		// Check if this is a spread expression
+		if spread, ok := elem.(*SpreadExpr); ok {
+			val, err := i.evaluate(spread.Expr)
+			if err != nil {
+				return nil, err
+			}
+			// Expand the spread value
+			switch v := val.(type) {
+			case []Value:
+				elements = append(elements, v...)
+			case string:
+				// Spread string into individual characters
+				for _, c := range v {
+					elements = append(elements, string(c))
+				}
+			default:
+				return nil, fmt.Errorf("cannot spread type %T", val)
+			}
+		} else {
+			val, err := i.evaluate(elem)
+			if err != nil {
+				return nil, err
+			}
+			elements = append(elements, val)
 		}
-		elements[idx] = val
 	}
 	return elements, nil
 }
@@ -500,6 +674,11 @@ func (i *Interpreter) evalBinary(expr *BinaryExpr) (Value, error) {
 		return nil, err
 	}
 
+	// Fast path for numeric operations
+	if result, ok := i.fastBinaryOp(expr.Op, left, right); ok {
+		return result, nil
+	}
+
 	switch expr.Op {
 	case TokPlus:
 		return i.add(left, right)
@@ -528,6 +707,161 @@ func (i *Interpreter) evalBinary(expr *BinaryExpr) (Value, error) {
 	}
 }
 
+// fastBinaryOp provides fast path operations for common types.
+func (i *Interpreter) fastBinaryOp(op TokenType, left, right Value) (Value, bool) {
+	// Fast path for int + int
+	if lv, ok := left.(int); ok {
+		if rv, ok := right.(int); ok {
+			switch op {
+			case TokPlus:
+				return lv + rv, true
+			case TokMinus:
+				return lv - rv, true
+			case TokStar:
+				return lv * rv, true
+			case TokSlash:
+				if rv == 0 {
+					return nil, false
+				}
+				return float64(lv) / float64(rv), true
+			case TokPercent:
+				if rv == 0 {
+					return nil, false
+				}
+				return lv % rv, true
+			case TokEq:
+				return lv == rv, true
+			case TokNe:
+				return lv != rv, true
+			case TokLt:
+				return lv < rv, true
+			case TokLe:
+				return lv <= rv, true
+			case TokGt:
+				return lv > rv, true
+			case TokGe:
+				return lv >= rv, true
+			}
+		}
+		// int + float64
+		if rv, ok := right.(float64); ok {
+			lf := float64(lv)
+			switch op {
+			case TokPlus:
+				return lf + rv, true
+			case TokMinus:
+				return lf - rv, true
+			case TokStar:
+				return lf * rv, true
+			case TokSlash:
+				if rv == 0 {
+					return nil, false
+				}
+				return lf / rv, true
+			case TokLt:
+				return lf < rv, true
+			case TokLe:
+				return lf <= rv, true
+			case TokGt:
+				return lf > rv, true
+			case TokGe:
+				return lf >= rv, true
+			}
+		}
+	}
+
+	// Fast path for int64 + int64
+	if lv, ok := left.(int64); ok {
+		if rv, ok := right.(int64); ok {
+			switch op {
+			case TokPlus:
+				return lv + rv, true
+			case TokMinus:
+				return lv - rv, true
+			case TokStar:
+				return lv * rv, true
+			case TokSlash:
+				if rv == 0 {
+					return nil, false
+				}
+				return float64(lv) / float64(rv), true
+			case TokPercent:
+				if rv == 0 {
+					return nil, false
+				}
+				return lv % rv, true
+			case TokEq:
+				return lv == rv, true
+			case TokNe:
+				return lv != rv, true
+			case TokLt:
+				return lv < rv, true
+			case TokLe:
+				return lv <= rv, true
+			case TokGt:
+				return lv > rv, true
+			case TokGe:
+				return lv >= rv, true
+			}
+		}
+	}
+
+	// Fast path for float64 + float64
+	if lv, ok := left.(float64); ok {
+		if rv, ok := right.(float64); ok {
+			switch op {
+			case TokPlus:
+				return lv + rv, true
+			case TokMinus:
+				return lv - rv, true
+			case TokStar:
+				return lv * rv, true
+			case TokSlash:
+				if rv == 0 {
+					return nil, false
+				}
+				return lv / rv, true
+			case TokEq:
+				return lv == rv, true
+			case TokNe:
+				return lv != rv, true
+			case TokLt:
+				return lv < rv, true
+			case TokLe:
+				return lv <= rv, true
+			case TokGt:
+				return lv > rv, true
+			case TokGe:
+				return lv >= rv, true
+			}
+		}
+	}
+
+	// Fast path for string + string
+	if lv, ok := left.(string); ok {
+		if rv, ok := right.(string); ok {
+			switch op {
+			case TokPlus:
+				return lv + rv, true
+			case TokEq:
+				return lv == rv, true
+			case TokNe:
+				return lv != rv, true
+			case TokLt:
+				return lv < rv, true
+			case TokLe:
+				return lv <= rv, true
+			case TokGt:
+				return lv > rv, true
+			case TokGe:
+				return lv >= rv, true
+			}
+		}
+	}
+
+	return nil, false
+}
+
 func (i *Interpreter) evalUnary(expr *UnaryExpr) (Value, error) {
 	val, err := i.evaluate(expr.Expr)
 	if err != nil {
@@ -554,18 +888,14 @@ func (i *Interpreter) evalUnary(expr *UnaryExpr) (Value, error) {
 }
 
 func (i *Interpreter) evalCall(expr *CallExpr) (Value, error) {
+	// Evaluate arguments, handling spread expressions
+	args, err := i.evalCallArgs(expr.Args)
+	if err != nil {
+		return nil, err
+	}
+
 	// Check if it's an identifier (function name) - check builtins and user funcs first
 	if ident, ok := expr.Func.(*IdentExpr); ok {
-		// Evaluate arguments
-		args := make([]Value, len(expr.Args))
-		for idx, arg := range expr.Args {
-			val, err := i.evaluate(arg)
-			if err != nil {
-				return nil, err
-			}
-			args[idx] = val
-		}
-
 		// Check built-in function first
 		if result, handled := i.callBuiltin(ident.Name, args); handled {
 			return result, nil
@@ -583,22 +913,91 @@ func (i *Interpreter) evalCall(expr *CallExpr) (Value, error) {
 		return nil, err
 	}
 
-	// Evaluate arguments
-	args := make([]Value, len(expr.Args))
-	for idx, arg := range expr.Args {
-		val, err := i.evaluate(arg)
-		if err != nil {
-			return nil, err
-		}
-		args[idx] = val
-	}
-
 	// Check if it's a callable value
 	if callable, ok := funcVal.(Callable); ok {
 		return callable.Call(args)
 	}
 
 	return nil, fmt.Errorf("not a function: %T", funcVal)
+}
+
+// evalCallArgs evaluates function call arguments, handling spread expressions
+func (i *Interpreter) evalCallArgs(exprArgs []Expression) ([]Value, error) {
+	var args []Value
+	for _, arg := range exprArgs {
+		// Check for spread expression
+		if spread, ok := arg.(*SpreadExpr); ok {
+			val, err := i.evaluate(spread.Expr)
+			if err != nil {
+				return nil, err
+			}
+			// Expand spread into individual arguments
+			switch v := val.(type) {
+			case []Value:
+				args = append(args, v...)
+			default:
+				return nil, fmt.Errorf("cannot spread type %T in function call", val)
+			}
+		} else {
+			val, err := i.evaluate(arg)
+			if err != nil {
+				return nil, err
+			}
+			args = append(args, val)
+		}
+	}
+	return args, nil
+}
+
+func (i *Interpreter) callUserFunc(fn *UserFunc, args []Value) (Value, error) {
+	// Save old variables
+	oldVars := make(map[string]Value)
+	for k, v := range i.ctx.Variables {
+		oldVars[k] = v
+	}
+
+	// Bind parameters with default values and rest parameter
+	restIdx := fn.RestParamIndex
+
+	for idx, param := range fn.Params {
+		if restIdx >= 0 && idx == restIdx {
+			// Rest parameter: collect remaining arguments into array
+			var restArgs []Value
+			if idx < len(args) {
+				restArgs = args[idx:]
+			}
+			i.ctx.Variables[param] = restArgs
+		} else if restIdx >= 0 && idx > restIdx {
+			// Parameters after rest are not allowed, but handle gracefully
+			i.ctx.Variables[param] = nil
+		} else if idx < len(args) {
+			// Regular parameter with provided argument
+			i.ctx.Variables[param] = args[idx]
+		} else if fn.DefaultValues != nil && idx < len(fn.DefaultValues) && fn.DefaultValues[idx] != nil {
+			// Use default value
+			defaultVal, err := i.evaluate(fn.DefaultValues[idx])
+			if err != nil {
+				return nil, err
+			}
+			i.ctx.Variables[param] = defaultVal
+		} else {
+			i.ctx.Variables[param] = nil
+		}
+	}
+
+	// Execute body
+	i.ctx.returning = false
+	i.ctx.returnValue = nil
+	_, err := i.executeBlockStmt(fn.Body)
+
+	// Restore variables
+	i.ctx.Variables = oldVars
+
+	if err != nil {
+		return nil, err
+	}
+
+	return i.ctx.returnValue, nil
 }
 
 func (i *Interpreter) evalMember(expr *MemberExpr) (Value, error) {
@@ -686,6 +1085,42 @@ func (i *Interpreter) evalAssign(expr *AssignExpr) (Value, error) {
 		return nil, err
 	}
 
+	// Handle multi-target assignment
+	if len(expr.Lefts) > 1 {
+		if arr, ok := val.([]Value); ok {
+			for idx, left := range expr.Lefts {
+				if ident, ok := left.(*IdentExpr); ok {
+					if idx < len(arr) {
+						i.ctx.Variables[ident.Name] = arr[idx]
+					} else {
+						i.ctx.Variables[ident.Name] = nil
+					}
+				}
+			}
+		} else if m, ok := val.(map[string]Value); ok {
+			for _, left := range expr.Lefts {
+				if ident, ok := left.(*IdentExpr); ok {
+					if v, exists := m[ident.Name]; exists {
+						i.ctx.Variables[ident.Name] = v
+					} else {
+						i.ctx.Variables[ident.Name] = nil
+					}
+				}
+			}
+		} else {
+			// Single value - assign to first target
+			if ident, ok := expr.Lefts[0].(*IdentExpr); ok {
+				i.ctx.Variables[ident.Name] = val
+			}
+			for _, left := range expr.Lefts[1:] {
+				if ident, ok := left.(*IdentExpr); ok {
+					i.ctx.Variables[ident.Name] = nil
+				}
+			}
+		}
+		return val, nil
+	}
+
 	switch left := expr.Left.(type) {
 	case *IdentExpr:
 		i.ctx.Variables[left.Name] = val
@@ -735,334 +1170,361 @@ func (i *Interpreter) evalAssign(expr *AssignExpr) (Value, error) {
 	return val, nil
 }
 
-// Helper methods
-
-func (i *Interpreter) isTruthy(val Value) bool {
-	if val == nil {
-		return false
-	}
-	switch v := val.(type) {
-	case bool:
-		return v
-	case int, int64, float64:
-		return v != 0
-	case string:
-		return v != ""
-	case []Value:
-		return len(v) > 0
-	case map[string]Value:
-		return len(v) > 0
+func (i *Interpreter) evalCompoundAssign(expr *CompoundAssignExpr) (Value, error) {
+	// Get current value
+	var current Value
+	switch left := expr.Left.(type) {
+	case *IdentExpr:
+		var ok bool
+		current, ok = i.ctx.Variables[left.Name]
+		if !ok {
+			return nil, fmt.Errorf("undefined variable: %s", left.Name)
+		}
+	case *MemberExpr:
+		val, err := i.evalMember(left)
+		if err != nil {
+			return nil, err
+		}
+		current = val
+	case *IndexExpr:
+		val, err := i.evalIndex(left)
+		if err != nil {
+			return nil, err
+		}
+		current = val
 	default:
-		return true
-	}
-}
-
-func (i *Interpreter) equal(a, b Value) bool {
-	return reflect.DeepEqual(a, b)
-}
-
-func (i *Interpreter) compare(a, b Value) int {
-	switch av := a.(type) {
-	case int:
-		switch bv := b.(type) {
-		case int:
-			if av < bv {
-				return -1
-			} else if av > bv {
-				return 1
-			}
-			return 0
-		case int64:
-			if int64(av) < bv {
-				return -1
-			} else if int64(av) > bv {
-				return 1
-			}
-			return 0
-		case float64:
-			if float64(av) < bv {
-				return -1
-			} else if float64(av) > bv {
-				return 1
-			}
-			return 0
-		}
-	case int64:
-		switch bv := b.(type) {
-		case int:
-			if av < int64(bv) {
-				return -1
-			} else if av > int64(bv) {
-				return 1
-			}
-			return 0
-		case int64:
-			if av < bv {
-				return -1
-			} else if av > bv {
-				return 1
-			}
-			return 0
-		case float64:
-			if float64(av) < bv {
-				return -1
-			} else if float64(av) > bv {
-				return 1
-			}
-			return 0
-		}
-	case float64:
-		switch bv := b.(type) {
-		case int:
-			if av < float64(bv) {
-				return -1
-			} else if av > float64(bv) {
-				return 1
-			}
-			return 0
-		case int64:
-			if av < float64(bv) {
-				return -1
-			} else if av > float64(bv) {
-				return 1
-			}
-			return 0
-		case float64:
-			if av < bv {
-				return -1
-			} else if av > bv {
-				return 1
-			}
-			return 0
-		}
-	case string:
-		switch bv := b.(type) {
-		case string:
-			return strings.Compare(av, bv)
-		}
-	}
-	return 0
-}
-
-func (i *Interpreter) add(a, b Value) (Value, error) {
-	switch av := a.(type) {
-	case int:
-		switch bv := b.(type) {
-		case int:
-			return av + bv, nil
-		case int64:
-			return int64(av) + bv, nil
-		case float64:
-			return float64(av) + bv, nil
-		}
-	case int64:
-		switch bv := b.(type) {
-		case int:
-			return av + int64(bv), nil
-		case int64:
-			return av + bv, nil
-		case float64:
-			return float64(av) + bv, nil
-		}
-	case float64:
-		switch bv := b.(type) {
-		case int:
-			return av + float64(bv), nil
-		case int64:
-			return av + float64(bv), nil
-		case float64:
-			return av + bv, nil
-		}
-	case string:
-		switch bv := b.(type) {
-		case string:
-			return av + bv, nil
-		}
-	}
-	return nil, fmt.Errorf("cannot add %T and %T", a, b)
-}
-
-func (i *Interpreter) sub(a, b Value) (Value, error) {
-	switch av := a.(type) {
-	case int:
-		switch bv := b.(type) {
-		case int:
-			return av - bv, nil
-		case int64:
-			return int64(av) - bv, nil
-		case float64:
-			return float64(av) - bv, nil
-		}
-	case int64:
-		switch bv := b.(type) {
-		case int:
-			return av - int64(bv), nil
-		case int64:
-			return av - bv, nil
-		case float64:
-			return float64(av) - bv, nil
-		}
-	case float64:
-		switch bv := b.(type) {
-		case int:
-			return av - float64(bv), nil
-		case int64:
-			return av - float64(bv), nil
-		case float64:
-			return av - bv, nil
-		}
-	}
-	return nil, fmt.Errorf("cannot subtract %T and %T", a, b)
-}
-
-func (i *Interpreter) mul(a, b Value) (Value, error) {
-	switch av := a.(type) {
-	case int:
-		switch bv := b.(type) {
-		case int:
-			return av * bv, nil
-		case int64:
-			return int64(av) * bv, nil
-		case float64:
-			return float64(av) * bv, nil
-		}
-	case int64:
-		switch bv := b.(type) {
-		case int:
-			return av * int64(bv), nil
-		case int64:
-			return av * bv, nil
-		case float64:
-			return float64(av) * bv, nil
-		}
-	case float64:
-		switch bv := b.(type) {
-		case int:
-			return av * float64(bv), nil
-		case int64:
-			return av * float64(bv), nil
-		case float64:
-			return av * bv, nil
-		}
-	}
-	return nil, fmt.Errorf("cannot multiply %T and %T", a, b)
-}
-
-func (i *Interpreter) div(a, b Value) (Value, error) {
-	switch av := a.(type) {
-	case int:
-		switch bv := b.(type) {
-		case int:
-			if bv == 0 {
-				return nil, fmt.Errorf("division by zero")
-			}
-			return float64(av) / float64(bv), nil
-		case int64:
-			if bv == 0 {
-				return nil, fmt.Errorf("division by zero")
-			}
-			return float64(av) / float64(bv), nil
-		case float64:
-			if bv == 0 {
-				return nil, fmt.Errorf("division by zero")
-			}
-			return float64(av) / bv, nil
-		}
-	case int64:
-		switch bv := b.(type) {
-		case int:
-			if bv == 0 {
-				return nil, fmt.Errorf("division by zero")
-			}
-			return float64(av) / float64(bv), nil
-		case int64:
-			if bv == 0 {
-				return nil, fmt.Errorf("division by zero")
-			}
-			return float64(av) / float64(bv), nil
-		case float64:
-			if bv == 0 {
-				return nil, fmt.Errorf("division by zero")
-			}
-			return float64(av) / bv, nil
-		}
-	case float64:
-		switch bv := b.(type) {
-		case int:
-			if bv == 0 {
-				return nil, fmt.Errorf("division by zero")
-			}
-			return av / float64(bv), nil
-		case int64:
-			if bv == 0 {
-				return nil, fmt.Errorf("division by zero")
-			}
-			return av / float64(bv), nil
-		case float64:
-			if bv == 0 {
-				return nil, fmt.Errorf("division by zero")
-			}
-			return av / bv, nil
-		}
-	}
-	return nil, fmt.Errorf("cannot divide %T and %T", a, b)
-}
-
-func (i *Interpreter) mod(a, b Value) (Value, error) {
-	av := i.toInt(a)
-	bv := i.toInt(b)
-	if bv == 0 {
-		return nil, fmt.Errorf("modulo by zero")
-	}
-	return av % bv, nil
-}
-
-func (i *Interpreter) toInt(val Value) int {
-	switch v := val.(type) {
-	case int:
-		return v
-	case int64:
-		return int(v)
-	case float64:
-		return int(v)
-	case string:
-		var n int
-		fmt.Sscanf(v, "%d", &n)
-		return n
-	default:
-		return 0
-	}
-}
-
-func (i *Interpreter) callUserFunc(fn *UserFunc, args []Value) (Value, error) {
-	// Save old variables
-	oldVars := make(map[string]Value)
-	for k, v := range i.ctx.Variables {
-		oldVars[k] = v
+		return nil, fmt.Errorf("invalid compound assignment target")
 	}
 
-	// Bind parameters
-	for idx, param := range fn.Params {
-		if idx < len(args) {
-			i.ctx.Variables[param] = args[idx]
-		} else {
-			i.ctx.Variables[param] = nil
-		}
-	}
-
-	// Execute body
-	i.ctx.returning = false
-	i.ctx.returnValue = nil
-	_, err := i.executeBlockStmt(fn.Body)
-
-	// Restore variables
-	i.ctx.Variables = oldVars
-
+	// Evaluate right side
+	right, err := i.evaluate(expr.Value)
 	if err != nil {
 		return nil, err
 	}
 
-	return i.ctx.returnValue, nil
+	// Apply operation
+	var result Value
+	switch expr.Op {
+	case TokPlusAssign:
+		result, err = i.add(current, right)
+	case TokMinusAssign:
+		result, err = i.sub(current, right)
+	case TokStarAssign:
+		result, err = i.mul(current, right)
+	case TokSlashAssign:
+		result, err = i.div(current, right)
+	case TokPercentAssign:
+		result, err = i.mod(current, right)
+	default:
+		return nil, fmt.Errorf("unknown compound assignment operator: %v", expr.Op)
+	}
+	if err != nil {
+		return nil, err
+	}
+
+	// Assign result back
+	switch left := expr.Left.(type) {
+	case *IdentExpr:
+		i.ctx.Variables[left.Name] = result
+	case *MemberExpr:
+		obj, err := i.evaluate(left.Object)
+		if err != nil {
+			return nil, err
+		}
+		member, err := i.evaluate(left.Member)
+		if err != nil {
+			return nil, err
+		}
+		key, ok := member.(string)
+		if !ok {
+			return nil, fmt.Errorf("member key must be string")
+		}
+		if m, ok := obj.(map[string]Value); ok {
+			m[key] = result
+		} else {
+			return nil, fmt.Errorf("cannot assign to member of %T", obj)
+		}
+	case *IndexExpr:
+		obj, err := i.evaluate(left.Object)
+		if err != nil {
+			return nil, err
+		}
+		index, err := i.evaluate(left.Index)
+		if err != nil {
+			return nil, err
+		}
+		switch o := obj.(type) {
+		case []Value:
+			idx := i.toInt(index)
+			if idx >= 0 && idx < len(o) {
+				o[idx] = result
+			}
+		case map[string]Value:
+			key, ok := index.(string)
+			if ok {
+				o[key] = result
+			}
+		}
+	}
+
+	return result, nil
+}
+
+func (i *Interpreter) evalPreIncDec(expr *PreIncDecExpr) (Value, error) {
+	// Get current value
+	var current Value
+	var name string
+
+	switch left := expr.Expr.(type) {
+	case *IdentExpr:
+		name = left.Name
+		var ok bool
+		current, ok = i.ctx.Variables[name]
+		if !ok {
+			return nil, fmt.Errorf("undefined variable: %s", name)
+		}
+
+		// Apply operation (increment or decrement by 1)
+		var result Value
+		var err error
+		one := 1
+		if expr.Op == TokInc {
+			result, err = i.add(current, one)
+		} else {
+			result, err = i.sub(current, one)
+		}
+		if err != nil {
+			return nil, err
+		}
+
+		// Assign result back
+		i.ctx.Variables[name] = result
+		return result, nil
+
+	case *MemberExpr:
+		val, err := i.evalMember(left)
+		if err != nil {
+			return nil, err
+		}
+		current = val
+
+		// Apply operation
+		var result Value
+		one := 1
+		if expr.Op == TokInc {
+			result, err = i.add(current, one)
+		} else {
+			result, err = i.sub(current, one)
+		}
+		if err != nil {
+			return nil, err
+		}
+
+		// Assign result back to member
+		obj, err := i.evaluate(left.Object)
+		if err != nil {
+			return nil, err
+		}
+		member, err := i.evaluate(left.Member)
+		if err != nil {
+			return nil, err
+		}
+		key, ok := member.(string)
+		if !ok {
+			return nil, fmt.Errorf("member key must be string")
+		}
+		if m, ok := obj.(map[string]Value); ok {
+			m[key] = result
+		}
+		return result, nil
+
+	case *IndexExpr:
+		val, err := i.evalIndex(left)
+		if err != nil {
+			return nil, err
+		}
+		current = val
+
+		// Apply operation
+		var result Value
+		one := 1
+		if expr.Op == TokInc {
+			result, err = i.add(current, one)
+		} else {
+			result, err = i.sub(current, one)
+		}
+		if err != nil {
+			return nil, err
+		}
+
+		// Assign result back to index
+		obj, err := i.evaluate(left.Object)
+		if err != nil {
+			return nil, err
+		}
+		index, err := i.evaluate(left.Index)
+		if err != nil {
+			return nil, err
+		}
+		switch o := obj.(type) {
+		case []Value:
+			idx := i.toInt(index)
+			if idx >= 0 && idx < len(o) {
+				o[idx] = result
+			}
+		case map[string]Value:
+			key, ok := index.(string)
+			if ok {
+				o[key] = result
+			}
+		}
+		return result, nil
+
+	default:
+		return nil, fmt.Errorf("invalid increment/decrement target")
+	}
+}
+
+func (i *Interpreter) evalPostIncDec(expr *PostIncDecExpr) (Value, error) {
+	// Get current value
+	var current Value
+	var name string
+
+	switch left := expr.Expr.(type) {
+	case *IdentExpr:
+		name = left.Name
+		var ok bool
+		current, ok = i.ctx.Variables[name]
+		if !ok {
+			return nil, fmt.Errorf("undefined variable: %s", name)
+		}
+
+		// Store old value for return
+		oldValue := current
+
+		// Apply operation (increment or decrement by 1)
+		var result Value
+		var err error
+		one := 1
+		if expr.Op == TokInc {
+			result, err = i.add(current, one)
+		} else {
+			result, err = i.sub(current, one)
+		}
+		if err != nil {
+			return nil, err
+		}
+
+		// Assign result back
+		i.ctx.Variables[name] = result
+
+		// Return old value for post-increment/decrement
+		return oldValue, nil
+
+	case *MemberExpr:
+		val, err := i.evalMember(left)
+		if err != nil {
+			return nil, err
+		}
+		current = val
+
+		// Store old value for return
+		oldValue := current
+
+		// Apply operation
+		var result Value
+		one := 1
+		if expr.Op == TokInc {
+			result, err = i.add(current, one)
+		} else {
+			result, err = i.sub(current, one)
+		}
+		if err != nil {
+			return nil, err
+		}
+
+		// Assign result back to member
+		obj, err := i.evaluate(left.Object)
+		if err != nil {
+			return nil, err
+		}
+		member, err := i.evaluate(left.Member)
+		if err != nil {
+			return nil, err
+		}
+		key, ok := member.(string)
+		if !ok {
+			return nil, fmt.Errorf("member key must be string")
+		}
+		if m, ok := obj.(map[string]Value); ok {
+			m[key] = result
+		}
+
+		return oldValue, nil
+
+	case *IndexExpr:
+		val, err := i.evalIndex(left)
+		if err != nil {
+			return nil, err
+		}
+		current = val
+
+		// Store old value for return
+		oldValue := current
+
+		// Apply operation
+		var result Value
+		one := 1
+		if expr.Op == TokInc {
+			result, err = i.add(current, one)
+		} else {
+			result, err = i.sub(current, one)
+		}
+		if err != nil {
+			return nil, err
+		}
+
+		// Assign result back to index
+		obj, err := i.evaluate(left.Object)
+		if err != nil {
+			return nil, err
+		}
+		index, err := i.evaluate(left.Index)
+		if err != nil {
+			return nil, err
+		}
+		switch o := obj.(type) {
+		case []Value:
+			idx := i.toInt(index)
+			if idx >= 0 && idx < len(o) {
+				o[idx] = result
+			}
+		case map[string]Value:
+			key, ok := index.(string)
+			if ok {
+				o[key] = result
+			}
+		}
+
+		return oldValue, nil
+
+	default:
+		return nil, fmt.Errorf("invalid increment/decrement target")
+	}
+}
+
+func (i *Interpreter) evalTernary(expr *TernaryExpr) (Value, error) {
+	// Evaluate condition
+	cond, err := i.evaluate(expr.Condition)
+	if err != nil {
+		return nil, err
+	}
+
+	// Choose branch based on truthiness
+	if i.isTruthy(cond) {
+		return i.evaluate(expr.TrueExpr)
+	}
+	return i.evaluate(expr.FalseExpr)
 }
 
 // Callable interface for callable values
@@ -2833,9 +3295,9 @@ type ErrorValue struct {
 func (i *Interpreter) builtinError(args []Value) Value {
 	if len(args) == 0 {
 		return map[string]Value{
-			"error":  true,
+			"error":   true,
 			"message": "",
-			"type":   "error",
+			"type":    "error",
 		}
 	}
 
@@ -3230,7 +3692,7 @@ func (i *Interpreter) builtinMust(args []Value) Value {
 			if b, ok := err.(bool); ok && b {
 				return map[string]Value{
 					"error":   true,
-					"message": "must: " + i.builtinErrorMessage(args).([]interface{})[0].(string),
+					"message": "must: " + toString(i.builtinErrorMessage(args)),
 					"type":    "must",
 				}
 			}
@@ -3498,25 +3960,6 @@ func (i *Interpreter) builtinResultOrError(args []Value) Value {
 }
 
 // Helper functions for error handling
-
-func (i *Interpreter) toBool(v Value) bool {
-	switch val := v.(type) {
-	case bool:
-		return val
-	case int:
-		return val != 0
-	case int64:
-		return val != 0
-	case float64:
-		return val != 0
-	case string:
-		return val != "" && val != "false" && val != "0"
-	case nil:
-		return false
-	default:
-		return true
-	}
-}
 
 func (i *Interpreter) isEqual(a, b Value) bool {
 	// Handle nil cases
@@ -6200,19 +6643,6 @@ func (i *Interpreter) builtinMax(args []Value) Value {
 		}
 	}
 	return maxVal
-}
-
-func (i *Interpreter) toFloat(v Value) float64 {
-	switch val := v.(type) {
-	case int:
-		return float64(val)
-	case int64:
-		return float64(val)
-	case float64:
-		return val
-	default:
-		return 0
-	}
 }
 
 func (i *Interpreter) builtinFloor(args []Value) Value {
@@ -9658,10 +10088,10 @@ func (i *Interpreter) builtinPBKDF2(args []Value) Value {
 	key := pbkdf2.Key([]byte(password), []byte(salt), iterations, keyLen, hashFunc)
 
 	return map[string]Value{
-		"success":     true,
-		"key":         hex.EncodeToString(key),
-		"iterations":  int64(iterations),
-		"keyLen":      int64(keyLen),
+		"success":    true,
+		"key":        hex.EncodeToString(key),
+		"iterations": int64(iterations),
+		"keyLen":     int64(keyLen),
 	}
 }
 
@@ -10562,11 +10992,11 @@ func (i *Interpreter) builtinHTTPPut(args []Value) Value {
 	}
 
 	return map[string]Value{
-		"success":     true,
-		"statusCode":  resp.StatusCode,
-		"status":      resp.Status,
-		"headers":     headersToMap(resp.Header),
-		"body":        string(body),
+		"success":    true,
+		"statusCode": resp.StatusCode,
+		"status":     resp.Status,
+		"headers":    headersToMap(resp.Header),
+		"body":       string(body),
 	}
 }
 
@@ -10988,12 +11418,12 @@ func (i *Interpreter) builtinIPParse(args []Value) Value {
 	}
 
 	return map[string]Value{
-		"success":  true,
-		"ip":       ip.String(),
-		"isIPv4":   ip.To4() != nil,
-		"isIPv6":   ip.To4() == nil,
-		"isLoopback": ip.IsLoopback(),
-		"isPrivate":  ip.IsPrivate(),
+		"success":         true,
+		"ip":              ip.String(),
+		"isIPv4":          ip.To4() != nil,
+		"isIPv6":          ip.To4() == nil,
+		"isLoopback":      ip.IsLoopback(),
+		"isPrivate":       ip.IsPrivate(),
 		"isGlobalUnicast": ip.IsGlobalUnicast(),
 	}
 }
@@ -12484,14 +12914,14 @@ func (i *Interpreter) builtinToday(args []Value) Value {
 	now := time.Now()
 	t := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, now.Location())
 	return map[string]Value{
-		"date":     t.Format("2006-01-02"),
-		"unix":     t.Unix(),
-		"year":     int64(t.Year()),
-		"month":    int64(t.Month()),
-		"day":      int64(t.Day()),
-		"weekday":  t.Weekday().String(),
-		"start":    t.Unix(),
-		"end":      t.Add(24*time.Hour - time.Second).Unix(),
+		"date":    t.Format("2006-01-02"),
+		"unix":    t.Unix(),
+		"year":    int64(t.Year()),
+		"month":   int64(t.Month()),
+		"day":     int64(t.Day()),
+		"weekday": t.Weekday().String(),
+		"start":   t.Unix(),
+		"end":     t.Add(24*time.Hour - time.Second).Unix(),
 	}
 }
 
@@ -13036,10 +13466,10 @@ func (i *Interpreter) builtinExec(args []Value) Value {
 	output, err := command.CombinedOutput()
 
 	result := map[string]Value{
-		"success":    err == nil,
-		"output":     string(output),
-		"command":    cmd,
-		"exitCode":   0,
+		"success":  err == nil,
+		"output":   string(output),
+		"command":  cmd,
+		"exitCode": 0,
 	}
 
 	if err != nil {
@@ -13095,33 +13525,33 @@ func (i *Interpreter) builtinMemStats(args []Value) Value {
 	runtime.ReadMemStats(&m)
 
 	return map[string]Value{
-		"success":         true,
-		"alloc":           int64(m.Alloc),
-		"totalAlloc":      int64(m.TotalAlloc),
-		"sys":             int64(m.Sys),
-		"lookups":         int64(m.Lookups),
-		"mallocs":         int64(m.Mallocs),
-		"frees":           int64(m.Frees),
-		"heapAlloc":       int64(m.HeapAlloc),
-		"heapSys":         int64(m.HeapSys),
-		"heapIdle":        int64(m.HeapIdle),
-		"heapInuse":       int64(m.HeapInuse),
-		"heapReleased":    int64(m.HeapReleased),
-		"heapObjects":     int64(m.HeapObjects),
-		"stackInuse":      int64(m.StackInuse),
-		"stackSys":        int64(m.StackSys),
-		"mspanInuse":      int64(m.MSpanInuse),
-		"mspanSys":        int64(m.MSpanSys),
-		"mcacheInuse":     int64(m.MCacheInuse),
-		"mcacheSys":       int64(m.MCacheSys),
-		"buckHashSys":     int64(m.BuckHashSys),
-		"gcsys":           int64(m.GCSys),
-		"otherSys":        int64(m.OtherSys),
-		"nextGC":          int64(m.NextGC),
-		"lastGC":          int64(m.LastGC),
-		"numGC":           int64(m.NumGC),
-		"numForcedGC":     int64(m.NumForcedGC),
-		"gcCPUFraction":   m.GCCPUFraction,
+		"success":       true,
+		"alloc":         int64(m.Alloc),
+		"totalAlloc":    int64(m.TotalAlloc),
+		"sys":           int64(m.Sys),
+		"lookups":       int64(m.Lookups),
+		"mallocs":       int64(m.Mallocs),
+		"frees":         int64(m.Frees),
+		"heapAlloc":     int64(m.HeapAlloc),
+		"heapSys":       int64(m.HeapSys),
+		"heapIdle":      int64(m.HeapIdle),
+		"heapInuse":     int64(m.HeapInuse),
+		"heapReleased":  int64(m.HeapReleased),
+		"heapObjects":   int64(m.HeapObjects),
+		"stackInuse":    int64(m.StackInuse),
+		"stackSys":      int64(m.StackSys),
+		"mspanInuse":    int64(m.MSpanInuse),
+		"mspanSys":      int64(m.MSpanSys),
+		"mcacheInuse":   int64(m.MCacheInuse),
+		"mcacheSys":     int64(m.MCacheSys),
+		"buckHashSys":   int64(m.BuckHashSys),
+		"gcsys":         int64(m.GCSys),
+		"otherSys":      int64(m.OtherSys),
+		"nextGC":        int64(m.NextGC),
+		"lastGC":        int64(m.LastGC),
+		"numGC":         int64(m.NumGC),
+		"numForcedGC":   int64(m.NumForcedGC),
+		"gcCPUFraction": m.GCCPUFraction,
 	}
 }
 
@@ -13941,19 +14371,19 @@ func (i *Interpreter) builtinToWords(args []Value) Value {
 	var parts []string
 
 	if num >= 1000000000000 {
-		parts = append(parts, i.builtinToWords([]Value{num/1000000000000}).(string), "trillion")
+		parts = append(parts, i.builtinToWords([]Value{num / 1000000000000}).(string), "trillion")
 		num %= 1000000000000
 	}
 	if num >= 1000000000 {
-		parts = append(parts, i.builtinToWords([]Value{num/1000000000}).(string), "billion")
+		parts = append(parts, i.builtinToWords([]Value{num / 1000000000}).(string), "billion")
 		num %= 1000000000
 	}
 	if num >= 1000000 {
-		parts = append(parts, i.builtinToWords([]Value{num/1000000}).(string), "million")
+		parts = append(parts, i.builtinToWords([]Value{num / 1000000}).(string), "million")
 		num %= 1000000
 	}
 	if num >= 1000 {
-		parts = append(parts, i.builtinToWords([]Value{num/1000}).(string), "thousand")
+		parts = append(parts, i.builtinToWords([]Value{num / 1000}).(string), "thousand")
 		num %= 1000
 	}
 	if num >= 100 {
@@ -14732,12 +15162,12 @@ func (i *Interpreter) builtinFileInfo(args []Value) Value {
 	}
 
 	return map[string]Value{
-		"success":  true,
-		"name":     info.Name(),
-		"size":     info.Size(),
-		"isDir":    info.IsDir(),
-		"modTime":  info.ModTime().Format(time.RFC3339),
-		"mode":     info.Mode().String(),
+		"success": true,
+		"name":    info.Name(),
+		"size":    info.Size(),
+		"isDir":   info.IsDir(),
+		"modTime": info.ModTime().Format(time.RFC3339),
+		"mode":    info.Mode().String(),
 	}
 }
 
@@ -15182,10 +15612,10 @@ func (i *Interpreter) builtinRotN(args []Value) Value {
 	for _, r := range s {
 		if r >= 'a' && r <= 'z' {
 			// Handle negative n
-			shift := ((int(r-'a') + int(n)) % 26 + 26) % 26
+			shift := ((int(r-'a')+int(n))%26 + 26) % 26
 			result.WriteRune(rune('a' + shift))
 		} else if r >= 'A' && r <= 'Z' {
-			shift := ((int(r-'A') + int(n)) % 26 + 26) % 26
+			shift := ((int(r-'A')+int(n))%26 + 26) % 26
 			result.WriteRune(rune('A' + shift))
 		} else {
 			result.WriteRune(r)
@@ -16694,10 +17124,10 @@ func (i *Interpreter) builtinPing(args []Value) Value {
 	conn.Close()
 
 	return map[string]Value{
-		"success":  true,
-		"host":     host,
-		"port":     port,
-		"latency":  elapsed.Milliseconds(),
+		"success":   true,
+		"host":      host,
+		"port":      port,
+		"latency":   elapsed.Milliseconds(),
 		"latencyMs": elapsed.Milliseconds(),
 	}
 }
@@ -16719,7 +17149,7 @@ func (i *Interpreter) builtinPortCheck(args []Value) Value {
 		timeout = time.Duration(i.toInt(args[2])) * time.Second
 	}
 
-	address := fmt.Sprintf("%s:%d", host, port)
+	address := net.JoinHostPort(host, strconv.Itoa(port))
 	conn, err := net.DialTimeout("tcp", address, timeout)
 	if err != nil {
 		return map[string]Value{
@@ -16762,7 +17192,7 @@ func (i *Interpreter) builtinPortScan(args []Value) Value {
 	timeout := 500 * time.Millisecond
 
 	for port := startPort; port <= endPort && port <= 65535; port++ {
-		address := fmt.Sprintf("%s:%d", host, port)
+		address := net.JoinHostPort(host, strconv.Itoa(port))
 		conn, err := net.DialTimeout("tcp", address, timeout)
 		if err == nil {
 			conn.Close()
@@ -16824,8 +17254,8 @@ func (i *Interpreter) builtinRetry(args []Value) Value {
 	}
 
 	return map[string]Value{
-		"success": false,
-		"error":   lastErr.Error(),
+		"success":  false,
+		"error":    lastErr.Error(),
 		"attempts": maxAttempts,
 	}
 }
@@ -18686,9 +19116,9 @@ func (i *Interpreter) builtinIPLookup(args []Value) Value {
 		names, err := net.LookupAddr(host)
 		if err != nil {
 			return map[string]Value{
-				"ip":     host,
-				"names":  []Value{},
-				"valid":  true,
+				"ip":      host,
+				"names":   []Value{},
+				"valid":   true,
 				"version": map[string]Value{"v4": ip.To4() != nil, "v6": ip.To4() == nil},
 			}
 		}
@@ -18792,10 +19222,10 @@ func (i *Interpreter) builtinCronNext(args []Value) Value {
 	}
 
 	return map[string]Value{
-		"valid":   true,
-		"next":    next.Format(time.RFC3339),
-		"unix":    next.Unix(),
-		"from":    startTime.Format(time.RFC3339),
+		"valid": true,
+		"next":  next.Format(time.RFC3339),
+		"unix":  next.Unix(),
+		"from":  startTime.Format(time.RFC3339),
 	}
 }
 
@@ -18834,16 +19264,16 @@ func (i *Interpreter) builtinCronNextN(args []Value) Value {
 			break
 		}
 		results = append(results, map[string]Value{
-			"time":  next.Format(time.RFC3339),
-			"unix":  next.Unix(),
+			"time": next.Format(time.RFC3339),
+			"unix": next.Unix(),
 		})
 		current = next
 	}
 
 	return map[string]Value{
-		"valid":  true,
-		"count":  len(results),
-		"times":  results,
+		"valid": true,
+		"count": len(results),
+		"times": results,
 	}
 }
 
@@ -19233,17 +19663,17 @@ func (i *Interpreter) builtinRateLimitCheck(args []Value) Value {
 	if rl.tokens >= cost {
 		rl.tokens -= cost
 		return map[string]Value{
-			"allowed":     true,
-			"tokensLeft":  rl.tokens,
-			"name":        name,
+			"allowed":    true,
+			"tokensLeft": rl.tokens,
+			"name":       name,
 		}
 	}
 
 	return map[string]Value{
-		"allowed":     false,
-		"tokensLeft":  rl.tokens,
-		"retryAfter":  (cost - rl.tokens) / rl.refillRate,
-		"name":        name,
+		"allowed":    false,
+		"tokensLeft": rl.tokens,
+		"retryAfter": (cost - rl.tokens) / rl.refillRate,
+		"name":       name,
 	}
 }
 
@@ -19348,8 +19778,8 @@ func (i *Interpreter) builtinMetricsGet(args []Value) Value {
 		result := make(map[string]Value)
 		for name, m := range metricsStore {
 			result[name] = map[string]Value{
-				"type":  m.metricType,
-				"value": m.value,
+				"type":      m.metricType,
+				"value":     m.value,
 				"updatedAt": m.updatedAt.Format(time.RFC3339),
 			}
 		}
@@ -19366,9 +19796,9 @@ func (i *Interpreter) builtinMetricsGet(args []Value) Value {
 
 	if m, exists := metricsStore[name]; exists {
 		return map[string]Value{
-			"name":     name,
-			"type":     m.metricType,
-			"value":    m.value,
+			"name":      name,
+			"type":      m.metricType,
+			"value":     m.value,
 			"updatedAt": m.updatedAt.Format(time.RFC3339),
 		}
 	}
@@ -19426,9 +19856,9 @@ func (i *Interpreter) builtinStateMachine(args []Value) Value {
 	stateMachinesMutex.Unlock()
 
 	return map[string]Value{
-		"name":       name,
-		"state":      initial,
-		"created":    true,
+		"name":    name,
+		"state":   initial,
+		"created": true,
 	}
 }
 
@@ -19461,9 +19891,9 @@ func (i *Interpreter) builtinStateAdd(args []Value) Value {
 	}
 
 	return map[string]Value{
-		"added":    true,
-		"machine":  name,
-		"state":    stateName,
+		"added":   true,
+		"machine": name,
+		"state":   stateName,
 	}
 }
 
@@ -19718,10 +20148,10 @@ func (i *Interpreter) builtinHTMLParse(args []Value) Value {
 	text := extractTextFromHTML(htmlStr)
 
 	return map[string]Value{
-		"html":    htmlStr,
-		"text":    text,
-		"length":  len(htmlStr),
-		"valid":   true,
+		"html":   htmlStr,
+		"text":   text,
+		"length": len(htmlStr),
+		"valid":  true,
 	}
 }
 
@@ -20050,9 +20480,9 @@ func (i *Interpreter) builtinMLSimilarity(args []Value) Value {
 	similarity := float64(intersection) / float64(union)
 
 	return map[string]Value{
-		"similarity": math.Round(similarity*100) / 100,
+		"similarity":   math.Round(similarity*100) / 100,
 		"intersection": intersection,
-		"union":      union,
+		"union":        union,
 	}
 }
 
@@ -20580,9 +21010,9 @@ func (i *Interpreter) builtinRedisExpire(args []Value) Value {
 	}
 
 	return map[string]Value{
-		"set":  ok,
-		"key":  key,
-		"ttl":  seconds,
+		"set": ok,
+		"key": key,
+		"ttl": seconds,
 	}
 }
 
@@ -20776,10 +21206,10 @@ func (i *Interpreter) builtinRedisHSet(args []Value) Value {
 	}
 
 	return map[string]Value{
-		"set":    val > 0,
-		"key":    key,
-		"field":  field,
-		"value":  value,
+		"set":   val > 0,
+		"key":   key,
+		"field": field,
+		"value": value,
 	}
 }
 
@@ -20928,9 +21358,9 @@ func (i *Interpreter) builtinRedisTTL(args []Value) Value {
 	}
 
 	return map[string]Value{
-		"key":     key,
-		"ttl":     ttl.Seconds(),
-		"hasTTL":  ttl > 0,
+		"key":      key,
+		"ttl":      ttl.Seconds(),
+		"hasTTL":   ttl > 0,
 		"noExpire": ttl == -1,
 	}
 }
@@ -20940,7 +21370,7 @@ var pdfDocs = make(map[string]*gofpdf.Fpdf)
 var pdfDocsMutex sync.RWMutex
 
 func (i *Interpreter) builtinPDFCreate(args []Value) Value {
-	orientation := "P"  // Portrait
+	orientation := "P" // Portrait
 	unit := "mm"
 	size := "A4"
 
@@ -21110,9 +21540,9 @@ func (i *Interpreter) builtinPDFSave(args []Value) Value {
 	pdfDocsMutex.Unlock()
 
 	return map[string]Value{
-		"saved":  true,
-		"id":     docID,
-		"path":   filePath,
+		"saved": true,
+		"id":    docID,
+		"path":  filePath,
 	}
 }
 
@@ -21787,9 +22217,9 @@ func (i *Interpreter) builtinOAuth2URL(args []Value) Value {
 	fullURL := authURL + "?" + params.Encode()
 
 	return map[string]Value{
-		"url":       fullURL,
-		"configID":  configID,
-		"provider":  provider,
+		"url":      fullURL,
+		"configID": configID,
+		"provider": provider,
 	}
 }
 
@@ -21963,9 +22393,9 @@ func (i *Interpreter) builtinSessionCreate(args []Value) Value {
 	sessionsMutex.Unlock()
 
 	return map[string]Value{
-		"sessionId":  sessionID,
-		"expiresAt":  expiresAt.Format(time.RFC3339),
-		"created":    true,
+		"sessionId": sessionID,
+		"expiresAt": expiresAt.Format(time.RFC3339),
+		"created":   true,
 	}
 }
 
@@ -22004,9 +22434,9 @@ func (i *Interpreter) builtinSessionValidate(args []Value) Value {
 	}
 
 	return map[string]Value{
-		"valid":   true,
+		"valid":     true,
 		"sessionId": sessionID,
-		"data":    data,
+		"data":      data,
 	}
 }
 
@@ -22177,8 +22607,8 @@ func (i *Interpreter) builtinTopicPublish(args []Value) Value {
 	}
 
 	return map[string]Value{
-		"published":  true,
-		"name":       name,
+		"published":       true,
+		"name":            name,
 		"subscriberCount": len(subscribers),
 	}
 }
@@ -22271,9 +22701,9 @@ func (i *Interpreter) builtinRuleAddCondition(args []Value) Value {
 	})
 
 	return map[string]Value{
-		"added":      true,
-		"rule":       name,
-		"field":      field,
+		"added":          true,
+		"rule":           name,
+		"field":          field,
 		"conditionCount": len(r.conditions),
 	}
 }
@@ -22304,8 +22734,8 @@ func (i *Interpreter) builtinRuleEvaluate(args []Value) Value {
 		fieldValue, exists := data[cond.field]
 		match := evaluateCondition(fieldValue, cond.operator, cond.value, exists)
 		results = append(results, map[string]Value{
-			"field":  cond.field,
-			"match":  match,
+			"field": cond.field,
+			"match": match,
 		})
 		if !match {
 			allMatch = false
@@ -22524,10 +22954,10 @@ func (i *Interpreter) builtinS3Upload(args []Value) Value {
 	defer resp.Body.Close()
 
 	return map[string]Value{
-		"uploaded":  resp.StatusCode >= 200 && resp.StatusCode < 300,
-		"status":    resp.StatusCode,
-		"key":       key,
-		"size":      len(dataBytes),
+		"uploaded": resp.StatusCode >= 200 && resp.StatusCode < 300,
+		"status":   resp.StatusCode,
+		"key":      key,
+		"size":     len(dataBytes),
 	}
 }
 
@@ -23003,11 +23433,11 @@ func (i *Interpreter) builtinTranslateText(args []Value) Value {
 	// Note: Real implementation would call translation API
 	// This is a placeholder that returns the original text
 	return map[string]Value{
-		"text":         text,
-		"translated":   text,
-		"sourceLang":   sourceLang,
-		"targetLang":   targetLang,
-		"note":         "Translation requires external API (Google, DeepL, etc.)",
+		"text":       text,
+		"translated": text,
+		"sourceLang": sourceLang,
+		"targetLang": targetLang,
+		"note":       "Translation requires external API (Google, DeepL, etc.)",
 	}
 }
 
@@ -23020,8 +23450,8 @@ func (i *Interpreter) builtinEthAddress(args []Value) Value {
 	address := "0x" + hex.EncodeToString(addressBytes)
 
 	return map[string]Value{
-		"address":  address,
-		"valid":    true,
+		"address": address,
+		"valid":   true,
 	}
 }
 
@@ -23059,10 +23489,10 @@ func (i *Interpreter) builtinEthVerify(args []Value) Value {
 	_ = signature
 
 	return map[string]Value{
-		"valid":    true,
-		"address":  address,
-		"message":  message,
-		"note":     "Simplified verification - use go-ethereum for production",
+		"valid":   true,
+		"address": address,
+		"message": message,
+		"note":    "Simplified verification - use go-ethereum for production",
 	}
 }
 

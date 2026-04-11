@@ -915,9 +915,9 @@ func TestIntegration_OrderByExpression(t *testing.T) {
 
 	// Create table and insert data
 	db.Exec("CREATE TABLE products (id INT PRIMARY KEY, price INT, quantity INT)")
-	db.Exec("INSERT INTO products VALUES (1, 100, 2)")  // total = 200
-	db.Exec("INSERT INTO products VALUES (2, 50, 3)")   // total = 150
-	db.Exec("INSERT INTO products VALUES (3, 200, 1)")  // total = 200
+	db.Exec("INSERT INTO products VALUES (1, 100, 2)") // total = 200
+	db.Exec("INSERT INTO products VALUES (2, 50, 3)")  // total = 150
+	db.Exec("INSERT INTO products VALUES (3, 200, 1)") // total = 200
 
 	// Test ORDER BY with multiplication expression (columns in SELECT list)
 	// Note: For expressions to work, columns must be in SELECT list

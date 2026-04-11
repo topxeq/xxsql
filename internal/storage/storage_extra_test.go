@@ -289,7 +289,7 @@ func TestEngineTriggers(t *testing.T) {
 	}
 
 	// Create trigger (timing=0=BEFORE, event=1=INSERT, granularity=0=ROW)
-	if err := engine.CreateTrigger("test_trigger", 0, 1, "users", 0, "", "BEGIN END"); err != nil {
+	if err := engine.CreateTrigger("test_trigger", 0, 1, "users", 0, "", "BEGIN END", ""); err != nil {
 		t.Fatalf("CreateTrigger failed: %v", err)
 	}
 

@@ -32,7 +32,7 @@ func TestMicroserviceEndpoint(t *testing.T) {
 	// Create config
 	cfg := &config.Config{
 		Server: config.ServerConfig{
-			Name:   "test",
+			Name:    "test",
 			DataDir: tmpDir,
 		},
 	}
@@ -272,7 +272,7 @@ func TestMicroserviceWithHTTPMethods(t *testing.T) {
 	backupMgr := backup.NewManager(tmpDir)
 	cfg := &config.Config{
 		Server: config.ServerConfig{
-			Name:   "test",
+			Name:    "test",
 			DataDir: tmpDir,
 		},
 	}
@@ -332,7 +332,7 @@ func TestMicroserviceWithComplexScript(t *testing.T) {
 	backupMgr := backup.NewManager(tmpDir)
 	cfg := &config.Config{
 		Server: config.ServerConfig{
-			Name:   "test",
+			Name:    "test",
 			DataDir: tmpDir,
 		},
 	}

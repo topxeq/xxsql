@@ -40,7 +40,7 @@ func TestGlobBasic(t *testing.T) {
 		expected int
 		values   []string
 	}{
-		{"star match", "a*", 1, []string{"apple"}},      // GLOB is case-sensitive, only lowercase
+		{"star match", "a*", 1, []string{"apple"}},       // GLOB is case-sensitive, only lowercase
 		{"star match upper", "A*", 1, []string{"APPLE"}}, // uppercase A only matches APPLE
 		{"question match", "file?", 2, []string{"file1", "file2"}},
 		{"extension match", "*.txt", 1, []string{"test.txt"}},
@@ -112,9 +112,9 @@ func TestGlobCharSet(t *testing.T) {
 		pattern  string
 		expected int
 	}{
-		{"char set abc", "a[123]", 2},  // a1, a2
-		{"char range", "a[1-3]", 2},    // a1, a2
-		{"negated set", "a[!123]", 2},  // aB, aC (not a1, a2)
+		{"char set abc", "a[123]", 2},   // a1, a2
+		{"char range", "a[1-3]", 2},     // a1, a2
+		{"negated set", "a[!123]", 2},   // aB, aC (not a1, a2)
 		{"negated range", "a[^1-3]", 2}, // aB, aC (not a1, a2)
 		{"multiple chars", "[abc]1", 3}, // a1, b1, c1
 	}

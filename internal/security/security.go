@@ -9,11 +9,11 @@ import (
 
 // SecurityConfig contains all security configuration.
 type SecurityConfig struct {
-	Audit      *AuditConfig
-	RateLimit  *RateLimitConfig
-	IPAccess   *IPAccessConfig
-	Password   *PasswordPolicy
-	TLS        *TLSConfig
+	Audit     *AuditConfig
+	RateLimit *RateLimitConfig
+	IPAccess  *IPAccessConfig
+	Password  *PasswordPolicy
+	TLS       *TLSConfig
 }
 
 // DefaultSecurityConfig returns default security configuration.
@@ -29,11 +29,11 @@ func DefaultSecurityConfig() *SecurityConfig {
 
 // SecurityManager provides unified security management.
 type SecurityManager struct {
-	audit      *AuditLogger
-	rateLimit  *RateLimiter
-	ipAccess   *IPAccess
-	password   *PasswordValidator
-	tls        *TLSManager
+	audit     *AuditLogger
+	rateLimit *RateLimiter
+	ipAccess  *IPAccess
+	password  *PasswordValidator
+	tls       *TLSManager
 }
 
 // NewSecurityManager creates a new security manager.
