@@ -2,6 +2,7 @@ package table_test
 
 import (
 	"fmt"
+	"os"
 	"strings"
 	"sync"
 	"testing"
@@ -322,6 +323,87 @@ func TestTableEstimateSelectivity(t *testing.T) {
 	selectivity = tbl.EstimateSelectivity("nonexistent")
 	if selectivity != 100 { // Should return total row count
 		t.Errorf("EstimateSelectivity(nonexistent): got %d, want 100", selectivity)
+	}
+}
+
+func TestTempTableUpdateWithFunc(t *testing.T) {
+	columns := []*types.ColumnInfo{
+		{Name: "id", Type: types.TypeInt, PrimaryKey: true},
+		{Name: "value", Type: types.TypeInt},
+	}
+
+	tbl := table.NewTempTable("update_func_temp", columns)
+
+	for i := 1; i <= 4; i++ {
+		_, err := tbl.Insert([]types.Value{
+			types.NewIntValue(int64(i)),
+			types.NewIntValue(int64(i * 10)),
+		})
+		if err != nil {
+			t.Fatalf("insert %d failed: %v", i, err)
+		}
+	}
+
+	affected, err := tbl.UpdateWithFunc(
+		func(r *row.Row) bool {
+			return r.Values[0].AsInt()%2 == 0
+		},
+		func(r *row.Row) (map[int]types.Value, error) {
+			return map[int]types.Value{1: types.NewIntValue(r.Values[1].AsInt() + 5)}, nil
+		},
+	)
+	if err != nil {
+		t.Fatalf("UpdateWithFunc failed: %v", err)
+	}
+	if affected != 2 {
+		t.Fatalf("affected rows: got %d want 2", affected)
+	}
+
+	rows, err := tbl.Scan()
+	if err != nil {
+		t.Fatalf("scan failed: %v", err)
+	}
+
+	for _, r := range rows {
+		id := r.Values[0].AsInt()
+		val := r.Values[1].AsInt()
+		if id%2 == 0 && val%10 != 5 {
+			t.Fatalf("expected even row to be updated, id=%d val=%d", id, val)
+		}
+		if id%2 == 1 && val%10 != 0 {
+			t.Fatalf("expected odd row unchanged, id=%d val=%d", id, val)
+		}
+	}
+
+	tbl.Drop()
+	if _, err := tbl.UpdateWithFunc(func(*row.Row) bool { return true }, func(*row.Row) (map[int]types.Value, error) {
+		return map[int]types.Value{}, nil
+	}); err == nil {
+		t.Fatal("expected error when updating non-active table")
+	}
+}
+
+func TestTempTableSetDataFile(t *testing.T) {
+	columns := []*types.ColumnInfo{{Name: "id", Type: types.TypeInt, PrimaryKey: true}}
+	tbl := table.NewTempTable("set_data_file_temp", columns)
+
+	file, err := os.CreateTemp(t.TempDir(), "table-data-*.xdb")
+	if err != nil {
+		t.Fatalf("create temp data file: %v", err)
+	}
+
+	tbl.SetDataFile(file)
+
+	if _, err := tbl.Insert([]types.Value{types.NewIntValue(1)}); err != nil {
+		t.Fatalf("insert after SetDataFile failed: %v", err)
+	}
+
+	if err := tbl.Flush(); err != nil {
+		t.Fatalf("Flush after SetDataFile failed: %v", err)
+	}
+
+	if err := tbl.Close(); err != nil {
+		t.Fatalf("Close after SetDataFile failed: %v", err)
 	}
 }
 

@@ -42,6 +42,106 @@ func TestWeb_ExtractZip(t *testing.T) {
 	}
 }
 
+func TestWeb_ExtractZip_EdgeBranches(t *testing.T) {
+	t.Run("invalid zip path returns error", func(t *testing.T) {
+		err := extractZip(filepath.Join(t.TempDir(), "missing.zip"), t.TempDir())
+		if err == nil {
+			t.Fatalf("expected error for missing zip file")
+		}
+	})
+
+	t.Run("skips traversal entry and creates directory entries", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		zipPath := filepath.Join(tmpDir, "edge.zip")
+		destDir := filepath.Join(tmpDir, "out")
+		if err := os.MkdirAll(destDir, 0755); err != nil {
+			t.Fatalf("mkdir dest: %v", err)
+		}
+
+		f, err := os.Create(zipPath)
+		if err != nil {
+			t.Fatalf("create zip: %v", err)
+		}
+		w := zip.NewWriter(f)
+
+		if _, err := w.Create("safe/"); err != nil {
+			t.Fatalf("create dir entry: %v", err)
+		}
+		fw, err := w.Create("safe/ok.txt")
+		if err != nil {
+			t.Fatalf("create file entry: %v", err)
+		}
+		if _, err := fw.Write([]byte("ok")); err != nil {
+			t.Fatalf("write file entry: %v", err)
+		}
+		fwTrav, err := w.Create("../escape.txt")
+		if err != nil {
+			t.Fatalf("create traversal entry: %v", err)
+		}
+		if _, err := fwTrav.Write([]byte("bad")); err != nil {
+			t.Fatalf("write traversal entry: %v", err)
+		}
+
+		if err := w.Close(); err != nil {
+			t.Fatalf("close zip writer: %v", err)
+		}
+		if err := f.Close(); err != nil {
+			t.Fatalf("close zip file: %v", err)
+		}
+
+		if err := extractZip(zipPath, destDir); err != nil {
+			t.Fatalf("extractZip error: %v", err)
+		}
+
+		if _, err := os.Stat(filepath.Join(destDir, "safe")); err != nil {
+			t.Fatalf("expected safe directory created: %v", err)
+		}
+		if _, err := os.Stat(filepath.Join(destDir, "safe", "ok.txt")); err != nil {
+			t.Fatalf("expected safe file extracted: %v", err)
+		}
+		if _, err := os.Stat(filepath.Join(destDir, "escape.txt")); !os.IsNotExist(err) {
+			t.Fatalf("traversal file should not be extracted into destination")
+		}
+	})
+
+	t.Run("returns error when file collides with directory", func(t *testing.T) {
+		tmpDir := t.TempDir()
+		zipPath := filepath.Join(tmpDir, "collision.zip")
+		destDir := filepath.Join(tmpDir, "out")
+		if err := os.MkdirAll(destDir, 0755); err != nil {
+			t.Fatalf("mkdir dest: %v", err)
+		}
+
+		f, err := os.Create(zipPath)
+		if err != nil {
+			t.Fatalf("create zip: %v", err)
+		}
+		w := zip.NewWriter(f)
+
+		if _, err := w.Create("conflict/"); err != nil {
+			t.Fatalf("create dir entry: %v", err)
+		}
+		fw, err := w.Create("conflict")
+		if err != nil {
+			t.Fatalf("create colliding file entry: %v", err)
+		}
+		if _, err := fw.Write([]byte("x")); err != nil {
+			t.Fatalf("write colliding file entry: %v", err)
+		}
+
+		if err := w.Close(); err != nil {
+			t.Fatalf("close zip writer: %v", err)
+		}
+		if err := f.Close(); err != nil {
+			t.Fatalf("close zip file: %v", err)
+		}
+
+		if err := extractZip(zipPath, destDir); err == nil {
+			t.Fatalf("expected extraction error for file/dir collision")
+		}
+	})
+}
+
 func TestWeb_FindProjectRoot(t *testing.T) {
 	tmpDir := t.TempDir()
 

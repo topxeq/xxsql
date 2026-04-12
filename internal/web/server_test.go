@@ -3,7 +3,9 @@ package web
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -61,6 +63,37 @@ func TestNewServer(t *testing.T) {
 	}
 }
 
+func TestNewServer_EmptyDataDir_NoAPIKeyManager(t *testing.T) {
+	cfg := config.DefaultConfig()
+	cfg.Server.DataDir = ""
+
+	server := NewServer(cfg, nil, nil, nil)
+	if server == nil {
+		t.Fatal("NewServer returned nil")
+	}
+	if server.apiKeyManager != nil {
+		t.Fatal("apiKeyManager should be nil when data dir is empty")
+	}
+}
+
+func TestNewServer_LoadAPIKeyWarningPath(t *testing.T) {
+	tmpDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(tmpDir, "api_keys.json"), []byte("{"), 0644); err != nil {
+		t.Fatalf("write invalid api keys file: %v", err)
+	}
+
+	cfg := config.DefaultConfig()
+	cfg.Server.DataDir = tmpDir
+
+	server := NewServer(cfg, nil, nil, nil)
+	if server == nil {
+		t.Fatal("NewServer returned nil")
+	}
+	if server.apiKeyManager == nil {
+		t.Fatal("apiKeyManager should still be initialized")
+	}
+}
+
 func TestServer_LoadTemplates(t *testing.T) {
 	server, _ := setupTestServer(t)
 
@@ -70,6 +103,32 @@ func TestServer_LoadTemplates(t *testing.T) {
 	}
 	if tmpl == nil {
 		t.Error("templates should not be nil")
+	}
+}
+
+func TestServer_LoadTemplates_Functions(t *testing.T) {
+	server, _ := setupTestServer(t)
+
+	tmpl, err := server.loadTemplates()
+	if err != nil {
+		t.Fatalf("loadTemplates error: %v", err)
+	}
+
+	if _, err := tmpl.New("func-test").Parse(`{{upper "ab"}} {{lower "CD"}} {{json .}}`); err != nil {
+		t.Fatalf("parse func-test template: %v", err)
+	}
+
+	var out bytes.Buffer
+	if err := tmpl.ExecuteTemplate(&out, "func-test", map[string]string{"k": "v"}); err != nil {
+		t.Fatalf("execute func-test template: %v", err)
+	}
+
+	body := out.String()
+	if body == "" || !bytes.Contains(out.Bytes(), []byte("AB cd")) {
+		t.Fatalf("unexpected function output: %q", body)
+	}
+	if !bytes.Contains(out.Bytes(), []byte(`&#34;k&#34;`)) {
+		t.Fatalf("json function output missing: %q", body)
 	}
 }
 
@@ -141,6 +200,21 @@ func TestReadJSON_Invalid(t *testing.T) {
 	var result map[string]interface{}
 	if err := readJSON(req, &result); err == nil {
 		t.Error("readJSON should return error for invalid JSON")
+	}
+}
+
+type failingReadCloser struct{}
+
+func (failingReadCloser) Read(p []byte) (int, error) { return 0, errors.New("read failed") }
+func (failingReadCloser) Close() error               { return nil }
+
+func TestReadJSON_ReadError(t *testing.T) {
+	req := httptest.NewRequest(http.MethodPost, "/", io.NopCloser(bytes.NewBuffer(nil)))
+	req.Body = failingReadCloser{}
+
+	var result map[string]interface{}
+	if err := readJSON(req, &result); err == nil {
+		t.Fatal("readJSON should return read error")
 	}
 }
 
@@ -861,6 +935,77 @@ func TestAuthMiddleware(t *testing.T) {
 	}
 }
 
+func TestAuthMiddleware_AdditionalBranches(t *testing.T) {
+	server, _ := setupTestServer(t)
+
+	t.Run("projects path bypasses auth", func(t *testing.T) {
+		hit := false
+		h := server.authMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			hit = true
+			w.WriteHeader(http.StatusNoContent)
+		}))
+
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/projects/demo/index.html", nil))
+
+		if !hit || w.Code != http.StatusNoContent {
+			t.Fatalf("expected projects bypass, hit=%v status=%d", hit, w.Code)
+		}
+	})
+
+	t.Run("api and microservice require auth", func(t *testing.T) {
+		h := server.authMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusOK)
+		}))
+
+		wAPI := httptest.NewRecorder()
+		h.ServeHTTP(wAPI, httptest.NewRequest(http.MethodGet, "/api/metrics", nil))
+		if wAPI.Code != http.StatusUnauthorized {
+			t.Fatalf("api status got %d want %d", wAPI.Code, http.StatusUnauthorized)
+		}
+
+		wMS := httptest.NewRecorder()
+		h.ServeHTTP(wMS, httptest.NewRequest(http.MethodGet, "/ms/private/echo", nil))
+		if wMS.Code != http.StatusUnauthorized {
+			t.Fatalf("microservice status got %d want %d", wMS.Code, http.StatusUnauthorized)
+		}
+	})
+
+	t.Run("non api route uses session auth", func(t *testing.T) {
+		server.sessions["web-sess"] = &Session{ID: "web-sess", Username: "admin", Expires: time.Now().Add(time.Hour)}
+
+		gotUser := ""
+		h := server.authMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			gotUser = getUsername(r.Context())
+			w.WriteHeader(http.StatusAccepted)
+		}))
+
+		req := httptest.NewRequest(http.MethodGet, "/query", nil)
+		req.AddCookie(&http.Cookie{Name: "xxsql_session", Value: "web-sess"})
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, req)
+
+		if w.Code != http.StatusAccepted || gotUser != "admin" {
+			t.Fatalf("expected accepted route with username context, status=%d user=%q", w.Code, gotUser)
+		}
+	})
+
+	t.Run("non api route without session redirects", func(t *testing.T) {
+		h := server.authMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusOK)
+		}))
+
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/query", nil))
+		if w.Code != http.StatusFound {
+			t.Fatalf("status got %d want %d", w.Code, http.StatusFound)
+		}
+		if loc := w.Header().Get("Location"); loc != "/login" {
+			t.Fatalf("expected redirect to /login, got %q", loc)
+		}
+	})
+}
+
 func TestLoggingMiddleware(t *testing.T) {
 	server, _ := setupTestServer(t)
 
@@ -952,6 +1097,25 @@ func TestHandlePage(t *testing.T) {
 
 		if w.Code != http.StatusOK {
 			t.Errorf("Status: got %d, want %d, body: %s", w.Code, http.StatusOK, w.Body.String())
+		}
+	})
+
+	t.Run("template execution error", func(t *testing.T) {
+		server.sessions["test-sess-2"] = &Session{
+			ID:       "test-sess-2",
+			Username: "admin",
+			Expires:  time.Now().Add(24 * time.Hour),
+		}
+
+		handler := server.handlePage("missing-template")
+		req := httptest.NewRequest(http.MethodGet, "/", nil)
+		req.AddCookie(&http.Cookie{Name: "xxsql_session", Value: "test-sess-2"})
+		w := httptest.NewRecorder()
+
+		handler(w, req)
+
+		if w.Code != http.StatusInternalServerError {
+			t.Fatalf("Status: got %d, want %d, body: %s", w.Code, http.StatusInternalServerError, w.Body.String())
 		}
 	})
 }
@@ -1594,6 +1758,42 @@ func TestAuthenticateAPIKey(t *testing.T) {
 	if !ok {
 		t.Error("authenticateAPIKey should succeed with valid key")
 	}
+}
+
+func TestAuthenticateAPIKey_ExtraBranches(t *testing.T) {
+	server, _ := setupTestServer(t)
+
+	nextHandler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
+
+	t.Run("no api key manager", func(t *testing.T) {
+		s := *server
+		s.apiKeyManager = nil
+
+		w := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodGet, "/api/status", nil)
+		if s.authenticateAPIKey(w, req, nextHandler) {
+			t.Fatal("authenticateAPIKey should fail when manager is nil")
+		}
+	})
+
+	t.Run("missing api key header", func(t *testing.T) {
+		w := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodGet, "/api/status", nil)
+		if server.authenticateAPIKey(w, req, nextHandler) {
+			t.Fatal("authenticateAPIKey should fail without header")
+		}
+	})
+
+	t.Run("invalid api key", func(t *testing.T) {
+		w := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodGet, "/api/status", nil)
+		req.Header.Set("X-API-Key", "xxsql_invalid_key")
+		if server.authenticateAPIKey(w, req, nextHandler) {
+			t.Fatal("authenticateAPIKey should fail for invalid key")
+		}
+	})
 }
 
 // TestHandleAPILogout tests handleAPILogout

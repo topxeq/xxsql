@@ -2,9 +2,13 @@
 package storage_test
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/topxeq/xxsql/internal/storage"
+	"github.com/topxeq/xxsql/internal/storage/catalog"
 	"github.com/topxeq/xxsql/internal/storage/row"
 	"github.com/topxeq/xxsql/internal/storage/types"
 )
@@ -593,5 +597,210 @@ func TestValidateValuesTypeMismatch(t *testing.T) {
 				t.Errorf("ValidateValues(): error = %v, wantErr %v", err, tt.wantErr)
 			}
 		})
+	}
+}
+
+func TestEngineOpenFailsWhenDataDirIsFile(t *testing.T) {
+	baseDir := t.TempDir()
+	filePath := filepath.Join(baseDir, "not-a-dir")
+
+	if err := os.WriteFile(filePath, []byte("x"), 0644); err != nil {
+		t.Fatalf("WriteFile failed: %v", err)
+	}
+
+	engine := storage.NewEngine(filePath)
+	if err := engine.Open(); err == nil {
+		t.Fatal("Open should fail when data dir is a file")
+	}
+}
+
+func TestEngineGetTableOrTempRegularAndMissing(t *testing.T) {
+	tempDir := t.TempDir()
+
+	engine := storage.NewEngine(tempDir)
+	if err := engine.Open(); err != nil {
+		t.Fatalf("Failed to open engine: %v", err)
+	}
+	defer engine.Close()
+
+	columns := []*types.ColumnInfo{{Name: "id", Type: types.TypeInt, PrimaryKey: true}}
+	if err := engine.CreateTable("regular", columns); err != nil {
+		t.Fatalf("CreateTable failed: %v", err)
+	}
+
+	tbl, isTemp, err := engine.GetTableOrTemp("regular")
+	if err != nil {
+		t.Fatalf("GetTableOrTemp regular failed: %v", err)
+	}
+	if tbl == nil {
+		t.Fatal("GetTableOrTemp regular returned nil table")
+	}
+	if isTemp {
+		t.Fatal("GetTableOrTemp regular should not mark table as temp")
+	}
+
+	if engine.TableOrTempExists("missing") {
+		t.Fatal("TableOrTempExists should be false for missing table")
+	}
+
+	if _, _, err := engine.GetTableOrTemp("missing"); err == nil {
+		t.Fatal("GetTableOrTemp should fail for missing table")
+	}
+}
+
+func TestEngineStoredProcedureLifecycle(t *testing.T) {
+	tempDir := t.TempDir()
+
+	engine := storage.NewEngine(tempDir)
+	if err := engine.Open(); err != nil {
+		t.Fatalf("Failed to open engine: %v", err)
+	}
+	defer engine.Close()
+
+	if engine.ProcedureExists("p_add") {
+		t.Fatal("Procedure should not exist initially")
+	}
+
+	params := []catalog.ProcedureParamInfo{
+		{Name: "a", Type: "INT", Mode: 0},
+		{Name: "b", Type: "INT", Mode: 0},
+	}
+
+	if err := engine.CreateProcedure("p_add", params, "return a + b;"); err != nil {
+		t.Fatalf("CreateProcedure failed: %v", err)
+	}
+	if err := engine.CreateProcedure("p_add", params, "return 0;"); err == nil {
+		t.Fatal("CreateProcedure duplicate should fail")
+	}
+
+	if !engine.ProcedureExists("p_add") {
+		t.Fatal("Procedure should exist after create")
+	}
+
+	proc, err := engine.GetProcedure("p_add")
+	if err != nil {
+		t.Fatalf("GetProcedure failed: %v", err)
+	}
+	if proc.Name != "p_add" || len(proc.Params) != 2 || proc.Body != "return a + b;" {
+		t.Fatalf("GetProcedure returned unexpected data: %+v", proc)
+	}
+
+	list := engine.ListProcedures()
+	if len(list) != 1 || list[0] != "p_add" {
+		t.Fatalf("ListProcedures returned unexpected result: %v", list)
+	}
+
+	if err := engine.DropProcedure("p_add"); err != nil {
+		t.Fatalf("DropProcedure failed: %v", err)
+	}
+	if engine.ProcedureExists("p_add") {
+		t.Fatal("Procedure should not exist after drop")
+	}
+	if err := engine.DropProcedure("p_add"); err == nil {
+		t.Fatal("DropProcedure should fail for missing procedure")
+	}
+	if _, err := engine.GetProcedure("p_add"); err == nil {
+		t.Fatal("GetProcedure should fail for missing procedure")
+	}
+}
+
+func TestEngineResetToInitialState(t *testing.T) {
+	tempDir := t.TempDir()
+
+	engine := storage.NewEngine(tempDir)
+	if err := engine.Open(); err != nil {
+		t.Fatalf("Failed to open engine: %v", err)
+	}
+	defer engine.Close()
+
+	if err := engine.CreateTable("users", []*types.ColumnInfo{{Name: "id", Type: types.TypeInt, PrimaryKey: true}}); err != nil {
+		t.Fatalf("CreateTable users failed: %v", err)
+	}
+
+	if err := engine.CreateTable("_sys_projects", []*types.ColumnInfo{
+		{Name: "name", Type: types.TypeVarchar, Size: 100, PrimaryKey: true},
+		{Name: "version", Type: types.TypeVarchar, Size: 20},
+		{Name: "installed_at", Type: types.TypeDatetime},
+		{Name: "tables", Type: types.TypeText},
+	}); err != nil {
+		t.Fatalf("CreateTable _sys_projects failed: %v", err)
+	}
+
+	now := time.Now()
+	if _, err := engine.Insert("_sys_projects", []types.Value{
+		types.NewStringValue("p1", types.TypeVarchar),
+		types.NewStringValue("1.0", types.TypeVarchar),
+		types.NewDatetimeValue(now),
+		types.NewStringValue("[]", types.TypeText),
+	}); err != nil {
+		t.Fatalf("Insert _sys_projects row1 failed: %v", err)
+	}
+	if _, err := engine.Insert("_sys_projects", []types.Value{
+		types.NewStringValue("p2", types.TypeVarchar),
+		types.NewStringValue("1.1", types.TypeVarchar),
+		types.NewDatetimeValue(now),
+		types.NewStringValue("[]", types.TypeText),
+	}); err != nil {
+		t.Fatalf("Insert _sys_projects row2 failed: %v", err)
+	}
+
+	if err := engine.CreateTempTable("temp_for_reset", []*types.ColumnInfo{{Name: "id", Type: types.TypeInt, PrimaryKey: true}}); err != nil {
+		t.Fatalf("CreateTempTable failed: %v", err)
+	}
+
+	projectsDir := filepath.Join(tempDir, "projects")
+	if err := os.MkdirAll(filepath.Join(projectsDir, "subdir"), 0755); err != nil {
+		t.Fatalf("MkdirAll failed: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(projectsDir, "file1.txt"), []byte("a"), 0644); err != nil {
+		t.Fatalf("WriteFile file1 failed: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(projectsDir, "subdir", "file2.txt"), []byte("b"), 0644); err != nil {
+		t.Fatalf("WriteFile file2 failed: %v", err)
+	}
+
+	result := engine.ResetToInitialState(tempDir)
+
+	if engine.TableExists("users") {
+		t.Fatal("users table should be dropped")
+	}
+	if !engine.TableExists("_sys_projects") {
+		t.Fatal("_sys_projects should still exist")
+	}
+
+	rows, err := engine.Scan("_sys_projects")
+	if err != nil {
+		t.Fatalf("Scan _sys_projects failed: %v", err)
+	}
+	if len(rows) != 0 {
+		t.Fatalf("_sys_projects should be recreated empty, got %d rows", len(rows))
+	}
+
+	if len(engine.ListTempTables()) != 0 {
+		t.Fatal("temp tables should be cleared")
+	}
+
+	tablesDropped, ok := result["tables_dropped"].([]string)
+	if !ok {
+		t.Fatalf("tables_dropped type: got %T", result["tables_dropped"])
+	}
+	foundUsers := false
+	for _, name := range tablesDropped {
+		if name == "users" {
+			foundUsers = true
+		}
+	}
+	if !foundUsers {
+		t.Fatalf("tables_dropped should include users, got %v", tablesDropped)
+	}
+
+	projectsCleared, ok := result["projects_cleared"].(int)
+	if !ok || projectsCleared != 2 {
+		t.Fatalf("projects_cleared: got %v (%T), want 2", result["projects_cleared"], result["projects_cleared"])
+	}
+
+	filesDeleted, ok := result["files_deleted"].(int)
+	if !ok || filesDeleted != 2 {
+		t.Fatalf("files_deleted: got %v (%T), want 2", result["files_deleted"], result["files_deleted"])
 	}
 }

@@ -2,6 +2,8 @@ package catalog
 
 import (
 	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/topxeq/xxsql/internal/storage/types"
@@ -438,5 +440,189 @@ func TestCatalog_MultipleFTSIndexes(t *testing.T) {
 	table2FTS := cat.GetFTSIndexesForTable("table2")
 	if len(table2FTS) != 1 {
 		t.Errorf("GetFTSIndexesForTable(table2) returned %d, want 1", len(table2FTS))
+	}
+}
+
+func TestCatalog_StoredProcedures(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "catalog-proc-test-*")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	cat := NewCatalog(tmpDir)
+	if err := cat.Open(); err != nil {
+		t.Fatalf("Open failed: %v", err)
+	}
+	defer cat.Close()
+
+	if cat.ProcedureExists("add_user") {
+		t.Error("procedure should not exist initially")
+	}
+
+	params := []ProcedureParamInfo{{Name: "name", Type: "VARCHAR", Mode: 0}, {Name: "id", Type: "INT", Mode: 1}}
+	body := "let x = 1; return x;"
+
+	err = cat.CreateProcedure("add_user", params, body)
+	if err != nil {
+		t.Fatalf("CreateProcedure failed: %v", err)
+	}
+
+	if !cat.ProcedureExists("add_user") {
+		t.Error("procedure should exist after creation")
+	}
+
+	p, err := cat.GetProcedure("add_user")
+	if err != nil {
+		t.Fatalf("GetProcedure failed: %v", err)
+	}
+	if p.Name != "add_user" {
+		t.Errorf("procedure name = %s, want add_user", p.Name)
+	}
+	if len(p.Params) != 2 {
+		t.Errorf("params length = %d, want 2", len(p.Params))
+	}
+	if p.Body != body {
+		t.Errorf("procedure body = %s, want %s", p.Body, body)
+	}
+
+	procedures := cat.ListProcedures()
+	if len(procedures) != 1 {
+		t.Errorf("ListProcedures returned %d procedures, want 1", len(procedures))
+	}
+
+	err = cat.CreateProcedure("add_user", params, body)
+	if err == nil {
+		t.Error("CreateProcedure should fail for duplicate procedure")
+	}
+
+	err = cat.DropProcedure("add_user")
+	if err != nil {
+		t.Fatalf("DropProcedure failed: %v", err)
+	}
+
+	if cat.ProcedureExists("add_user") {
+		t.Error("procedure should not exist after drop")
+	}
+
+	_, err = cat.GetProcedure("add_user")
+	if err == nil {
+		t.Error("GetProcedure should fail for dropped procedure")
+	}
+
+	err = cat.DropProcedure("add_user")
+	if err == nil {
+		t.Error("DropProcedure should fail for non-existent procedure")
+	}
+}
+
+func TestCatalog_StoredProceduresPersistence(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "catalog-proc-persist-*")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	cat1 := NewCatalog(tmpDir)
+	if err := cat1.Open(); err != nil {
+		t.Fatalf("Open failed: %v", err)
+	}
+
+	err = cat1.CreateProcedure("p1", []ProcedureParamInfo{{Name: "x", Type: "INT", Mode: 0}}, "return x;")
+	if err != nil {
+		t.Fatalf("CreateProcedure p1 failed: %v", err)
+	}
+	err = cat1.CreateProcedure("p2", nil, "return 1;")
+	if err != nil {
+		t.Fatalf("CreateProcedure p2 failed: %v", err)
+	}
+	cat1.Close()
+
+	cat2 := NewCatalog(tmpDir)
+	if err := cat2.Open(); err != nil {
+		t.Fatalf("Open failed: %v", err)
+	}
+	defer cat2.Close()
+
+	if !cat2.ProcedureExists("p1") || !cat2.ProcedureExists("p2") {
+		t.Error("procedures should persist after reopen")
+	}
+
+	p1, err := cat2.GetProcedure("p1")
+	if err != nil {
+		t.Fatalf("GetProcedure p1 failed: %v", err)
+	}
+	if len(p1.Params) != 1 || p1.Params[0].Name != "x" {
+		t.Errorf("unexpected persisted params: %+v", p1.Params)
+	}
+
+	if len(cat2.ListProcedures()) != 2 {
+		t.Errorf("ListProcedures returned %d procedures, want 2", len(cat2.ListProcedures()))
+	}
+}
+
+func TestCatalog_StoredProcedureSaveErrors(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "catalog-proc-saveerr-*")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	cat := NewCatalog(tmpDir)
+	if err := cat.Open(); err != nil {
+		t.Fatalf("Open failed: %v", err)
+	}
+	defer cat.Close()
+
+	err = cat.CreateProcedure("base_proc", nil, "return 0;")
+	if err != nil {
+		t.Fatalf("CreateProcedure base_proc failed: %v", err)
+	}
+
+	notDir := filepath.Join(tmpDir, "not-a-dir")
+	err = os.WriteFile(notDir, []byte("x"), 0644)
+	if err != nil {
+		t.Fatalf("failed to create file path used as dataDir: %v", err)
+	}
+
+	cat.dataDir = notDir
+
+	err = cat.CreateProcedure("will_fail_create", nil, "return 1;")
+	if err == nil {
+		t.Fatal("CreateProcedure should fail when procedures.json cannot be written")
+	}
+
+	err = cat.DropProcedure("base_proc")
+	if err == nil {
+		t.Fatal("DropProcedure should fail when procedures.json cannot be written")
+	}
+}
+
+func TestCatalog_OpenFailsWithInvalidProceduresJSON(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "catalog-proc-loaderr-*")
+	if err != nil {
+		t.Fatalf("failed to create temp dir: %v", err)
+	}
+	defer os.RemoveAll(tmpDir)
+
+	cat := NewCatalog(tmpDir)
+	if err := cat.Open(); err != nil {
+		t.Fatalf("initial Open failed: %v", err)
+	}
+	cat.Close()
+
+	procPath := filepath.Join(tmpDir, "procedures.json")
+	err = os.WriteFile(procPath, []byte("{"), 0644)
+	if err != nil {
+		t.Fatalf("failed writing invalid procedures.json: %v", err)
+	}
+
+	cat2 := NewCatalog(tmpDir)
+	err = cat2.Open()
+	if err == nil {
+		t.Fatal("Open should fail for invalid procedures.json")
+	}
+	if !strings.Contains(strings.ToLower(err.Error()), "json") {
+		t.Errorf("Open error = %v, expected json parse error", err)
 	}
 }
